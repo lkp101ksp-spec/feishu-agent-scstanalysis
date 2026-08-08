@@ -1,0 +1,12 @@
+router:
+  primary:
+    base_url_env: LLM_PRIMARY_BASE_URL
+    api_key_env: LLM_PRIMARY_API_KEY
+    model_env: LLM_PRIMARY_MODEL
+    timeout_sec: 30
+  fallback:
+    base_url_env: LLM_FALLBACK_BASE_URL
+    api_key_env: LLM_FALLBACK_API_KEY
+    model_env: LLM_FALLBACK_MODEL
+    timeout_sec: 30
+  max_retries: 1
