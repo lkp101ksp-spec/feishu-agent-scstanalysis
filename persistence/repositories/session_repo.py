@@ -1,0 +1,48 @@
+"""Session 仓储：upsert 创建或更新会话；get 按主键查询。"""
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from persistence.models import SessionRow
+
+
+class SessionRepo:
+    """对 sessions 表的薄封装。
+
+    upsert() 按 session_id 主键创建或覆盖写入；
+    get() 按主键查询；不存在返回 None。
+    """
+
+    def __init__(self, session: Session):
+        self.session = session
+
+    def upsert(
+        self,
+        session_id: str,
+        owner_open_id: str,
+        source_chat_id: str,
+        bound_doc_id: Optional[str],
+        bind_expires_at: Optional[datetime],
+    ) -> SessionRow:
+        """创建或更新会话。返回 ORM 行实例（未 commit，由调用方决定 commit 时机）。"""
+        row = self.session.get(SessionRow, session_id)
+        if row is None:
+            row = SessionRow(
+                session_id=session_id,
+                owner_open_id=owner_open_id,
+                source_chat_id=source_chat_id,
+                bound_doc_id=bound_doc_id,
+                bind_expires_at=bind_expires_at,
+            )
+            self.session.add(row)
+        else:
+            # 已存在时只覆盖可变字段；owner/source 不变
+            row.bound_doc_id = bound_doc_id
+            row.bind_expires_at = bind_expires_at
+        self.session.flush()
+        return row
+
+    def get(self, session_id: str) -> Optional[SessionRow]:
+        """按主键查询，不存在返回 None。"""
+        return self.session.get(SessionRow, session_id)
