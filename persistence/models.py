@@ -1,0 +1,108 @@
+"""SQLAlchemy ORM 模型，对应 PostgreSQL 6 张表。
+
+注意：JSON 字段在生产 PostgreSQL 应改为 JSONB 以获得索引能力；
+Phase 1 用 JSON 保持 SQLite/PostgreSQL 双兼容。
+"""
+from datetime import datetime, timezone
+
+from sqlalchemy import JSON, Column, DateTime, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def _utcnow() -> datetime:
+    """UTC 当前时间，用于默认时间戳。"""
+    return datetime.now(timezone.utc)
+
+
+class SessionRow(Base):
+    __tablename__ = "sessions"
+
+    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_open_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    source_chat_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    bound_doc_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    bind_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approval_scope: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class TaskRow(Base):
+    __tablename__ = "tasks"
+
+    task_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    parent_task_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    message_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    intent: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
+    plan_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    reply_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ArtifactRow(Base):
+    __tablename__ = "artifacts"
+
+    artifact_id: Mapped[str] = mapped_column(String, primary_key=True)
+    task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    storage_type: Mapped[str] = mapped_column(String, nullable=False)
+    storage_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class DocWriteRow(Base):
+    __tablename__ = "doc_writes"
+
+    doc_write_id: Mapped[str] = mapped_column(String, primary_key=True)
+    task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    doc_id: Mapped[str] = mapped_column(String, nullable=False)
+    requested_by: Mapped[str] = mapped_column(String, nullable=False)
+    approval_mode: Mapped[str] = mapped_column(String, nullable=False)
+    approval_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    anchor_block_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
+    fail_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class AuditLogRow(Base):
+    __tablename__ = "audit_logs"
+
+    audit_id: Mapped[str] = mapped_column(String, primary_key=True)
+    actor_type: Mapped[str] = mapped_column(String, nullable=False)
+    actor_id: Mapped[str] = mapped_column(String, nullable=False)
+    action: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String, nullable=False)
+    target_id: Mapped[str] = mapped_column(String, nullable=False)
+    detail_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class IdempotencyKeyRow(Base):
+    __tablename__ = "idempotency_keys"
+
+    key: Mapped[str] = mapped_column(String, primary_key=True)  # app_id:chat_id:message_id
+    task_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
