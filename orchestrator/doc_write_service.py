@@ -45,7 +45,12 @@ class DocWriteService:
         session_row = self.session_repo.get(session_id)
         if session_row is None or session_row.bound_doc_id is None:
             raise DocWriteError("no valid bind-doc on this session")
-        if session_row.bind_expires_at is None or session_row.bind_expires_at <= datetime.now(timezone.utc):
+        if session_row.bind_expires_at is None:
+            raise DocWriteError("bind-doc expired, please /bind-doc again")
+        expires_at = session_row.bind_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= datetime.now(timezone.utc):
             raise DocWriteError("bind-doc expired, please /bind-doc again")
 
         doc_id = session_row.bound_doc_id

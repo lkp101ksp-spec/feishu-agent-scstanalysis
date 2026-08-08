@@ -15,7 +15,7 @@ class SessionRepo:
     """
 
     def __init__(self, session: Session):
-        self.session = session
+        self.session: Session = session  # 暴露给服务层做复合查询
 
     def upsert(
         self,
