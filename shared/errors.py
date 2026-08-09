@@ -31,3 +31,50 @@ class DocWriteError(FeishuAgentError):
 
 class BindDocInvalidError(FeishuAgentError):
     """bind-doc 指令格式或参数无效。"""
+
+
+# === Phase 2 errors ===
+
+class ToolBlockedError(FeishuAgentError):
+    """AST P0 命中，工具被拒绝。"""
+    code = "TOOL_BLOCKED"
+
+
+class ToolDeniedError(FeishuAgentError):
+    """用户拒绝卡片审批。"""
+    code = "TOOL_DENIED"
+
+
+class ToolNotFoundError(FeishuAgentError):
+    """工具未注册。"""
+    code = "TOOL_NOT_FOUND"
+
+
+class SandboxUnavailableError(FeishuAgentError):
+    """Docker daemon 不可用或沙箱启动失败。"""
+    code = "SANDBOX_UNAVAILABLE"
+
+
+class FileTooLargeError(FeishuAgentError):
+    """文件大小超过 500MB。"""
+    code = "FILE_TOO_LARGE"
+
+
+class RenderError(FeishuAgentError):
+    """模板渲染失败。"""
+    code = "RENDER_ERROR"
+
+
+class DAGValidationError(FeishuAgentError):
+    """DAG 校验失败（循环依赖/节点引用不存在）。"""
+    code = "DAG_VALIDATION_FAILED"
+
+
+class TaskNotFoundError(FeishuAgentError):
+    """Task 不存在。"""
+    code = "TASK_NOT_FOUND"
+
+
+class ArtifactNotFoundError(FeishuAgentError):
+    """Artifact 不存在。"""
+    code = "ARTIFACT_NOT_FOUND"

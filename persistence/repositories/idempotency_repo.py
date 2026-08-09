@@ -21,20 +21,20 @@ class IdempotencyRepo:
 
         返回：
         - True：首次处理（已写入新行）
-        - False：重投（key 已存在）
+        - False：重投（key 已存在）或底层失败
 
-        失败时（唯一约束冲突等）回滚并返回 False。
+        失败时（唯一约束冲突、表不存在等）回滚并返回 False。
         """
-        existing = self.session.get(IdempotencyKeyRow, key)
-        if existing is not None:
-            return False
-        row = IdempotencyKeyRow(
-            key=key,
-            task_id=task_id,
-            processed_at=datetime.now(timezone.utc),
-        )
-        self.session.add(row)
         try:
+            existing = self.session.get(IdempotencyKeyRow, key)
+            if existing is not None:
+                return False
+            row = IdempotencyKeyRow(
+                key=key,
+                task_id=task_id,
+                processed_at=datetime.now(timezone.utc),
+            )
+            self.session.add(row)
             self.session.flush()
         except Exception:
             self.session.rollback()

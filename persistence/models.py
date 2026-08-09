@@ -66,6 +66,12 @@ class ArtifactRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
+    # === Phase 2 ===
+    file_token: Mapped[str | None] = mapped_column(String, nullable=True)
+    drive_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    mime: Mapped[str | None] = mapped_column(String, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(default=None, nullable=True)
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DocWriteRow(Base):
@@ -106,3 +112,51 @@ class IdempotencyKeyRow(Base):
     key: Mapped[str] = mapped_column(String, primary_key=True)  # app_id:chat_id:message_id
     task_id: Mapped[str | None] = mapped_column(String, nullable=True)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+# === Phase 2 ===
+
+class ExecutionRow(Base):
+    """节点级执行记录：每个 DAG 节点执行一次一行。
+
+    状态机（与 shared.executor_types.ExecutionState 一致）：
+    pending / running / success / failed / skipped / cancelled / denied
+    """
+
+    __tablename__ = "executions"
+
+    execution_id: Mapped[str] = mapped_column(String, primary_key=True)
+    task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    plan_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    tool_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    tool_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    risk_level: Mapped[str] = mapped_column(String, nullable=False)
+    state: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
+    inputs_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    outputs_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    artifacts_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApprovalRow(Base):
+    """卡片审批记录（含 nonce 一次性约束）。"""
+
+    __tablename__ = "approvals"
+
+    approval_id: Mapped[str] = mapped_column(String, primary_key=True)
+    task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    tool_name: Mapped[str] = mapped_column(String, nullable=False)
+    args_preview: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    actor_open_id: Mapped[str] = mapped_column(String, nullable=False)
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    nonce: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    resolved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

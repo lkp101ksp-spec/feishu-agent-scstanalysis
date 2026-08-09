@@ -5,16 +5,30 @@
 2. 若为 /bind-doc 指令：调用 BindDocService.bind + 回复 IM
 3. 否则：创建 task → LLM 生成 reply → IM 回复 → 若有有效 bind 则写文档 → 收尾 task 状态
 
+Phase 2 增量：保留 process() Phase 1 路径；新增 process_phase2() 走 Planner + Scheduler。
 返回 dict 结构（status / task_id / session_id / reply_text / doc_written / doc_id / warning）。
 """
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime
 from typing import Optional
 
 from feishu_adapter.im_adapter import IMAdapter
+from orchestrator.approval_service import ApprovalService
 from orchestrator.bind_doc_service import BindDocService
 from orchestrator.doc_write_service import DocWriteService
+from orchestrator.executor.kernel_manager import KernelPool
+from orchestrator.executor.local_executor import LocalExecutor
+from orchestrator.executor.sandbox import DockerSandbox, DockerSandboxConfig
 from orchestrator.llm_router import LLMRouter
+from orchestrator.planner.planner import Planner
+from orchestrator.planner.scheduler import Scheduler
 from orchestrator.session_service import SessionService
 from orchestrator.task_service import TaskService
+from orchestrator.template_engine import TemplateEngine
+from orchestrator.tools.tool_handler import ToolHandler
+from orchestrator.tools.tool_registry import ToolRegistry
 from shared.errors import BindDocInvalidError, DocWriteError, FeishuAgentError, LLMCallError
 from shared.schemas import ChatMessage, IncomingMessage
 
@@ -33,6 +47,13 @@ class Orchestrator:
         bind_doc_service: BindDocService,
         doc_write_service: DocWriteService,
         im_adapter: IMAdapter,
+        *,
+        settings=None,
+        doc_adapter=None,
+        base_adapter=None,
+        drive_adapter=None,
+        audit_repo=None,
+        artifact_repo=None,
     ):
         self.llm = llm_router
         self.session_service = session_service
@@ -40,6 +61,54 @@ class Orchestrator:
         self.bind_doc_service = bind_doc_service
         self.doc_write_service = doc_write_service
         self.im = im_adapter
+
+        # Phase 2 子系统（可选注入；None 时 process_phase2 不可用）
+        self.settings = settings
+        self.doc_adapter = doc_adapter
+        self.base_adapter = base_adapter
+        self.drive_adapter = drive_adapter
+        self.audit_repo = audit_repo
+        self.artifact_repo = artifact_repo
+
+        if settings is not None and doc_adapter is not None and base_adapter is not None \
+                and drive_adapter is not None:
+            self.registry = ToolRegistry()
+            from orchestrator.tools.builtin.l0_read import register_l0_read
+            from orchestrator.tools.builtin.l1_compute import register_l1_compute
+            from orchestrator.tools.builtin.l2_side_effect import register_l2_side_effect
+            register_l0_read(
+                self.registry,
+                doc_adapter=doc_adapter,
+                base_adapter=base_adapter,
+                drive_adapter=drive_adapter,
+            )
+            register_l1_compute(
+                self.registry, llm_router=llm_router, kernel_manager=None
+            )
+            register_l2_side_effect(
+                self.registry,
+                doc_adapter=doc_adapter,
+                base_adapter=base_adapter,
+                im_adapter=im_adapter,
+                drive_adapter=drive_adapter,
+            )
+            self.approval = ApprovalService(
+                im_adapter=im_adapter, approval_repo=None, audit_repo=audit_repo
+            )
+            self.tool_handler = ToolHandler(
+                registry=self.registry, approval_service=self.approval
+            )
+            cfg = DockerSandboxConfig.from_settings(settings)
+            self.sandbox = DockerSandbox(cfg)
+            self.kernel_pool = KernelPool(
+                sandbox=self.sandbox,
+                idle_timeout_sec=settings.kernel_idle_timeout_sec,
+            )
+            self.executor = LocalExecutor(
+                kernel_pool=self.kernel_pool, tool_handler=self.tool_handler
+            )
+            self.planner = Planner(llm_router=llm_router)
+            self.template = TemplateEngine()
 
     def process(self, incoming: IncomingMessage) -> dict:
         """处理一条入站消息，返回结果摘要。"""
@@ -153,4 +222,96 @@ class Orchestrator:
             "session_id": session_id,
             "bound_doc_id": incoming.bind_doc_id,
             "expires_at": expires_at.isoformat(),
+        }
+
+    # === Phase 2 ===
+
+    def process_phase2(self, incoming: IncomingMessage) -> dict:
+        """Phase 2 主流程：Planner → Scheduler → Template → DocWrite。
+
+        Phase 2 简化版：sync 包装 asyncio.run_until_complete；
+        Phase 2.1 引入完整 asyncio event loop。
+        """
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError(
+                "Phase 2 subsystems not initialized; "
+                "construct Orchestrator with settings + adapters."
+            )
+
+        session_id = self.session_service.get_or_create(
+            owner_open_id=incoming.sender_open_id,
+            source_chat_id=incoming.chat_id,
+        )
+        task_id = self.task_service.create(
+            session_id=session_id,
+            message_id=incoming.message_id,
+            intent="phase2_plan",
+        )
+
+        available_tools = [t.name for t in self.registry.list()]
+        tools_schema = self.registry.to_openai_functions(include_L2=False)
+        try:
+            plan = self.planner.plan(
+                message=incoming.text,
+                session_id=session_id,
+                task_id=task_id,
+                available_tools=available_tools,
+                tools_schema=tools_schema,
+            )
+        except Exception as e:
+            self.task_service.mark_failed(
+                task_id=task_id, error_code="PLAN_FAILED", error_message=str(e)
+            )
+            return {
+                "status": "plan_failed",
+                "task_id": task_id,
+                "session_id": session_id,
+                "error": str(e),
+            }
+
+        scheduler = Scheduler(
+            plan=plan, executor=self.executor,
+            max_concurrent=self.settings.max_concurrent_nodes,
+        )
+        try:
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(scheduler.run_until_done())
+        finally:
+            loop.close()
+
+        blocks = self.template.render_plan_summary(
+            status=result.status,
+            node_states={k: v.value for k, v in result.node_states.items()},
+            artifacts_count=0,
+        )
+
+        class _EmptySession:
+            bound_doc_id = None
+            bind_expires_at = None
+
+        sess = _EmptySession()
+        bound = self.session_service.bound_doc_id(session_id)
+        if bound:
+            sess = type(
+                "BS",
+                (),
+                {"bound_doc_id": bound,
+                 "bind_expires_at": datetime.utcnow()},
+            )()
+        if self.approval.policy.can_skip_approval(
+            "write_doc",
+            {"doc_id": getattr(sess, "bound_doc_id", None) or ""},
+            sess,
+        ) and getattr(sess, "bound_doc_id", None):
+            self.doc_adapter.append_blocks(sess.bound_doc_id, blocks)
+
+        self.task_service.mark_success(
+            task_id=task_id, reply_text=f"Plan {result.status}"
+        )
+        return {
+            "status": result.status,
+            "task_id": task_id,
+            "session_id": session_id,
+            "plan_id": plan.plan_id,
+            "node_states": {k: v.value for k, v in result.node_states.items()},
         }

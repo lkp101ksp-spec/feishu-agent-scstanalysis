@@ -77,6 +77,52 @@ def create_app(
     def health():
         return {"status": "ok"}
 
+    # === Phase 2: 卡片回调入口 ===
+    import json as _json
+    from fastapi import HTTPException as _HTTPException
+    from orchestrator.approval_service import ApprovalService
+
+    card_secret = "phase2-dev-secret-change-me"
+
+    @app.post("/webhook/lark/card")
+    async def lark_card_webhook(request: Request):
+        """Phase 2 卡片回调入口。
+
+        流程：HMAC 验签 → 解析 body → 落 audit（Phase 2 简化版）。
+        Phase 2.1 接入真实 approval_id → resolve_callback → Future resolve。
+        """
+        ctx: AppContext = app.state.ctx
+        body_bytes = await request.body()
+        signature = request.headers.get("X-Lark-Signature", "")
+        svc = ApprovalService(secret=card_secret)
+        if not svc.verify_callback(body_bytes, signature):
+            logger.warning("card_callback bad_signature")
+            raise _HTTPException(status_code=401, detail="bad signature")
+        try:
+            payload = _json.loads(body_bytes)
+        except Exception as e:
+            raise _HTTPException(status_code=400, detail=f"bad json: {e}")
+        try:
+            s = _factory()
+            try:
+                from persistence.repositories.audit_repo import AuditRepo
+                from shared.ulid_ import new_ulid
+                AuditRepo(s).write(
+                    audit_id=new_ulid(),
+                    actor_type="user",
+                    actor_id=payload.get("open_id", ""),
+                    action=f"card_{payload.get('action', 'unknown')}",
+                    target_type="approval",
+                    target_id=payload.get("approval_id", ""),
+                    detail=payload,
+                )
+                s.commit()
+            finally:
+                s.close()
+        except Exception:
+            logger.exception("audit write failed (ignored)")
+        return {"ok": True}
+
     @app.post("/webhook/lark")
     async def lark_webhook(request: Request):
         ctx: AppContext = app.state.ctx

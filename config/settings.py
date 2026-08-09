@@ -30,6 +30,26 @@ class Settings:
     database_url: str
     bind_doc_ttl_sec: int
     rate_limit_per_min: int
+    # === Phase 2: Executor ===
+    docker_image: str = "feishu-research-agent/kernel:latest"
+    docker_cpu_limit: float = 1.0
+    docker_memory_limit: str = "512m"
+    docker_pids_limit: int = 64
+    docker_network_mode: str = "none"
+    kernel_idle_timeout_sec: int = 1800
+    kernel_exec_timeout_sec: int = 60
+    sandbox_workspace_root: str = "/var/lib/feishu-agent/sessions"
+    # === Phase 2: Planner ===
+    max_concurrent_nodes: int = 4
+    node_default_max_retries: int = 1
+    context_token_budget: int = 200_000
+    # === Phase 2: Approval ===
+    approval_default_ttl_sec: int = 1800
+    approval_hmac_secret: str = "phase2-dev-secret-change-me"
+    # === Phase 2: Drive ===
+    drive_max_file_size_mb: int = 500
+    drive_upload_chunk_size_mb: int = 4
+    drive_inline_threshold_kb: int = 1024
 
 
 def _load_yaml(path: str) -> dict:
