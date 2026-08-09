@@ -391,3 +391,80 @@ def process_phase4(self, incoming: IncomingMessage) -> dict:
 | 实施门 | plan 用户评审通过 |
 | 测试门 | 9 新测试全部通过；216 老测试 0 回归 |
 | 演示门 | 真 NCBI API + "blast BRCA1" 全链路跑通 |
+
+---
+
+## 8. 实施结果（已交付）
+
+**commit**：`63cbf0f feat(phase4-mvp): implement NCBI BLAST tool`
+
+### 实际测试数
+
+| 模块 | 计划测试数 | 实际测试数 |
+|---|---|---|
+| Settings (BLAST) | 1 | **1** |
+| RateLimiter | 2 | **2** |
+| BlastNCBITool | 5 | **5** |
+| L3_bio 注册 | 2 | **2** |
+| Orchestrator smoke | 1 | **1** |
+| E1-E3 e2e | 3 | **3** |
+| **新增小计** | 14 | **14** |
+| Phase 3 累计 | 216 | 216 |
+| **总计** | **230** | **230** ✅ |
+
+### 累计测试数
+
+```
+Phase 1:    86  → Phase 2:   147  → Phase 3:   216  → Phase 4 MVP: 230
+            +61            +69            +14
+```
+
+### 新增/修改文件清单
+
+```
+新增：
+- orchestrator/tools/bio/__init__.py
+- orchestrator/tools/bio/rate_limiter.py              # 3 req/s token bucket
+- orchestrator/tools/bio/blast_ncbi.py                # NCBI Entrez API
+- orchestrator/tools/builtin/l3_bio.py                # register_l3_bio
+- tests/unit/test_rate_limiter.py
+- tests/unit/test_blast_ncbi.py
+- tests/unit/test_l3_bio_registry.py
+- tests/unit/test_orchestrator_phase4.py
+- tests/unit/test_phase4_settings.py
+- tests/integration/test_e2e_phase4_blast.py
+
+修改：
+- config/settings.py                                  # +4 blast_* 字段
+- orchestrator/app.py                                 # register_l3_bio + process_phase4
+- orchestrator/tools/tool_handler.py                  # 透传 handler error_code
+```
+
+### 用户可触发场景（演示门）
+
+```
+用户: "blast 搜索 BRCA1 人类蛋白"
+  ↓ Planner（Phase 3 LLM）
+DAG: blast_search(query="BRCA1 AND Homo sapiens", database="nr", max_hits=5)
+  ↓ Scheduler（Phase 3）
+  ↓ LocalExecutor → ToolHandler
+  ↓ BlastNCBITool
+    ├─ RateLimiter.wait() (3 req/s)
+    ├─ esearch.fcgi  → 取 top 5 IDs
+    ├─ efetch.fcgi   → 取 records
+    └─ ToolResult.outputs = {ids, records, total_count, query, database}
+  ↓ TemplateEngine.render_plan_summary()
+  ↓ DocAdapter.append_blocks() (Phase 1)
+飞书文档：含 5 个 BLAST hits（ID + title + summary）
+```
+
+### 风险记录（已实施，未触发）
+
+| 风险 | 实际验证结果 |
+|---|---|
+| NCBI 限流违反 3 req/s | E2 测试：RateLimiter 强制 0.333s 间隔 ✅ |
+| API 返回 500 | E3 测试：返回 `BLAST_API_ERROR` 错误码 ✅ |
+| query 为空 | test_handle_invalid_query_returns_error ✅ |
+| no hits | test_handle_returns_empty_when_no_hits ✅ |
+| L0_read 工具无审批 | ToolHandler.execute() 直接调 handler ✅ |
+| 注册副作用 | 216 + 14 = 230 测试通过，0 回归 ✅ |
