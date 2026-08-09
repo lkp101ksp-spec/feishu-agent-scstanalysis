@@ -18,6 +18,17 @@ class IncomingMessage(BaseModel):
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
     content: str
+    estimated_tokens: int = 0
+    summary: Optional["SummaryBlock"] = None
+
+
+class SummaryBlock(BaseModel):
+    """上下文压缩后的总结块；可作为 ChatMessage 替代品。"""
+    summary_id: str
+    text: str
+    kind: str = "summary"
+    ref: str = ""
+    saved_tokens: int = 0
 
 
 class AuditRecord(BaseModel):

@@ -41,6 +41,7 @@ class AppContext:
     rate: TokenBucket
     rate_per_min: int
     orchestrator: object  # Orchestrator 实例，类型在 Phase 1 避免循环引用
+    bind_doc_service: object | None = None  # Phase 3：续期用
 
 
 def create_app(
@@ -48,6 +49,7 @@ def create_app(
     orchestrator,
     rate_per_min: int = 60,
     session_factory=None,
+    bind_doc_service=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -71,6 +73,7 @@ def create_app(
         rate=TokenBucket(capacity=rate_per_min, refill_per_sec=rate_per_min / 60.0),
         rate_per_min=rate_per_min,
         orchestrator=orchestrator,
+        bind_doc_service=bind_doc_service,
     )
 
     @app.get("/health")
@@ -121,6 +124,20 @@ def create_app(
                 s.close()
         except Exception:
             logger.exception("audit write failed (ignored)")
+        # === Phase 3: renew_bind action ===
+        action = payload.get("action", "")
+        if action == "renew_bind":
+            session_id = payload.get("session_id", "")
+            bind_doc_service = getattr(ctx, "bind_doc_service", None)
+            if bind_doc_service is None:
+                logger.warning("renew_bind received but bind_doc_service not configured")
+                return {"ok": False, "reason": "bind_doc_service not configured"}
+            try:
+                new_exp = bind_doc_service.renew(session_id=session_id)
+                return {"ok": True, "new_expires": new_exp.isoformat()}
+            except Exception as e:
+                logger.exception("renew_bind failed")
+                return {"ok": False, "reason": str(e)}
         return {"ok": True}
 
     @app.post("/webhook/lark")

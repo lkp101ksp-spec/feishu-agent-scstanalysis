@@ -315,3 +315,41 @@ class Orchestrator:
             "plan_id": plan.plan_id,
             "node_states": {k: v.value for k, v in result.node_states.items()},
         }
+
+    # === Phase 3 ===
+    def process_phase3(self, incoming: IncomingMessage) -> dict:
+        """Phase 3 主流程：runtime 接管 + bind_doc 续期指令 + 上下文压缩。
+
+        与 process_phase2 区别：
+        - 新增 /bind-doc-renew 指令分支
+        - Scheduler 注入 PlanRuntime（动态追加 / 循环 / 冻结 hook）
+        - ContextCompressor 在 LLM 调用前监控
+        """
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError(
+                "Phase 3 subsystems not initialized; "
+                "construct Orchestrator with settings + adapters."
+            )
+
+        # 1. /bind-doc-renew 指令
+        if incoming.text.strip() == "/bind-doc-renew":
+            session_id = self.session_service.get_or_create(
+                owner_open_id=incoming.sender_open_id,
+                source_chat_id=incoming.chat_id,
+            )
+            try:
+                new_exp = self.bind_doc_service.renew(session_id=session_id)
+                self.im.reply(incoming.chat_id,
+                              f"[成功] 已续期到 {new_exp.isoformat()}")
+                return {
+                    "status": "renew_bind",
+                    "session_id": session_id,
+                    "new_expires": new_exp.isoformat(),
+                }
+            except Exception as e:
+                self.im.reply(incoming.chat_id, f"[错误] 续期失败：{e}")
+                return {"status": "renew_bind_failed", "error": str(e)}
+
+        # 2. 普通消息：复用 process_phase2 主路径（Phase 3 简化版）
+        # 完整 dynamic-append / while / for / freeze 集成在 Phase 3.1
+        return self.process_phase2(incoming)

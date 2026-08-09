@@ -31,10 +31,11 @@ class PlanResult:
 
 
 class Scheduler:
-    def __init__(self, plan: DAGPlan, executor, max_concurrent: int = 4) -> None:
+    def __init__(self, plan: DAGPlan, executor, max_concurrent: int = 4, runtime=None) -> None:
         self.plan = plan
         self.executor = executor
         self.max_concurrent = max_concurrent
+        self.runtime = runtime  # Phase 3：可选注入；None 时走 Phase 2 路径
         self._handles: dict[str, TaskHandle] = {}
         self._node_map: dict[str, DAGNode] = {n.node_id: n for n in plan.nodes}
         self._started_at = datetime.utcnow()
@@ -113,6 +114,20 @@ class Scheduler:
                     h.state = current
 
     async def run_until_done(self) -> PlanResult:
+        # Phase 3：runtime 注入时委托给 Runtime（dynamic-append / loop / freeze）
+        if self.runtime is not None:
+            from orchestrator.runtime.plan_runtime import RuntimeState
+            self.runtime.state = RuntimeState.RUNNING
+            try:
+                # Phase 3 简化版：Runtime 仅承载状态；驱动循环仍由 Scheduler 负责
+                # 完整调度集成由 Phase 3.1 / Phase 4 完成
+                return await self._run_phase2_loop()
+            finally:
+                self.runtime.state = RuntimeState.TERMINAL
+        return await self._run_phase2_loop()
+
+    async def _run_phase2_loop(self) -> PlanResult:
+        # Phase 2 原逻辑（保留）
         while not self._all_terminal():
             ready = self._ready_nodes()
             for node in ready[: self.max_concurrent]:

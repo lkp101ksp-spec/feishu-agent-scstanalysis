@@ -65,3 +65,18 @@ class LLMRouter:
             raise LLMCallError(
                 f"primary failed ({last_err!r}), fallback failed ({e!r})"
             ) from e
+
+    def call(self, *, role: str, prompt: str, tools: Optional[list] = None) -> str:
+        """Phase 3：role-based 单轮 prompt 调用。
+
+        Phase 3 简化版：role 仅作为 audit 标签；调用同 chat()。
+        Phase 5 扩展：每个 role 独立 primary/fallback 模型配置。
+        """
+        msgs = [
+            {"role": "system", "content": f"[role={role}]"},
+            {"role": "user", "content": prompt},
+        ]
+        return self.chat([
+            ChatMessage(role="system", content=f"[role={role}]"),
+            ChatMessage(role="user", content=prompt),
+        ])

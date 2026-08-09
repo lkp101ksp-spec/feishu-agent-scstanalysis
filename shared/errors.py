@@ -78,3 +78,20 @@ class TaskNotFoundError(FeishuAgentError):
 class ArtifactNotFoundError(FeishuAgentError):
     """Artifact 不存在。"""
     code = "ARTIFACT_NOT_FOUND"
+
+
+# === Phase 3 errors ===
+
+class FreezeRequired(FeishuAgentError):
+    """上下文超 95%，强制冻结 session。"""
+    code = "FREEZE_REQUIRED"
+
+
+class LoopMaxIterError(FeishuAgentError):
+    """循环节点达到 max_iterations 强制退出。"""
+    code = "LOOP_MAX_ITER"
+
+
+class DynamicAppendError(FeishuAgentError):
+    """动态追加节点失败（validate_dag 不通过）。"""
+    code = "DYNAMIC_APPEND_FAILED"

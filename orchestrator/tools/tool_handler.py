@@ -35,10 +35,11 @@ class ToolHandler:
     ) -> ToolResult:
         spec = self.registry.get(tool_name)
         # L1: AST check
+        ast_report = None
         if spec.risk_level == "L1_compute":
             code = inputs.get("code") or ""
             try:
-                self._ast.check(code)
+                ast_report = self._ast.check(code)
             except ToolBlockedError as e:
                 return ToolResult(
                     outputs={},
@@ -46,6 +47,13 @@ class ToolHandler:
                     error_code=e.code,
                     error_message=str(e),
                 )
+        # L1: P1/P2 notices 通过 outputs.ast_notices 透传（Phase 3）
+        outputs_extra: dict = {}
+        if ast_report is not None and ast_report.notices:
+            outputs_extra["ast_notices"] = [
+                {"level": n[0], "message": n[1], "line": n[2]}
+                for n in ast_report.notices
+            ]
         # L2: approval stub
         if spec.risk_level == "L2_side_effect" and self._approval is not None:
             ok = self._approval.request_sync(
@@ -69,10 +77,11 @@ class ToolHandler:
             out = spec.handler(**inputs)
             if not isinstance(out, dict):
                 out = {"result": out}
+            out.update(outputs_extra)  # 注入 AST P1/P2 notices
             return ToolResult(outputs=out, artifacts_ids=[])
         except Exception as e:
             return ToolResult(
-                outputs={},
+                outputs=outputs_extra,
                 artifacts_ids=[],
                 error_code="TOOL_EXEC_FAILED",
                 error_message=str(e),

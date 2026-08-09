@@ -50,6 +50,16 @@ class Settings:
     drive_max_file_size_mb: int = 500
     drive_upload_chunk_size_mb: int = 4
     drive_inline_threshold_kb: int = 1024
+    # === Phase 3: 上下文压缩 ===
+    context_compress_trigger_ratio: float = 0.8
+    context_freeze_trigger_ratio: float = 0.95
+    context_preserve_recent_n: int = 5
+    # === Phase 3: 循环上限 ===
+    loop_max_iterations_default_while: int = 10
+    loop_max_iterations_default_for: int = 100
+    # === Phase 3: bind_doc 续期 ===
+    bind_doc_renew_threshold_sec: int = 300
+    bind_doc_renew_card_interval_sec: int = 60
 
 
 def _load_yaml(path: str) -> dict:

@@ -32,6 +32,10 @@ class SessionRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
+    # === Phase 3 ===
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    origin_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    token_count: Mapped[int] = mapped_column(default=0, nullable=False)
 
 
 class TaskRow(Base):
@@ -141,6 +145,10 @@ class ExecutionRow(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # === Phase 3 ===
+    loop_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    loop_iteration: Mapped[int | None] = mapped_column(default=None, nullable=True)
+    dynamic_parent_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ApprovalRow(Base):
@@ -160,3 +168,31 @@ class ApprovalRow(Base):
     resolved_by: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+# === Phase 3 ===
+
+class PlanRuntimeStateRow(Base):
+    """PlanRuntime 持久化状态（loop counter / dynamic nodes / iteration vars）。"""
+    __tablename__ = "plan_runtime_state"
+
+    plan_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    state_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="running")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class SessionFreezeRow(Base):
+    """session 冻结记录（新旧 session 关联）。"""
+    __tablename__ = "session_freezes"
+
+    freeze_id: Mapped[str] = mapped_column(String, primary_key=True)
+    origin_session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    new_session_id: Mapped[str] = mapped_column(String, nullable=False)
+    summary_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    trigger_ratio: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

@@ -46,3 +46,18 @@ class SessionRepo:
     def get(self, session_id: str) -> Optional[SessionRow]:
         """按主键查询，不存在返回 None。"""
         return self.session.get(SessionRow, session_id)
+
+    def update_bind_expires(self, session_id: str, bind_expires_at) -> Optional[SessionRow]:
+        """仅更新 bind_expires_at；不改变其他字段。"""
+        row = self.session.get(SessionRow, session_id)
+        if row is None:
+            return None
+        row.bind_expires_at = bind_expires_at
+        self.session.flush()
+        return row
+
+    def list_active(self) -> list[SessionRow]:
+        """列出 status='active' 的 session（Phase 3 续期卡片扫描用）。"""
+        return (
+            self.session.query(SessionRow).filter_by(status="active").all()
+        )

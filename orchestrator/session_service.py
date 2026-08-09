@@ -1,6 +1,7 @@
 """Session 服务层。
 
 按 (open_id, chat_id) 复用最近 active session，没有就新建。
+Phase 3：freeze_session 把旧 session 标 archived，开新 session 并继承 bind（如果未过期）。
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -11,10 +12,15 @@ from shared.ulid_ import new_ulid
 
 
 class SessionService:
-    """对 SessionRepo 的封装，提供 get_or_create / bind_doc / bound_doc_id / is_bind_valid。"""
+    """对 SessionRepo 的封装，提供 get_or_create / bind_doc / bound_doc_id / is_bind_valid。
 
-    def __init__(self, repo: SessionRepo):
+    Phase 3：freeze_session / freeze_repo / audit_repo。
+    """
+
+    def __init__(self, repo: SessionRepo, freeze_repo=None, audit_repo=None):
         self.repo = repo
+        self.freeze_repo = freeze_repo
+        self.audit_repo = audit_repo
 
     def get_or_create(self, owner_open_id: str, source_chat_id: str) -> str:
         """查找 (open_id, chat_id) 下最近 active session，没有就新建。
@@ -78,3 +84,53 @@ class SessionService:
         if expires_at <= datetime.now(timezone.utc):
             return None
         return row.bound_doc_id
+
+    # === Phase 3 ===
+    def freeze_session(self, *, session_id: str, summary: str,
+                       trigger_ratio: float) -> str:
+        """冻结旧 session，开新 session 并继承 bind（如果未过期）。"""
+        origin = self.repo.get(session_id)
+        # 1. 旧 session 标 archived
+        self.repo.upsert(
+            session_id=session_id,
+            archived_at=datetime.now(timezone.utc),
+            status="archived",
+        )
+        # 2. 决定 bind_doc 是否继承
+        inherited_bind = None
+        inherited_expires = None
+        if (origin.bound_doc_id
+                and origin.bind_expires_at is not None
+                and origin.bind_expires_at > datetime.now(timezone.utc)):
+            inherited_bind = origin.bound_doc_id
+            inherited_expires = origin.bind_expires_at
+        # 3. 开新 session
+        new_sid = new_ulid()
+        self.repo.upsert(
+            session_id=new_sid,
+            owner_open_id=origin.owner_open_id,
+            source_chat_id=origin.source_chat_id,
+            bound_doc_id=inherited_bind,
+            bind_expires_at=inherited_expires,
+            approval_scope=origin.approval_scope or {},
+            origin_session_id=session_id,
+        )
+        # 4. 写 session_freezes
+        if self.freeze_repo is not None:
+            self.freeze_repo.create(
+                origin_session_id=session_id,
+                new_session_id=new_sid,
+                summary_id=None,
+                trigger_ratio=trigger_ratio,
+            )
+        # 5. 审计
+        if self.audit_repo is not None:
+            self.audit_repo.write(
+                actor_type="system", actor_id="session_service",
+                action="freeze_session", target_type="session",
+                target_id=session_id, detail={
+                    "new_session_id": new_sid, "trigger_ratio": trigger_ratio,
+                    "inherited_bind": bool(inherited_bind),
+                },
+            )
+        return new_sid

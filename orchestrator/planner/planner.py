@@ -4,6 +4,8 @@
 - LLM-call-A（轻量）：message → intent 字符串
 - LLM-call-B（强推理）：prompt + tools schema → DAGPlan JSON
 返回前调用 validate_dag()；失败抛 DAGValidationError。
+
+Phase 3 升级：DAGNode 支持 branch/while/for 嵌套子树，递归构造。
 """
 from __future__ import annotations
 
@@ -86,7 +88,11 @@ class Planner:
             f"用户消息：{message}\n"
             f"intent：{intent}\n"
             f"可用工具：{tool_names}\n\n"
-            "请生成 DAGPlan JSON。节点 inputs 用 '<upstream_node_id>.<field>' 引用上游输出。"
+            "你可以生成 tool/branch/while/for 节点。"
+            "branch.condition_prompt 是自然语言条件；true_branch/false_branch 是嵌套 DAGNode 数组。"
+            "while.while_condition_prompt 是循环条件；body 是嵌套 DAGNode 数组；max_iterations 默认10。"
+            "for.iterate_over 是上游 outputs 字段（<node_id>.<field>）；body 嵌套；max_iterations 默认100。"
+            "节点 inputs 用 '<upstream_node_id>.<field>' 引用上游输出。"
             "entry_node_ids 必须是 depends_on=[] 的节点。"
         )
 
@@ -95,7 +101,7 @@ class Planner:
             payload = resp
         else:
             payload = json.loads(resp)
-        nodes = [DAGNode(**n) for n in payload["nodes"]]
+        nodes = [_build_node(n) for n in payload["nodes"]]
         return DAGPlan(
             plan_id=new_ulid(),
             task_id=task_id,
@@ -103,3 +109,32 @@ class Planner:
             nodes=nodes,
             entry_node_ids=payload["entry_node_ids"],
         )
+
+
+def _build_node(payload: dict) -> DAGNode:
+    """递归构造嵌套 DAGNode（Phase 3）。"""
+    kwargs = dict(
+        node_id=payload["node_id"],
+        kind=payload["kind"],
+        tool_name=payload.get("tool_name"),
+        inputs=payload.get("inputs", {}),
+        depends_on=payload.get("depends_on", []),
+        config=payload.get("config", {}),
+        condition=payload.get("condition"),
+        join_strategy=payload.get("join_strategy"),
+        on_node_fail=payload.get("on_node_fail", "continue"),
+    )
+    if payload["kind"] == "branch":
+        kwargs["condition_prompt"] = payload.get("condition_prompt")
+        kwargs["true_branch"] = [_build_node(n) for n in payload.get("true_branch", [])]
+        kwargs["false_branch"] = [_build_node(n) for n in payload.get("false_branch", [])]
+    elif payload["kind"] == "while":
+        kwargs["while_condition_prompt"] = payload.get("while_condition_prompt")
+        kwargs["body"] = [_build_node(n) for n in payload.get("body", [])]
+        kwargs["max_iterations"] = payload.get("max_iterations", 10)
+    elif payload["kind"] == "for":
+        kwargs["iterate_over"] = payload.get("iterate_over")
+        kwargs["iteration_var"] = payload.get("iteration_var", "item")
+        kwargs["body"] = [_build_node(n) for n in payload.get("body", [])]
+        kwargs["max_iterations"] = payload.get("max_iterations", 100)
+    return DAGNode(**kwargs)
