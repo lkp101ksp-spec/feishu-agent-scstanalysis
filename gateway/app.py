@@ -46,6 +46,10 @@ class AppContext:
     version_service: object | None = None  # Phase 6
     share_service: object | None = None  # Phase 6
     hot_loader: object | None = None  # Phase 6
+    comment_service: object | None = None  # Phase 7
+    search_service: object | None = None  # Phase 7
+    public_service: object | None = None  # Phase 7
+    fork_service: object | None = None  # Phase 7
 
 
 def create_app(
@@ -58,6 +62,10 @@ def create_app(
     version_service=None,
     share_service=None,
     hot_loader=None,
+    comment_service=None,
+    search_service=None,
+    public_service=None,
+    fork_service=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -86,6 +94,10 @@ def create_app(
         version_service=version_service,
         share_service=share_service,
         hot_loader=hot_loader,
+        comment_service=comment_service,
+        search_service=search_service,
+        public_service=public_service,
+        fork_service=fork_service,
     )
 
     @app.get("/health")
@@ -303,6 +315,117 @@ def create_app(
         except ValueError as e:
             raise _HTTPException(status_code=400, detail=str(e))
         return {"ok": True, "name": name}
+
+    # === Phase 7: 评论 + 搜索 + 公共模板 + fork ===
+    @app.get("/comments/{doc_id}")
+    async def fetch_comments(doc_id: str, block_id: str | None = None):
+        ctx = app.state.ctx
+        cs = ctx.comment_service
+        if cs is None:
+            return {"text": "（comment_service 未配置）"}
+        text = cs.fetch_thread(doc_id=doc_id, block_id=block_id)
+        return {"text": text}
+
+    @app.get("/templates/search")
+    async def search_templates(
+        q: str = "",
+        scope: str | None = None,
+        owner_open_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ):
+        ctx = app.state.ctx
+        ss = ctx.search_service
+        if ss is None:
+            return {"results": []}
+        rows = ss.search(
+            query=q, scope=scope, owner_open_id=owner_open_id,
+            limit=limit, offset=offset,
+        )
+        return {"results": [
+            getattr(r, "template_id", r) for r in rows
+        ]}
+
+    @app.post("/templates/{template_id}/submit-public")
+    async def submit_public_template(template_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        ps = ctx.public_service
+        if ps is None:
+            raise _HTTPException(status_code=503, detail="public_service not configured")
+        try:
+            ps.submit_for_review(
+                template_id=template_id,
+                actor_open_id=body["caller_open_id"],
+            )
+        except PermissionError:
+            raise _HTTPException(status_code=403, detail="not owner")
+        except ValueError as e:
+            raise _HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
+
+    @app.post("/admin/templates/{template_id}/review")
+    async def admin_review_template(template_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        ps = ctx.public_service
+        if ps is None:
+            raise _HTTPException(status_code=503, detail="public_service not configured")
+        action = body["action"]
+        admin = body["admin_open_id"]
+        try:
+            if action == "approve":
+                ps.approve(template_id=template_id, actor_open_id=admin,
+                            note=body.get("note", ""))
+            elif action == "reject":
+                ps.reject(template_id=template_id, actor_open_id=admin,
+                           reason=body.get("reason", ""))
+            else:
+                raise _HTTPException(status_code=400, detail="bad action")
+        except PermissionError:
+            raise _HTTPException(status_code=403, detail="not admin")
+        except ValueError as e:
+            raise _HTTPException(status_code=404, detail=str(e))
+        return {"ok": True}
+
+    @app.get("/templates/public")
+    async def list_public_templates():
+        ctx = app.state.ctx
+        ps = ctx.public_service
+        if ps is None:
+            return {"templates": []}
+        return {"templates": [
+            getattr(r, "template_id", r) for r in ps.list_public()
+        ]}
+
+    @app.post("/templates/{template_id}/fork")
+    async def fork_template(template_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        fs = ctx.fork_service
+        if fs is None:
+            raise _HTTPException(status_code=503, detail="fork_service not configured")
+        try:
+            new_id = fs.fork_from_public(
+                source_template_id=template_id,
+                actor_open_id=body["caller_open_id"],
+            )
+        except PermissionError:
+            raise _HTTPException(status_code=403, detail="not public")
+        except ValueError as e:
+            raise _HTTPException(status_code=404, detail=str(e))
+        return {"ok": True, "new_template_id": new_id}
+
+    @app.get("/templates/{template_id}/forks")
+    async def list_forks(template_id: str):
+        ctx = app.state.ctx
+        fs = ctx.fork_service
+        if fs is None:
+            return {"forks": []}
+        return {"forks": [
+            getattr(r, "template_id", r)
+            for r in fs.list_forks(template_id)
+        ]}
 
     @app.post("/webhook/lark")
     async def lark_webhook(request: Request):

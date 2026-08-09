@@ -221,6 +221,8 @@ class TemplateRow(Base):
     # === Phase 6 ===
     scope: Mapped[str] = mapped_column(String, default="user", nullable=False)
     chat_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # === Phase 7 ===
+    lineage_template_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 # === Phase 6 ===
@@ -240,3 +242,19 @@ class TemplateVersionRow(Base):
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
     created_by: Mapped[str] = mapped_column(String, nullable=False)
+
+
+# === Phase 7 ===
+
+class TemplateAuditRow(Base):
+    """Phase 7: 公共模板审核日志。"""
+    __tablename__ = "template_audit"
+
+    audit_id: Mapped[str] = mapped_column(String, primary_key=True)
+    template_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String, nullable=False)
+    actor_open_id: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )

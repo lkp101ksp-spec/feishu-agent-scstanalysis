@@ -742,6 +742,65 @@ CREATE INDEX ix_templates_name_trgm
 | ADR 门 | 4 个 ADR 用户评审 |
 | 实施门 | plan 用户评审通过 |
 | 测试门 | 45 新测试全部通过；336 老测试 0 回归 |
+
+---
+
+## 14. 实施结果（已交付）
+
+**commit**：（见 git log）
+
+### 实际测试数
+
+| 模块 | 计划测试数 | 实际测试数 |
+|---|---|---|
+| CommentClient（mock API）| 5 | **5** |
+| CommentService | 5 | **5** |
+| TemplateAuditRepo | 2 | **2** |
+| TemplateRepo search + list_by_scope + list_by_lineage | 5 | **6** |
+| TemplateSearchService | 4 | **4** |
+| PublicTemplateService | 6 | **7** |
+| ForkService | 5 | **5** |
+| FastAPI 新路由（集成）| 7 | **10** |
+| Orchestrator smoke | 1 | **1** |
+| E1-E8 端到端 | 8 | **8** |
+| **新增小计** | 48 | **53** |
+| Phase 6 累计 | 336 | 336 |
+| **总计** | **384** | **389** ✅ |
+
+### 累计测试数
+
+```
+Phase 1: 86   → Phase 2:147 → Phase 3:216 → Phase 4 MVP:230 → Phase 5:278 → Phase 6:336 → Phase 7:389
+            +61            +69            +14            +48            +58           +53
+```
+
+### 新增/修改文件清单
+
+```
+新增：
+- feishu_adapter/comment_client.py               # 飞书 doc comment API GET
+- orchestrator/templates/comment_service.py      # fetch_thread + IM 文本
+- orchestrator/templates/search_service.py       # PG trigram + LIKE
+- orchestrator/templates/public_service.py       # 公共模板 + 审核
+- orchestrator/templates/fork_service.py         # fork public → user
+- persistence/repositories/template_audit_repo.py  # 审核日志 CRUD
+- tests/unit/test_comment_service.py
+- tests/unit/test_template_audit.py
+- tests/unit/test_template_repo_phase7.py
+- tests/unit/test_template_search.py
+- tests/unit/test_public_template.py
+- tests/unit/test_fork_service.py
+- tests/unit/test_orchestrator_phase7.py
+- tests/integration/test_comment_client.py
+- tests/integration/test_templates_phase7_api.py
+- tests/integration/test_e2e_phase7_e1_e8.py
+
+修改：
+- persistence/models.py                          # +lineage_template_id, +TemplateAuditRow
+- persistence/repositories/template_repo.py      # +search +list_by_scope +list_by_lineage +lineage 参数
+- gateway/app.py                                 # +/comments /search /admin/templates/review /fork /public 路由
+- orchestrator/app.py                            # +process_phase7 + /comments + /template-submit-public + /template-fork IM 指令
+```
 | 演示门 | 4 大模块全链路跑通（评论 / 搜索 / 公共模板审核 / fork）|
 
 ---

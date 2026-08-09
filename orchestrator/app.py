@@ -464,3 +464,70 @@ class Orchestrator:
 
         # 普通消息：复用 process_phase5
         return self.process_phase5(incoming)
+
+    # === Phase 7 ===
+    def process_phase7(self, incoming) -> dict:
+        """Phase 7 入口：复用 process_phase6 + 评论/搜索/公共模板/fork 指令。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 7 subsystems not initialized")
+
+        text = incoming.text.strip()
+        if text.startswith("/comments "):
+            parts = text.split()
+            if len(parts) < 2:
+                self.im.reply(incoming.chat_id, "[错误] 用法: /comments <doc_id>")
+                return {"status": "comments_failed", "reason": "bad_args"}
+            doc_id = parts[1]
+            block_id = parts[2] if len(parts) >= 3 else None
+            cs = getattr(self, "comment_service", None)
+            if cs is None:
+                self.im.reply(incoming.chat_id, "[错误] comment_service 未配置")
+                return {"status": "comments_failed"}
+            rendered = cs.fetch_thread(doc_id=doc_id, block_id=block_id)
+            self.im.reply(incoming.chat_id, rendered)
+            return {"status": "comments_listed", "doc_id": doc_id,
+                    "block_id": block_id}
+
+        if text.startswith("/template-submit-public "):
+            tid = text.split(maxsplit=1)[1].strip()
+            ps = getattr(self, "public_service", None)
+            if ps is None:
+                self.im.reply(incoming.chat_id, "[错误] public_service 未配置")
+                return {"status": "submit_failed"}
+            try:
+                ps.submit_for_review(template_id=tid,
+                                       actor_open_id=incoming.sender_open_id)
+                self.im.reply(incoming.chat_id, f"[成功] 模板 {tid} 已提交公共审核")
+                return {"status": "submitted", "template_id": tid}
+            except PermissionError:
+                self.im.reply(incoming.chat_id, "[错误] 您不是模板所有者")
+                return {"status": "submit_failed", "reason": "not_owner"}
+            except ValueError as e:
+                self.im.reply(incoming.chat_id, f"[错误] {e}")
+                return {"status": "submit_failed", "reason": str(e)}
+
+        if text.startswith("/template-fork "):
+            tid = text.split(maxsplit=1)[1].strip()
+            fs = getattr(self, "fork_service", None)
+            if fs is None:
+                self.im.reply(incoming.chat_id, "[错误] fork_service 未配置")
+                return {"status": "fork_failed"}
+            try:
+                new_id = fs.fork_from_public(
+                    source_template_id=tid,
+                    actor_open_id=incoming.sender_open_id,
+                )
+                self.im.reply(incoming.chat_id,
+                              f"[成功] 已 fork 模板，新 ID: {new_id}")
+                return {"status": "forked", "new_template_id": new_id}
+            except PermissionError:
+                self.im.reply(incoming.chat_id,
+                              "[错误] 仅公共模板可 fork")
+                return {"status": "fork_failed", "reason": "not_public"}
+            except ValueError as e:
+                self.im.reply(incoming.chat_id, f"[错误] {e}")
+                return {"status": "fork_failed", "reason": str(e)}
+
+        # 普通消息：复用 process_phase6
+        return self.process_phase6(incoming)
