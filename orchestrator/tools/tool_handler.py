@@ -78,7 +78,15 @@ class ToolHandler:
             if not isinstance(out, dict):
                 out = {"result": out}
             out.update(outputs_extra)  # 注入 AST P1/P2 notices
-            return ToolResult(outputs=out, artifacts_ids=[])
+            # Phase 4：handler 内部错误（error_code in dict）→ 透传到 ToolResult
+            tool_err = out.pop("error_code", None)
+            tool_err_msg = out.pop("error_message", None)
+            return ToolResult(
+                outputs=out,
+                artifacts_ids=[],
+                error_code=tool_err,
+                error_message=tool_err_msg,
+            )
         except Exception as e:
             return ToolResult(
                 outputs=outputs_extra,

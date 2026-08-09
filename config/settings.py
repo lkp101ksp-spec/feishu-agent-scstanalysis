@@ -60,6 +60,11 @@ class Settings:
     # === Phase 3: bind_doc 续期 ===
     bind_doc_renew_threshold_sec: int = 300
     bind_doc_renew_card_interval_sec: int = 60
+    # === Phase 4 MVP: BLAST ===
+    blast_api_base_url: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+    blast_rate_per_sec: float = 3.0
+    blast_timeout_sec: int = 30
+    blast_max_hits_default: int = 5
 
 
 def _load_yaml(path: str) -> dict:
