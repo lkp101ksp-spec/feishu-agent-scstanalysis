@@ -33,6 +33,12 @@ class ASTGuard:
         ("ctypes", "cdll"),
     }
 
+    # Phase 6: 直接拦截的 builtin 函数
+    BLOCKED_BUILTINS: set[str] = {
+        "eval", "exec", "__import__", "compile",
+        "globals", "locals", "vars",
+    }
+
     P1_PATTERNS = {  # 网络出口
         ("requests", "get"), ("requests", "post"), ("requests", "put"),
         ("requests", "delete"), ("requests", "patch"),
@@ -89,6 +95,11 @@ class ASTGuard:
                         )
             # P0 Name 直调：`from subprocess import run; run([...])`
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                # Phase 6: 直接拦截的 builtin（eval / exec / __import__）
+                if node.func.id in self.BLOCKED_BUILTINS:
+                    raise ToolBlockedError(
+                        f"P0 blocked builtin: {node.func.id} at line {node.lineno}"
+                    )
                 if node.func.id in from_imports:
                     module_id = from_imports[node.func.id]
                     if module_id in {"os", "subprocess", "socket", "ctypes"}:

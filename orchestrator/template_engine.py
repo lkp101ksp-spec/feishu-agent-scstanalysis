@@ -144,4 +144,24 @@ class TemplateEngine:
                         lines.append(f"- {item}")
             elif t == "image":
                 lines.append(f"![{b.alt}]({b.url})")
+            # === Phase 6: 8 类增量 ===
+            elif t == "embed":
+                lines.append(f"[embed: {b.title}]({b.url})")
+            elif t == "divider":
+                lines.append("---")
+            elif t == "callout":
+                lines.append(f"{b.emoji} {b.text}")
+            elif t == "equation":
+                lines.append(f"$${b.latex}$$")
+            elif t == "math":
+                if b.display_mode:
+                    lines.append(f"$$\n{b.latex}\n$$")
+                else:
+                    lines.append(f"${b.latex}$")
+            elif t == "mermaid":
+                lines.append(f"```mermaid\n{b.code}\n```")
+            elif t == "video":
+                lines.append(f"[video: {b.url}]")
+            elif t == "file":
+                lines.append(f"[file: {b.name} ({b.size} bytes)]")
         return "\n".join(lines)

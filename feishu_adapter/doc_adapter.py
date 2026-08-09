@@ -100,6 +100,38 @@ class DocAdapter:
                 "block_type": "image",
                 "image": {"url": block.url, "alt": block.alt},
             }
+        # === Phase 6: 8 类增量 ===
+        if t == "embed":
+            return {"block_type": "embed",
+                    "embed": {"url": block.url, "title": block.title,
+                              "description": block.description}}
+        if t == "divider":
+            return {"block_type": "divider", "divider": {}}
+        if t == "callout":
+            return {"block_type": "callout",
+                    "callout": {"emoji": block.emoji, "text": block.text,
+                                "color": block.color}}
+        if t == "equation":
+            return {"block_type": "equation",
+                    "equation": {"latex": block.latex}}
+        if t == "math":
+            return {"block_type": "equation",
+                    "equation": {"latex": block.latex,
+                                 "display_mode": block.display_mode}}
+        if t == "mermaid":
+            return {"block_type": "code",
+                    "code": {"elements": [
+                        {"text_run": {"content": f"[mermaid]\n{block.code}"}}
+                    ], "language": "mermaid"}}
+        if t == "video":
+            return {"block_type": "video",
+                    "video": {"url": block.url,
+                              "poster_url": block.poster_url,
+                              "duration": block.duration}}
+        if t == "file":
+            return {"block_type": "file",
+                    "file": {"file_token": block.file_token,
+                             "name": block.name, "size": block.size}}
         raise ValueError(f"unsupported block type: {t}")
 
     def _post_block(self, doc_id: str, payload: dict) -> None:

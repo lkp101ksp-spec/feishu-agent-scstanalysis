@@ -70,3 +70,54 @@ class ImageBlock(BaseModel):
 
 AnyBlock = Union[HeadingBlock, TextBlock, CodeBlock, QuoteBlock,
                   QuoteContainerBlock, TableBlock, ListBlock, ImageBlock]
+
+
+# === Phase 6: 8 类增量 ===
+
+class EmbedBlock(BaseModel):
+    type: Literal["embed"] = "embed"
+    url: str = Field(pattern=r"^https?://")
+    title: str = ""
+    description: str = ""
+
+
+class DividerBlock(BaseModel):
+    type: Literal["divider"] = "divider"
+
+
+class CalloutBlock(BaseModel):
+    type: Literal["callout"] = "callout"
+    emoji: str
+    text: str
+    color: str = "blue"
+
+
+class EquationBlock(BaseModel):
+    type: Literal["equation"] = "equation"
+    latex: str
+
+
+class MathBlock(BaseModel):
+    type: Literal["math"] = "math"
+    latex: str
+    display_mode: bool = True
+
+
+class MermaidBlock(BaseModel):
+    type: Literal["mermaid"] = "mermaid"
+    code: str
+    theme: str = "default"
+
+
+class VideoBlock(BaseModel):
+    type: Literal["video"] = "video"
+    url: str = Field(pattern=r"^https?://")
+    poster_url: str | None = None
+    duration: int | None = None
+
+
+class FileBlock(BaseModel):
+    type: Literal["file"] = "file"
+    file_token: str
+    name: str
+    size: int = 0

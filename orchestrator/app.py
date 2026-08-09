@@ -409,3 +409,58 @@ class Orchestrator:
 
         # 普通消息：复用 process_phase4
         return self.process_phase4(incoming)
+
+    # === Phase 6 ===
+    def process_phase6(self, incoming) -> dict:
+        """Phase 6 入口：复用 process_phase5 + 模板版本/共享指令。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 6 subsystems not initialized")
+
+        text = incoming.text.strip()
+        if text.startswith("/template-rollback "):
+            parts = text.split()
+            if len(parts) < 3:
+                self.im.reply(incoming.chat_id,
+                              "[错误] 用法: /template-rollback <id> <version>")
+                return {"status": "rollback_failed", "reason": "bad_args"}
+            tid, ver = parts[1], int(parts[2])
+            vs = getattr(self, "version_service", None)
+            if vs is None:
+                self.im.reply(incoming.chat_id, "[错误] version_service 未配置")
+                return {"status": "rollback_failed"}
+            try:
+                vs.rollback(template_id=tid, version_number=ver,
+                             caller_open_id=incoming.sender_open_id)
+                self.im.reply(incoming.chat_id,
+                              f"[成功] 已回滚模板 {tid} 到版本 {ver}")
+                return {"status": "rolled_back", "template_id": tid,
+                        "version_number": ver}
+            except PermissionError:
+                self.im.reply(incoming.chat_id, "[错误] 您不是模板所有者")
+                return {"status": "rollback_failed", "reason": "not_owner"}
+            except ValueError as e:
+                self.im.reply(incoming.chat_id, f"[错误] {e}")
+                return {"status": "rollback_failed", "reason": str(e)}
+
+        if text.startswith("/template-share "):
+            tid = text.split(maxsplit=1)[1].strip()
+            ss = getattr(self, "share_service", None)
+            if ss is None:
+                self.im.reply(incoming.chat_id, "[错误] share_service 未配置")
+                return {"status": "share_failed"}
+            try:
+                ss.share_to_chat(template_id=tid, chat_id=incoming.chat_id,
+                                  caller_open_id=incoming.sender_open_id)
+                self.im.reply(incoming.chat_id,
+                              f"[成功] 模板 {tid} 已共享到本群")
+                return {"status": "shared", "template_id": tid}
+            except PermissionError:
+                self.im.reply(incoming.chat_id, "[错误] 您不是模板所有者")
+                return {"status": "share_failed", "reason": "not_owner"}
+            except ValueError as e:
+                self.im.reply(incoming.chat_id, f"[错误] {e}")
+                return {"status": "share_failed", "reason": str(e)}
+
+        # 普通消息：复用 process_phase5
+        return self.process_phase5(incoming)

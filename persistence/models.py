@@ -5,7 +5,7 @@ Phase 1 用 JSON 保持 SQLite/PostgreSQL 双兼容。
 """
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Column, DateTime, String, Text
+from sqlalchemy import JSON, Column, DateTime, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -218,3 +218,25 @@ class TemplateRow(Base):
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # === Phase 6 ===
+    scope: Mapped[str] = mapped_column(String, default="user", nullable=False)
+    chat_id: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+# === Phase 6 ===
+
+class TemplateVersionRow(Base):
+    """Phase 6: 模板版本表。"""
+    __tablename__ = "template_versions"
+
+    version_id: Mapped[str] = mapped_column(String, primary_key=True)
+    template_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    blocks_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    steps_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    created_by: Mapped[str] = mapped_column(String, nullable=False)

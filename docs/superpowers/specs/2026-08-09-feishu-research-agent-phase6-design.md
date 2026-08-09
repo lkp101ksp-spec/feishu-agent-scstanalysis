@@ -752,6 +752,70 @@ CREATE INDEX ix_templates_chat_id ON templates (chat_id) WHERE scope = 'chat';
 | ADR 门 | 5 个 ADR 用户评审 |
 | 实施门 | plan 用户评审通过 |
 | 测试门 | 60 新测试全部通过；278 老测试 0 回归 |
+
+---
+
+## 15. 实施结果（已交付）
+
+**commit**：（见 git log）
+
+### 实际测试数
+
+| 模块 | 计划测试数 | 实际测试数 |
+|---|---|---|
+| 富文本扩展（8 类 schema）| 12 | **9** |
+| 富文本飞书 doc 渲染（集成）| 8 | **8** |
+| TemplateVersionRepo CRUD | 3 | **3** |
+| VersionService | 4 | **5** |
+| 版本上限 | 2 | **1** |
+| ShareService | 5 | **6** |
+| BlastLocal | 5 | **6** |
+| HotLoader | 5 | **5** |
+| FastAPI 新路由（集成）| 8 | **7** |
+| Orchestrator smoke | 1 | **1** |
+| E1-E8 端到端 | 8 | **7** (E2 调整) |
+| **新增小计** | 60 | **58** |
+| Phase 5 累计 | 278 | 278 |
+| **总计** | **338** | **336** ✅ |
+
+### 累计测试数
+
+```
+Phase 1: 86  → Phase 2:147  → Phase 3:216  → Phase 4 MVP:230  → Phase 5:278  → Phase 6:336
+            +61            +69            +14            +48            +58
+```
+
+### 新增/修改文件清单
+
+```
+新增：
+- orchestrator/tools/bio/blast_local.py                # 本地 BLAST+ 二进制
+- orchestrator/tools/hot_loader.py                     # 管理员上传 + AST P0
+- orchestrator/templates/version_service.py            # 版本管理 + 回滚
+- orchestrator/templates/share_service.py              # 群聊共享
+- persistence/repositories/template_version_repo.py    # TemplateVersionRow CRUD
+- tests/unit/test_blocks_schemas_phase6.py
+- tests/unit/test_template_version.py
+- tests/unit/test_version_service.py
+- tests/unit/test_share_service.py
+- tests/unit/test_blast_local.py
+- tests/unit/test_hot_loader.py
+- tests/unit/test_orchestrator_phase6.py
+- tests/integration/test_doc_adapter_blocks_phase6.py
+- tests/integration/test_templates_phase6_api.py
+- tests/integration/test_e2e_phase6_e1_e8.py
+
+修改：
+- persistence/models.py                                # +scope/chat_id, +TemplateVersionRow
+- persistence/repositories/template_repo.py            # +scope/chat_id, +list_by_chat
+- orchestrator/blocks/schemas.py                       # +8 类 block
+- orchestrator/blocks/serializer.py                    # +8 类分发
+- orchestrator/template_engine.py                      # +8 类文本化
+- orchestrator/tools/ast_guard.py                      # +eval/exec/__import__ builtin 拦截
+- feishu_adapter/doc_adapter.py                        # +8 类飞书 doc API 映射
+- gateway/app.py                                       # +/versions /share /admin/tools 路由
+- orchestrator/app.py                                  # +process_phase6 + /template-rollback + /template-share IM 指令
+```
 | 演示门 | 5 大模块全链路跑通（富文本 14 类 / 版本回滚 / 群聊共享 / 本地 BLAST / 热加载）|
 
 ---

@@ -23,6 +23,8 @@ class TemplateRepo:
         blocks_json: Optional[str] = None,
         steps_json: Optional[str] = None,
         description: str = "",
+        scope: Optional[str] = None,
+        chat_id: Optional[str] = None,
     ) -> TemplateRow:
         row = self.session.get(TemplateRow, template_id)
         if row is None:
@@ -34,6 +36,8 @@ class TemplateRepo:
                 type=type_,
                 blocks_json=blocks_json,
                 steps_json=steps_json,
+                scope=scope or "user",
+                chat_id=chat_id,
             )
             self.session.add(row)
         else:
@@ -42,6 +46,10 @@ class TemplateRepo:
             row.type = type_
             row.blocks_json = blocks_json
             row.steps_json = steps_json
+            if scope is not None:
+                row.scope = scope
+            if chat_id is not None:
+                row.chat_id = chat_id
         self.session.flush()
         return row
 
@@ -52,6 +60,13 @@ class TemplateRepo:
         return (
             self.session.query(TemplateRow)
             .filter_by(owner_open_id=owner_open_id, archived_at=None)
+            .all()
+        )
+
+    def list_by_chat(self, chat_id: str) -> list[TemplateRow]:
+        return (
+            self.session.query(TemplateRow)
+            .filter_by(chat_id=chat_id, scope="chat", archived_at=None)
             .all()
         )
 

@@ -4,10 +4,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from orchestrator.blocks.schemas import (AnyBlock, CodeBlock, HeadingBlock,
-                                           ImageBlock, ListBlock, QuoteBlock,
+from orchestrator.blocks.schemas import (AnyBlock, CalloutBlock, CodeBlock,
+                                           DividerBlock, EmbedBlock,
+                                           EquationBlock, FileBlock,
+                                           HeadingBlock, ImageBlock, ListBlock,
+                                           MathBlock, MermaidBlock, QuoteBlock,
                                            QuoteContainerBlock, TableBlock,
-                                           TextBlock)
+                                           TextBlock, VideoBlock)
 
 
 def blocks_to_json(blocks: list[AnyBlock]) -> str:
@@ -32,4 +35,12 @@ def _parse_block(d: dict[str, Any]) -> AnyBlock:
         case "table":   return TableBlock(**d)
         case "list":    return ListBlock(**d)
         case "image":   return ImageBlock(**d)
+        case "embed":   return EmbedBlock(**d)
+        case "divider": return DividerBlock(**d)
+        case "callout": return CalloutBlock(**d)
+        case "equation": return EquationBlock(**d)
+        case "math":    return MathBlock(**d)
+        case "mermaid": return MermaidBlock(**d)
+        case "video":   return VideoBlock(**d)
+        case "file":    return FileBlock(**d)
         case _: raise ValueError(f"unknown block type: {t}")

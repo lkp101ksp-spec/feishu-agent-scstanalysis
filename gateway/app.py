@@ -43,6 +43,9 @@ class AppContext:
     orchestrator: object  # Orchestrator 实例，类型在 Phase 1 避免循环引用
     bind_doc_service: object | None = None  # Phase 3：续期用
     template_service: object | None = None  # Phase 5：模板市场
+    version_service: object | None = None  # Phase 6
+    share_service: object | None = None  # Phase 6
+    hot_loader: object | None = None  # Phase 6
 
 
 def create_app(
@@ -52,6 +55,9 @@ def create_app(
     session_factory=None,
     bind_doc_service=None,
     template_service=None,
+    version_service=None,
+    share_service=None,
+    hot_loader=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -77,6 +83,9 @@ def create_app(
         orchestrator=orchestrator,
         bind_doc_service=bind_doc_service,
         template_service=template_service,
+        version_service=version_service,
+        share_service=share_service,
+        hot_loader=hot_loader,
     )
 
     @app.get("/health")
@@ -219,6 +228,81 @@ def create_app(
         except ValueError:
             raise _HTTPException(status_code=404, detail="not found")
         return {"ok": True}
+
+    # === Phase 6: 版本 + 共享 + 热加载 ===
+    @app.get("/templates/{template_id}/versions")
+    async def list_versions(template_id: str):
+        ctx = app.state.ctx
+        vs = ctx.version_service
+        if vs is None:
+            return {"versions": []}
+        return {"versions": vs.list_versions(template_id)}
+
+    @app.post("/templates/{template_id}/rollback")
+    async def rollback_template(template_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        vs = ctx.version_service
+        if vs is None:
+            raise _HTTPException(status_code=503, detail="version_service not configured")
+        try:
+            vs.rollback(template_id=template_id,
+                        version_number=body["version_number"],
+                        caller_open_id=body["caller_open_id"])
+        except PermissionError:
+            raise _HTTPException(status_code=403, detail="not owner")
+        except ValueError:
+            raise _HTTPException(status_code=404, detail="not found")
+        return {"ok": True}
+
+    @app.post("/templates/{template_id}/share")
+    async def share_template(template_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        ss = ctx.share_service
+        if ss is None:
+            raise _HTTPException(status_code=503, detail="share_service not configured")
+        try:
+            ss.share_to_chat(template_id=template_id,
+                              chat_id=body["chat_id"],
+                              caller_open_id=body["caller_open_id"])
+        except PermissionError:
+            raise _HTTPException(status_code=403, detail="not owner")
+        except ValueError:
+            raise _HTTPException(status_code=404, detail="not found")
+        return {"ok": True}
+
+    @app.get("/templates/chat/{chat_id}")
+    async def list_for_chat(chat_id: str):
+        ctx = app.state.ctx
+        ss = ctx.share_service
+        if ss is None:
+            return {"templates": []}
+        out = []
+        for t in ss.list_for_chat(chat_id):
+            out.append(getattr(t, "template_id", t))
+        return {"templates": out}
+
+    @app.post("/admin/tools/upload")
+    async def admin_upload_tool(request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        hl = ctx.hot_loader
+        if hl is None:
+            raise _HTTPException(status_code=503, detail="hot_loader not configured")
+        from shared.errors import ToolBlockedError
+        try:
+            name = hl.upload(
+                name=body["name"], code=body["code"],
+                parameters=body["parameters"],
+                risk_level=body["risk_level"],
+                actor_open_id=body["actor_open_id"],
+            )
+        except ToolBlockedError as e:
+            raise _HTTPException(status_code=400, detail=f"AST blocked: {e}")
+        except ValueError as e:
+            raise _HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "name": name}
 
     @app.post("/webhook/lark")
     async def lark_webhook(request: Request):
