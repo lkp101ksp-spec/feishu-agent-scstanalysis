@@ -1,6 +1,6 @@
 """TemplateEngine：纯函数 payload → BlockSpec 列表。
 
-无副作用，便于测试。Phase 4 扩展富文本块 / 用户自定义模板。
+无副作用，便于测试。Phase 5 扩展富文本块（list[AnyBlock]）+ 用户自定义模板。
 """
 from __future__ import annotations
 
@@ -102,3 +102,46 @@ class TemplateEngine:
             )
         )
         return blocks
+
+    # === Phase 5: 富文本块（AnyBlock） ===
+
+    def render_plan_summary_blocks(
+        self, *, status: str, node_states: dict, artifacts_count: int
+    ) -> list:
+        """Phase 5: 返回 Pydantic Block 列表（用于飞书 doc 渲染）。"""
+        from orchestrator.blocks.schemas import (HeadingBlock, TableBlock,
+                                                  TextBlock)
+        return [
+            HeadingBlock(level=2, text=f"Plan 执行结果（{status}）"),
+            TextBlock(text=f"Nodes: {len(node_states)}; Artifacts: {artifacts_count}"),
+            TableBlock(
+                headers=["Node", "State"],
+                rows=[[nid, state] for nid, state in node_states.items()],
+            ),
+        ]
+
+    def render_blocks_to_text(self, blocks) -> str:
+        """Phase 5: list[Block] → 纯文本（用于 IM reply）。"""
+        lines = []
+        for b in blocks:
+            t = getattr(b, "type", None)
+            if t == "heading":
+                lines.append(f"{'#' * b.level} {b.text}")
+            elif t == "text":
+                lines.append(b.text)
+            elif t == "code":
+                lines.append(f"```{b.language}\n{b.text}\n```")
+            elif t == "quote":
+                lines.append(f"> {b.text}")
+            elif t == "table":
+                lines.append(", ".join(b.headers))
+                lines.extend([", ".join(r) for r in b.rows])
+            elif t == "list":
+                for i, item in enumerate(b.items, 1):
+                    if b.ordered:
+                        lines.append(f"{i}. {item}")
+                    else:
+                        lines.append(f"- {item}")
+            elif t == "image":
+                lines.append(f"![{b.alt}]({b.url})")
+        return "\n".join(lines)

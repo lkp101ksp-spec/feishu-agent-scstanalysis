@@ -27,6 +27,9 @@ class DAGNode(BaseModel):
     max_iterations: int = 10
     iterate_over: Optional[str] = None
     iteration_var: str = "item"
+    # === Phase 5 ===
+    subplan_template_id: Optional[str] = None
+    subplan_params: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("tool_name")
     @classmethod

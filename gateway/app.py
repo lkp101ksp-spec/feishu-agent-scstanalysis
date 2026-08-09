@@ -42,6 +42,7 @@ class AppContext:
     rate_per_min: int
     orchestrator: object  # Orchestrator 实例，类型在 Phase 1 避免循环引用
     bind_doc_service: object | None = None  # Phase 3：续期用
+    template_service: object | None = None  # Phase 5：模板市场
 
 
 def create_app(
@@ -50,6 +51,7 @@ def create_app(
     rate_per_min: int = 60,
     session_factory=None,
     bind_doc_service=None,
+    template_service=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -74,6 +76,7 @@ def create_app(
         rate_per_min=rate_per_min,
         orchestrator=orchestrator,
         bind_doc_service=bind_doc_service,
+        template_service=template_service,
     )
 
     @app.get("/health")
@@ -138,6 +141,83 @@ def create_app(
             except Exception as e:
                 logger.exception("renew_bind failed")
                 return {"ok": False, "reason": str(e)}
+        return {"ok": True}
+
+    # === Phase 5: 模板市场 API ===
+    @app.post("/templates/block")
+    async def create_block_template(request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        ts = ctx.template_service
+        if ts is None:
+            return {"ok": False, "reason": "template_service not configured"}
+        import json as _json
+        from orchestrator.blocks.serializer import json_to_blocks
+        blocks = json_to_blocks(_json.dumps(body["blocks"]))
+        tid = ts.create_block(
+            owner_open_id=body["owner_open_id"],
+            name=body["name"],
+            blocks=blocks,
+            description=body.get("description", ""),
+        )
+        return {"ok": True, "template_id": tid}
+
+    @app.post("/templates/subplan")
+    async def create_subplan_template(request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        ts = ctx.template_service
+        if ts is None:
+            return {"ok": False, "reason": "template_service not configured"}
+        from orchestrator.templates.schemas import SubPlanTemplateStep
+        steps = [SubPlanTemplateStep(**s) for s in body["steps"]]
+        tid = ts.create_subplan(
+            owner_open_id=body["owner_open_id"],
+            name=body["name"],
+            steps=steps,
+            description=body.get("description", ""),
+        )
+        return {"ok": True, "template_id": tid}
+
+    @app.get("/templates/")
+    async def list_templates(owner_open_id: str):
+        ctx = app.state.ctx
+        if ctx.template_service is None:
+            return {"templates": []}
+        return {"templates": [
+            t.template_id for t in ctx.template_service.list_by_owner(owner_open_id)
+        ]}
+
+    @app.post("/templates/{template_id}/render")
+    async def render_template(template_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        params = body.get("params", {})
+        ts = ctx.template_service
+        if ts is None:
+            return {"ok": False, "reason": "template_service not configured"}
+        tpl = ts.get(template_id)
+        if tpl is None:
+            raise _HTTPException(status_code=404, detail="not found")
+        if tpl.type == "block":
+            blocks = ts.render_block(template_id=template_id, params=params)
+            return {"ok": True, "blocks": [b.model_dump() for b in blocks]}
+        else:
+            steps = ts.render_subplan(template_id=template_id, params=params)
+            return {"ok": True, "steps": [s.model_dump() for s in steps]}
+
+    @app.delete("/templates/{template_id}")
+    async def delete_template(template_id: str, caller_open_id: str):
+        ctx = app.state.ctx
+        ts = ctx.template_service
+        if ts is None:
+            return {"ok": False, "reason": "not configured"}
+        try:
+            ts.delete(template_id=template_id, caller_open_id=caller_open_id)
+        except PermissionError:
+            raise _HTTPException(status_code=403, detail="not owner")
+        except ValueError:
+            raise _HTTPException(status_code=404, detail="not found")
         return {"ok": True}
 
     @app.post("/webhook/lark")

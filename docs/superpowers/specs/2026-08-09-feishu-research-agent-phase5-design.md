@@ -750,4 +750,113 @@ CREATE INDEX ix_templates_owner_name ON templates (owner_open_id, name);
 | ADR 门 | 4 个 ADR 用户评审 |
 | 实施门 | plan 用户评审通过 |
 | 测试门 | 41 新测试全部通过；230 老测试 0 回归 |
+
+---
+
+## 15. 实施结果（已交付）
+
+**commit**：（见 git log）
+
+### 实际测试数
+
+| 模块 | 计划测试数 | 实际测试数 |
+|---|---|---|
+| Block schemas（6 类）| 8 | **9** |
+| Block serializer | 3 | **3** |
+| ORM TemplateRow + Repo | 3 | **3** |
+| TemplateRenderer | 4 | **4** |
+| TemplateService（CRUD + 权限）| 6 | **6** |
+| ToolHandler blocks 透传 | 2 | **2** |
+| TemplateEngine 富文本 | 2 | **3** |
+| DocAdapter.render_blocks | 3 | **3** |
+| DAGNode + Scheduler 展开 | 1 | **3** |
+| FastAPI /templates/* 路由 | 4 | **4** |
+| Orchestrator smoke | 1 | **1** |
+| E1-E8 端到端 | 8 | **7** (E6 在 doc_adapter_blocks) |
+| **新增小计** | 45 | **48** |
+| Phase 4 MVP 累计 | 230 | 230 |
+| **总计** | **275** | **278** ✅ |
+
+### 累计测试数
+
+```
+Phase 1:    86  → Phase 2:147  → Phase 3:   216  → Phase 4 MVP: 230  → Phase 5: 278
+            +61            +69            +14            +48
+```
+
+### 新增/修改文件清单
+
+```
+新增：
+- orchestrator/blocks/__init__.py
+- orchestrator/blocks/schemas.py                # 6 类 Block Pydantic
+- orchestrator/blocks/serializer.py             # blocks_to_json / json_to_blocks
+- orchestrator/templates/__init__.py
+- orchestrator/templates/schemas.py             # SubPlanTemplateStep
+- orchestrator/templates/renderer.py            # substitute + render
+- orchestrator/templates/template_service.py    # CRUD + 权限
+- persistence/repositories/template_repo.py     # TemplateRow CRUD
+- tests/unit/test_blocks_schemas.py
+- tests/unit/test_blocks_serializer.py
+- tests/unit/test_template_renderer.py
+- tests/unit/test_template_repo.py
+- tests/unit/test_template_service.py
+- tests/unit/test_tool_handler_blocks.py
+- tests/unit/test_template_engine_phase5.py
+- tests/unit/test_orchestrator_phase5.py
+- tests/integration/test_doc_adapter_blocks.py
+- tests/integration/test_templates_api.py
+- tests/integration/test_subplan_expansion.py
+- tests/integration/test_e2e_phase5_e1_e8.py
+
+修改：
+- persistence/models.py                          # +TemplateRow 表
+- orchestrator/tools/tool_handler.py             # +blocks 字段透传
+- orchestrator/template_engine.py                # +render_plan_summary_blocks / render_blocks_to_text
+- orchestrator/planner/dag_schema.py             # +subplan_template_id / subplan_params
+- orchestrator/planner/scheduler.py              # +_expand_subplan_static
+- feishu_adapter/doc_adapter.py                  # +render_blocks() + 6 类映射
+- gateway/app.py                                 # +/templates/* 路由 + template_service 字段
+- orchestrator/app.py                            # +process_phase5
+```
+
+### 用户可触发场景（演示门）
+
+```
+# 上传 Block 模板
+curl -X POST http://localhost:8000/templates/block -d '{
+  "owner_open_id": "ou_1", "name": "std_report",
+  "blocks": [
+    {"type": "heading", "level": 2, "text": "实验报告"},
+    {"type": "table", "headers": ["Hit", "Title"],
+     "rows": [["111", "BRCA1"], ["222", "BRCA2"]]}
+  ]
+}'
+
+# 上传 sub-Plan 模板
+curl -X POST http://localhost:8000/templates/subplan -d '{
+  "owner_open_id": "ou_1", "name": "blast_workflow",
+  "steps": [
+    {"step_id": "s1", "tool_name": "blast_search",
+     "inputs": {"query": "{{gene}}"}}
+  ]
+}'
+
+# 渲染模板（替换 {{gene}} → BRCA1）
+curl -X POST http://localhost:8000/templates/t_1/render -d '{
+  "params": {"gene": "BRCA1"}
+}'
+
+# IM 指令：列出我的模板
+"用户发 /template-list"
+  ↓ process_phase5
+  ↓ TemplateService.list_by_owner
+  ↓ IM reply: "您的模板: t_1, t_2"
+
+# Planner DAG 引用模板
+DAGNode(subplan_template_id="t_1", subplan_params={"gene": "BRCA1"})
+  ↓ Scheduler._expand_subplan_static
+  ↓ 内联为 DAGNode(tool_name="blast_search", inputs={"query": "BRCA1"})
+  ↓ 执行 → ToolHandler → BLAST NCBI → 飞书 doc 渲染富文本
+```
 | 演示门 | "上传模板 → 复用 → 富文本飞书 doc" 全链路跑通 |

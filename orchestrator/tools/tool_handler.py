@@ -17,6 +17,7 @@ class ToolResult:
     artifacts_ids: list[str]
     error_code: str | None = None
     error_message: str | None = None
+    blocks: list | None = None  # Phase 5: 富文本块
 
 
 class ToolHandler:
@@ -81,11 +82,19 @@ class ToolHandler:
             # Phase 4：handler 内部错误（error_code in dict）→ 透传到 ToolResult
             tool_err = out.pop("error_code", None)
             tool_err_msg = out.pop("error_message", None)
+            # Phase 5：handler 返回 blocks → 提取为 AnyBlock 列表
+            blocks_raw = out.pop("blocks", None)
+            blocks = None
+            if blocks_raw:
+                import json
+                from orchestrator.blocks.serializer import json_to_blocks
+                blocks = json_to_blocks(json.dumps(blocks_raw))
             return ToolResult(
                 outputs=out,
                 artifacts_ids=[],
                 error_code=tool_err,
                 error_message=tool_err_msg,
+                blocks=blocks,
             )
         except Exception as e:
             return ToolResult(

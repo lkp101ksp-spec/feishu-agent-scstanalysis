@@ -40,6 +40,33 @@ class Scheduler:
         self._node_map: dict[str, DAGNode] = {n.node_id: n for n in plan.nodes}
         self._started_at = datetime.utcnow()
 
+    @staticmethod
+    def _expand_subplan_static(node: DAGNode, template_service) -> list[DAGNode]:
+        """Phase 5: 展开 sub-Plan 模板为内联 DAGNode 列表。"""
+        if not node.subplan_template_id:
+            return [node]
+        tpl = template_service.get(node.subplan_template_id)
+        if tpl is None or tpl.archived_at is not None:
+            raise ValueError(f"template {node.subplan_template_id} not found")
+        if tpl.type != "subplan":
+            raise ValueError(
+                f"template {node.subplan_template_id} is not subplan"
+            )
+        steps = template_service.render_subplan(
+            template_id=node.subplan_template_id,
+            params=node.subplan_params,
+        )
+        out = []
+        for i, step in enumerate(steps):
+            out.append(DAGNode(
+                node_id=f"{node.node_id}_step_{i}",
+                kind="tool",
+                tool_name=step.tool_name,
+                inputs=step.inputs,
+                depends_on=list(node.depends_on) if i == 0 else [],
+            ))
+        return out
+
     def _node_state(self, node_id: str) -> ExecutionState:
         if node_id not in self._handles:
             return ExecutionState.PENDING

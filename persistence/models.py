@@ -196,3 +196,25 @@ class SessionFreezeRow(Base):
     summary_id: Mapped[str | None] = mapped_column(String, nullable=True)
     trigger_ratio: Mapped[float] = mapped_column(default=0.0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+# === Phase 5 ===
+
+class TemplateRow(Base):
+    """用户私有模板表（Block + sub-Plan）。"""
+    __tablename__ = "templates"
+
+    template_id: Mapped[str] = mapped_column(String, primary_key=True)
+    owner_open_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    type: Mapped[str] = mapped_column(String, nullable=False)
+    blocks_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    steps_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

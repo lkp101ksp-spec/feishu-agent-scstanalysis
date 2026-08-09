@@ -387,3 +387,25 @@ class Orchestrator:
                 return {"status": "renew_bind_failed", "error": str(e)}
         # 普通消息：复用 process_phase3 路径
         return self.process_phase3(incoming)
+
+    # === Phase 5 ===
+    def process_phase5(self, incoming) -> dict:
+        """Phase 5 入口：复用 process_phase4 + 模板市场指令。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 5 subsystems not initialized")
+
+        text = incoming.text.strip()
+        # IM 指令路由
+        if text == "/template-list":
+            ts = getattr(self, "template_service", None)
+            if ts is None:
+                self.im.reply(incoming.chat_id, "[错误] template_service 未配置")
+                return {"status": "template_list_failed"}
+            templates = ts.list_by_owner(incoming.sender_open_id)
+            ids = [t.template_id for t in templates]
+            self.im.reply(incoming.chat_id, f"您的模板: {', '.join(ids) or '(无)'}")
+            return {"status": "template_listed", "templates": ids}
+
+        # 普通消息：复用 process_phase4
+        return self.process_phase4(incoming)
