@@ -55,6 +55,8 @@ class AppContext:
     diff_service: object | None = None  # Phase 8
     tag_service: object | None = None  # Phase 8
     favorite_service: object | None = None  # Phase 8
+    unified_search_service: object | None = None  # Phase 9
+    auto_sync_worker: object | None = None  # Phase 9
 
 
 def create_app(
@@ -76,6 +78,8 @@ def create_app(
     diff_service=None,
     tag_service=None,
     favorite_service=None,
+    unified_search_service=None,
+    auto_sync_worker=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -113,7 +117,15 @@ def create_app(
         diff_service=diff_service,
         tag_service=tag_service,
         favorite_service=favorite_service,
+        unified_search_service=unified_search_service,
+        auto_sync_worker=auto_sync_worker,
     )
+
+    # === Phase 9: 评论自动同步后台轮询（可选注入，ADR-0024）===
+    if auto_sync_worker is not None:
+        @app.on_event("startup")
+        def _start_auto_sync_worker():
+            auto_sync_worker.start_async()
 
     @app.get("/health")
     def health():
@@ -557,6 +569,24 @@ def create_app(
             raise _HTTPException(status_code=503, detail="favorite_service not configured")
         fs.unfavorite(template_id=template_id, caller_open_id=caller_open_id)
         return {"ok": True}
+
+    # === Phase 9: 融合检索 ===
+    @app.get("/templates/search-v2")
+    async def search_templates_v2(
+        q: str = "",
+        tag: str | None = None,
+        scope: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ):
+        ctx = app.state.ctx
+        us = ctx.unified_search_service
+        if us is None:
+            return {"results": []}
+        results = us.search(
+            query=q, tag=tag, scope=scope, limit=limit, offset=offset,
+        )
+        return {"results": results}
 
     @app.post("/webhook/lark")
     async def lark_webhook(request: Request):

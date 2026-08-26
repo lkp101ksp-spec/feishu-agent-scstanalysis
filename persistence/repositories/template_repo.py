@@ -4,9 +4,20 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
+from sqlalchemy import case, func, literal, select
 from sqlalchemy.orm import Session
 
-from persistence.models import TemplateRow
+from persistence.models import (
+    TemplateFavoriteRow,
+    TemplateRow,
+    TemplateTagRow,
+)
+
+
+def _is_postgres(session: Session) -> bool:
+    """Phase 9: 方言检测（PG 走 tsvector，其余降级 LIKE，ADR-0026）。"""
+    bind = getattr(session, "bind", None)
+    return bind is not None and bind.dialect.name == "postgresql"
 
 
 class TemplateRepo:
@@ -80,6 +91,68 @@ class TemplateRepo:
             q = q.filter(TemplateRow.owner_open_id == owner_open_id)
         return q.order_by(TemplateRow.updated_at.desc()) \
                  .limit(limit).offset(offset).all()
+
+    def search_v2(
+        self, *,
+        query: str = "",
+        tag: Optional[str] = None,
+        scope: Optional[str] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[tuple[TemplateRow, float]]:
+        """Phase 9 融合检索（ADR-0026）。
+
+        全文（PG tsvector / SQLite LIKE 降级）+ 标签精确过滤 + 收藏数 boost：
+        final = text_score + LEAST(fav_count, 5) * 0.5
+        返回 (TemplateRow, final_score) 元组列表，按分值倒序。
+        """
+        base = self.session.query(TemplateRow, literal(0.0).label("__s"))
+        base = base.filter(TemplateRow.archived_at.is_(None))
+        if scope:
+            base = base.filter(TemplateRow.scope == scope)
+        if tag:
+            base = base.filter(TemplateRow.template_id.in_(
+                select(TemplateTagRow.template_id)
+                .where(TemplateTagRow.tag == tag.strip().lower())
+            ))
+
+        # 全文相关度（方言分支）
+        if query:
+            if _is_postgres(self.session):
+                ts_vec = func.to_tsvector(
+                    "simple",
+                    func.coalesce(TemplateRow.name, "")
+                    + " " + func.coalesce(TemplateRow.description, ""),
+                )
+                ts_query = func.plainto_tsquery("simple", query)
+                text_score = func.ts_rank(ts_vec, ts_query)
+                base = base.filter(ts_vec.op("@@")(ts_query))
+            else:
+                like = f"%{query}%"
+                text_score = case(
+                    (TemplateRow.name.ilike(like), 2.0),
+                    (TemplateRow.description.ilike(like), 1.0),
+                    else_=0.0,
+                )
+        else:
+            text_score = literal(0.0)
+
+        # 收藏热度 boost（方言分支：PG least / SQLite 标量 min）
+        fav_count = select(func.count()).select_from(TemplateFavoriteRow) \
+            .where(TemplateFavoriteRow.template_id == TemplateRow.template_id) \
+            .scalar_subquery()
+        if _is_postgres(self.session):
+            capped = func.least(fav_count, 5)
+        else:
+            capped = func.min(fav_count, 5)
+        score_col = (text_score + capped * 0.5).label("score")
+
+        # 沿用 base 过滤条件，select 列换成 row + score
+        q = base.with_entities(TemplateRow, score_col)
+        result = q.order_by(
+            score_col.desc(), TemplateRow.updated_at.desc(),
+        ).limit(limit).offset(offset).all()
+        return [(r[0], float(r[1])) for r in result]
 
     def list_by_scope(
         self, *, scope: str,

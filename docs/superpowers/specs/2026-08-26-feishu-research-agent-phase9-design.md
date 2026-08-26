@@ -385,6 +385,70 @@ class CommentNotifyRow(Base):
 
 ---
 
-## 14. 实施结果（交付后填写）
+## 14. 实施结果（已交付）
 
-待 plan 实施 + 回归后填写（commit / 实际测试数 / 文件清单 / 累计测试曲线）。
+### 测试与提交
+
+- **全量回归：485 passed / 0 failed**（Phase 8 基线 445 + 新增 40，0 回归）✅
+- commit：`feat(phase9): auto comment loop + unified search + diff v2 (moved)`
+
+### 实际测试数
+
+| 模块 | 计划 | 实际 |
+|---|---|---|
+| CommentNotifyRepo | 3 | **3** |
+| diff v2（hash + moved） | 5 | **6** |
+| search_v2 + UnifiedSearchService | 7 | **9** |
+| CommentNotifyService | 5 | **5** |
+| CommentAutoSyncWorker | 4 | **5**（+异常隔离） |
+| search-v2/diff 路由（集成） | 3 | **4** |
+| Orchestrator phase9 smoke | 1 | **2** |
+| E2E E1-E6 | 6 | **6** |
+| **新增小计** | 39（spec 矩阵 42） | **40** |
+| Phase 8 累计 | 445 | 445 |
+| **总计** | 484 | **485** ✅ |
+
+### 累计测试曲线
+
+```
+Phase 1:86 → 2:147 → 3:216 → 4:230 → 5:278 → 6:336 → 7:389 → 8:445 → 9:485
+                                                   +56        +40
+```
+
+### 新增/修改文件清单
+
+```
+新增（源码 4）：
+- persistence/repositories/comment_notify_repo.py  # 推送去重日志 CRUD
+- orchestrator/templates/notify_service.py         # 新增 pending 检测 + IM 推送
+- orchestrator/templates/auto_sync_worker.py       # 后台轮询（tick 可单测）
+- orchestrator/templates/unified_search_service.py # 融合检索封装 + IM 渲染
+
+新增（测试 7）：
+- tests/unit/test_comment_notify_repo.py
+- tests/unit/test_comment_notify_service.py
+- tests/unit/test_auto_sync_worker.py
+- tests/unit/test_unified_search_service.py
+- tests/unit/test_diff_service_v2.py
+- tests/unit/test_orchestrator_phase9.py
+- tests/integration/test_templates_phase9_api.py
+- tests/integration/test_e2e_phase9_e1_e6.py（注：共 8 个测试文件）
+
+修改：
+- persistence/models.py                          # +CommentNotifyRow（16→17 表）
+- persistence/repositories/template_repo.py      # +search_v2（方言分支 + 融合排序）+ _is_postgres
+- persistence/repositories/template_favorite_repo.py # +counts_by_templates
+- orchestrator/templates/diff_service.py         # v2：hash 配对 + moved + ↔ 渲染
+- config/settings.py                             # +comment_sync_interval_sec
+- gateway/app.py                                 # +search-v2 路由 + startup worker 钩子 + 2 注入
+- orchestrator/app.py                            # +process_phase9 + /template-find
+```
+
+### 交付能力（自动闭环）
+
+导师在飞书 doc 评论 `/replan t1 ...` → **后台 worker 每 300s 自动 sync**（无需手动指令）→ 检测到新增待处理动作 → **IM 即时推送 owner**（含摘要与 `/comment-apply` 提示，同一评论终身一次）→ owner 一条指令应用 → `/template-find <词> [#标签]` 融合检索（相关度 + 标签 + 收藏热度）→ diff 换位块报 `↔ moved` 不再误报 changed。
+
+### 已知边界（诚实记录）
+
+- PG tsvector 分支未经真库执行（SQLite 降级路径全量真测；真 PG 验证列 Phase 10 联调清单，ADR-0026）
+- 多实例部署会重复轮询（MVP 单实例；分布式锁 Phase 10）

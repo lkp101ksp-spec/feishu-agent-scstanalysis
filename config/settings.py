@@ -65,6 +65,8 @@ class Settings:
     blast_rate_per_sec: float = 3.0
     blast_timeout_sec: int = 30
     blast_max_hits_default: int = 5
+    # === Phase 9: 评论自动同步 ===
+    comment_sync_interval_sec: int = 300
 
 
 def _load_yaml(path: str) -> dict:

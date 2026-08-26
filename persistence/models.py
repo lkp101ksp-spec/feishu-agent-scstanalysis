@@ -325,3 +325,16 @@ class TemplateFavoriteRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
+
+
+# === Phase 9 ===
+
+class CommentNotifyRow(Base):
+    """Phase 9: 评论动作推送日志（同一 comment 只通知一次，ADR-0025）。"""
+    __tablename__ = "comment_notify_log"
+
+    comment_id: Mapped[str] = mapped_column(String, primary_key=True)
+    doc_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    notified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )

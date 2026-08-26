@@ -643,3 +643,35 @@ class Orchestrator:
 
         # 普通消息：复用 process_phase7
         return self.process_phase7(incoming)
+
+    # === Phase 9 ===
+    def process_phase9(self, incoming) -> dict:
+        """Phase 9 入口：复用 process_phase8 + 融合检索指令。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 9 subsystems not initialized")
+
+        text = incoming.text.strip()
+
+        if text.startswith("/template-find"):
+            parts = text.split()
+            if len(parts) < 2:
+                self.im.reply(
+                    incoming.chat_id,
+                    "[错误] 用法: /template-find <关键词> [#标签]")
+                return {"status": "find_failed", "reason": "bad_args"}
+            tags = [p.lstrip("#").lower() for p in parts[1:] if p.startswith("#")]
+            query_tokens = [p for p in parts[1:] if not p.startswith("#")]
+            query = " ".join(query_tokens)
+            tag = tags[0] if tags else None
+            us = getattr(self, "unified_search_service", None)
+            if us is None:
+                self.im.reply(incoming.chat_id,
+                              "[错误] unified_search_service 未配置")
+                return {"status": "find_failed"}
+            results = us.search(query=query, tag=tag, limit=10)
+            self.im.reply(incoming.chat_id, us.render(results))
+            return {"status": "find_rendered", "count": len(results)}
+
+        # 普通消息：复用 process_phase8
+        return self.process_phase8(incoming)

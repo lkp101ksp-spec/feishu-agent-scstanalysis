@@ -46,3 +46,19 @@ class TemplateFavoriteRepo:
             .all()
         )
         return [r.template_id for r in rows]
+
+    def counts_by_templates(
+        self, template_ids: list[str],
+    ) -> dict[str, int]:
+        """Phase 9: 批量统计模板收藏数（融合检索热度位用）。"""
+        if not template_ids:
+            return {}
+        rows = (
+            self.session.query(TemplateFavoriteRow)
+            .filter(TemplateFavoriteRow.template_id.in_(template_ids))
+            .all()
+        )
+        out = {tid: 0 for tid in template_ids}
+        for r in rows:
+            out[r.template_id] = out.get(r.template_id, 0) + 1
+        return out

@@ -1,15 +1,34 @@
-"""Phase 8 T6: 版本块级结构化 diff（同 type/tool 按序配对，ADR-0021）。"""
+"""Phase 8 T6 / Phase 9 v2: 版本块级结构化 diff。
+
+v1（ADR-0021）：同 type/tool 按序配对。
+v2（ADR-0027）：组内两阶段——先按内容 hash 精确配对（moved/unchanged），
+余量再按序配对（changed）。输出新增 moved 键，旧键语义不变。
+"""
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Optional
 
 
+def _content_hash(item: dict) -> str:
+    """块的稳定内容指纹（键序无关）。"""
+    return hashlib.md5(
+        json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 def _diff_lists(a: list[dict], b: list[dict], key: str) -> dict:
-    """按 key 值分组配对（同值按出现顺序），输出 added/removed/changed。"""
+    """两阶段配对 diff（ADR-0027）。
+
+    阶段1：组内同内容 hash 精确配对 → index 变化为 moved，相同为 unchanged；
+    阶段2：余量按序配对 → 键集差异为 changed；
+    剩余：b 侧 added，a 侧 removed。
+    """
     added: list[dict] = []
     removed: list[dict] = []
     changed: list[dict] = []
+    moved: list[dict] = []
 
     # 分组：key 值 → (a 侧队列, b 侧队列)
     groups: dict[str, tuple[list[tuple[int, dict]], list[tuple[int, dict]]]] = {}
@@ -21,8 +40,32 @@ def _diff_lists(a: list[dict], b: list[dict], key: str) -> dict:
         groups.setdefault(k, ([], []))[1].append((i, item))
 
     for _, (qa, qb) in groups.items():
-        paired = min(len(qa), len(qb))
-        for (ia, item_a), (ib, item_b) in zip(qa[:paired], qb[:paired]):
+        # 阶段1：hash 精确配对（a 侧队列被消耗）
+        b_by_hash: dict[str, list[tuple[int, dict]]] = {}
+        for ib, item_b in qb:
+            b_by_hash.setdefault(_content_hash(item_b), []).append((ib, item_b))
+        remaining_a: list[tuple[int, dict]] = []
+        consumed_b: set[int] = set()
+        for ia, item_a in qa:
+            h = _content_hash(item_a)
+            candidates = [c for c in b_by_hash.get(h, []) if c[0] not in consumed_b]
+            if candidates:
+                ib, _ = candidates[0]
+                consumed_b.add(ib)
+                if ia != ib:
+                    moved.append({
+                        "index_a": ia, "index_b": ib,
+                        "type": item_a.get(key),
+                    })
+                # index 相同 → unchanged，不进输出
+            else:
+                remaining_a.append((ia, item_a))
+        remaining_b = [(ib, item) for ib, item in qb if ib not in consumed_b]
+
+        # 阶段2：余量按序配对 → changed
+        paired = min(len(remaining_a), len(remaining_b))
+        for (ia, item_a), (ib, item_b) in zip(
+                remaining_a[:paired], remaining_b[:paired]):
             fields = sorted(
                 {k for k in set(item_a) | set(item_b)
                  if item_a.get(k) != item_b.get(k)}
@@ -32,12 +75,13 @@ def _diff_lists(a: list[dict], b: list[dict], key: str) -> dict:
                     "index_a": ia, "index_b": ib,
                     "type": item_b.get(key), "fields": fields,
                 })
-        for ia, _item in qa[paired:]:
+        for ia, _item in remaining_a[paired:]:
             removed.append({"index_a": ia, "type": _item.get(key)})
-        for ib, _item in qb[paired:]:
+        for ib, _item in remaining_b[paired:]:
             added.append({"index_b": ib, "type": _item.get(key)})
 
-    return {"added": added, "removed": removed, "changed": changed}
+    return {"added": added, "removed": removed,
+            "changed": changed, "moved": moved}
 
 
 def _loads_or_empty(raw: Optional[str]) -> list[dict]:
@@ -82,7 +126,7 @@ class VersionDiffService:
         }
 
     def render(self, diff: dict) -> str:
-        """diff dict → IM 文本（+ / - / ~）。"""
+        """diff dict → IM 文本（+ / - / ~ / ↔）。"""
         lines = [f"模板 {diff['template_id']} 版本 {diff['v_a']} → "
                  f"{diff['v_b']} diff："]
         for blk in diff["blocks"]["added"]:
@@ -92,11 +136,15 @@ class VersionDiffService:
         for blk in diff["blocks"]["changed"]:
             lines.append(f"~ [{blk['index_b']}] {blk['type']} "
                          f"(字段: {', '.join(blk['fields'])})")
+        for blk in diff["blocks"].get("moved", []):
+            lines.append(f"↔ [{blk['index_a']}→{blk['index_b']}] {blk['type']}")
         steps = diff["steps"]
-        if steps["added"] or steps["removed"] or steps["changed"]:
+        if (steps["added"] or steps["removed"] or steps["changed"]
+                or steps.get("moved")):
             lines.append(f"steps: + {len(steps['added'])} / "
                          f"- {len(steps['removed'])} / "
-                         f"~ {len(steps['changed'])}")
+                         f"~ {len(steps['changed'])} / "
+                         f"↔ {len(steps.get('moved', []))}")
         meta = diff["meta"]
         if meta["name_changed"]:
             lines.append(f"~ name: {meta['name_a']} → {meta['name_b']}")
