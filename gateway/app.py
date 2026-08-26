@@ -50,6 +50,11 @@ class AppContext:
     search_service: object | None = None  # Phase 7
     public_service: object | None = None  # Phase 7
     fork_service: object | None = None  # Phase 7
+    comment_sync_service: object | None = None  # Phase 8
+    comment_action_service: object | None = None  # Phase 8
+    diff_service: object | None = None  # Phase 8
+    tag_service: object | None = None  # Phase 8
+    favorite_service: object | None = None  # Phase 8
 
 
 def create_app(
@@ -66,6 +71,11 @@ def create_app(
     search_service=None,
     public_service=None,
     fork_service=None,
+    comment_sync_service=None,
+    comment_action_service=None,
+    diff_service=None,
+    tag_service=None,
+    favorite_service=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -98,6 +108,11 @@ def create_app(
         search_service=search_service,
         public_service=public_service,
         fork_service=fork_service,
+        comment_sync_service=comment_sync_service,
+        comment_action_service=comment_action_service,
+        diff_service=diff_service,
+        tag_service=tag_service,
+        favorite_service=favorite_service,
     )
 
     @app.get("/health")
@@ -426,6 +441,122 @@ def create_app(
             getattr(r, "template_id", r)
             for r in fs.list_forks(template_id)
         ]}
+
+    # === Phase 8: 评论同步/动作 + diff + 标签/收藏 ===
+    @app.post("/comments/{doc_id}/sync")
+    async def sync_comments(doc_id: str):
+        ctx = app.state.ctx
+        cs = ctx.comment_sync_service
+        if cs is None:
+            raise _HTTPException(status_code=503, detail="comment_sync_service not configured")
+        return cs.sync(doc_id=doc_id)
+
+    @app.get("/comments/{doc_id}/stored")
+    async def stored_comments(doc_id: str, block_id: str | None = None):
+        ctx = app.state.ctx
+        cs = ctx.comment_sync_service
+        if cs is None:
+            return {"comments": []}
+        rows = cs.list_stored(doc_id=doc_id, block_id=block_id)
+        return {"comments": [
+            getattr(r, "comment_id", r) for r in rows
+        ]}
+
+    @app.post("/comments/{doc_id}/apply-actions")
+    async def apply_comment_actions(doc_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        ca = ctx.comment_action_service
+        if ca is None:
+            raise _HTTPException(status_code=503, detail="comment_action_service not configured")
+        return ca.apply(doc_id=doc_id, caller_open_id=body["caller_open_id"])
+
+    @app.get("/templates/{template_id}/diff")
+    async def diff_template(template_id: str, v_a: int, v_b: int):
+        ctx = app.state.ctx
+        ds = ctx.diff_service
+        if ds is None:
+            raise _HTTPException(status_code=503, detail="diff_service not configured")
+        try:
+            return ds.diff(template_id=template_id, v_a=v_a, v_b=v_b)
+        except ValueError as e:
+            raise _HTTPException(status_code=404, detail=str(e))
+
+    @app.get("/templates/by-tag/{tag}")
+    async def templates_by_tag(tag: str):
+        ctx = app.state.ctx
+        ts = ctx.tag_service
+        if ts is None:
+            return {"templates": []}
+        return {"templates": [
+            getattr(r, "template_id", r) for r in ts.find_by_tag(tag)
+        ]}
+
+    @app.get("/templates/favorites/{user_open_id}")
+    async def favorites_of(user_open_id: str):
+        ctx = app.state.ctx
+        fs = ctx.favorite_service
+        if fs is None:
+            return {"templates": []}
+        return {"templates": [
+            getattr(r, "template_id", r) for r in fs.list_favorites(user_open_id)
+        ]}
+
+    @app.post("/templates/{template_id}/tags")
+    async def add_tag(template_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        ts = ctx.tag_service
+        if ts is None:
+            raise _HTTPException(status_code=503, detail="tag_service not configured")
+        try:
+            normalized = ts.attach(
+                template_id=template_id, tag=body["tag"],
+                caller_open_id=body["caller_open_id"],
+            )
+        except PermissionError:
+            raise _HTTPException(status_code=403, detail="not owner")
+        except ValueError as e:
+            raise _HTTPException(status_code=404, detail=str(e))
+        return {"ok": True, "tag": normalized}
+
+    @app.delete("/templates/{template_id}/tags")
+    async def remove_tag(template_id: str, tag: str, caller_open_id: str):
+        ctx = app.state.ctx
+        ts = ctx.tag_service
+        if ts is None:
+            raise _HTTPException(status_code=503, detail="tag_service not configured")
+        try:
+            ts.detach(template_id=template_id, tag=tag,
+                       caller_open_id=caller_open_id)
+        except PermissionError:
+            raise _HTTPException(status_code=403, detail="not owner")
+        except ValueError as e:
+            raise _HTTPException(status_code=404, detail=str(e))
+        return {"ok": True}
+
+    @app.post("/templates/{template_id}/favorite")
+    async def add_favorite(template_id: str, request: Request):
+        ctx = app.state.ctx
+        body = await request.json()
+        fs = ctx.favorite_service
+        if fs is None:
+            raise _HTTPException(status_code=503, detail="favorite_service not configured")
+        try:
+            fs.favorite(template_id=template_id,
+                         caller_open_id=body["caller_open_id"])
+        except ValueError as e:
+            raise _HTTPException(status_code=404, detail=str(e))
+        return {"ok": True}
+
+    @app.delete("/templates/{template_id}/favorite")
+    async def remove_favorite(template_id: str, caller_open_id: str):
+        ctx = app.state.ctx
+        fs = ctx.favorite_service
+        if fs is None:
+            raise _HTTPException(status_code=503, detail="favorite_service not configured")
+        fs.unfavorite(template_id=template_id, caller_open_id=caller_open_id)
+        return {"ok": True}
 
     @app.post("/webhook/lark")
     async def lark_webhook(request: Request):

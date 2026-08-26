@@ -5,7 +5,15 @@ Phase 1 用 JSON 保持 SQLite/PostgreSQL 双兼容。
 """
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Column, DateTime, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Column,
+    DateTime,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -255,6 +263,65 @@ class TemplateAuditRow(Base):
     action: Mapped[str] = mapped_column(String, nullable=False)
     actor_open_id: Mapped[str] = mapped_column(String, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+
+# === Phase 8 ===
+
+class CommentRow(Base):
+    """Phase 8: 评论本地快照（飞书 doc comment 按需同步，幂等 upsert）。
+
+    comment_id 为飞书侧生成（reply 用 reply_id），天然唯一作幂等键；
+    processed_at 不被 sync 覆盖（防动作重放，ADR-0019/0023）。
+    """
+    __tablename__ = "comments"
+
+    comment_id: Mapped[str] = mapped_column(String, primary_key=True)
+    doc_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    block_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    user_id: Mapped[str] = mapped_column(String, default="", nullable=False)
+    user_name: Mapped[str] = mapped_column(String, default="", nullable=False)
+    text: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    is_reply: Mapped[bool] = mapped_column(default=False, nullable=False)
+    parent_comment_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    resolved: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    synced_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TemplateTagRow(Base):
+    """Phase 8: 模板标签（多对多，unique(template_id, tag)，ADR-0022）。"""
+    __tablename__ = "template_tags"
+    __table_args__ = (
+        UniqueConstraint("template_id", "tag", name="uq_template_tag"),
+    )
+
+    tag_id: Mapped[str] = mapped_column(String, primary_key=True)
+    template_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    tag: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+
+class TemplateFavoriteRow(Base):
+    """Phase 8: 模板收藏（user↔template，unique(template_id, user_open_id)）。"""
+    __tablename__ = "template_favorites"
+    __table_args__ = (
+        UniqueConstraint("template_id", "user_open_id", name="uq_template_favorite"),
+    )
+
+    favorite_id: Mapped[str] = mapped_column(String, primary_key=True)
+    template_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_open_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )

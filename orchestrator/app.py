@@ -531,3 +531,115 @@ class Orchestrator:
 
         # 普通消息：复用 process_phase6
         return self.process_phase6(incoming)
+
+    # === Phase 8 ===
+    def process_phase8(self, incoming) -> dict:
+        """Phase 8 入口：复用 process_phase7 + 评论同步/动作/diff/标签/收藏指令。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 8 subsystems not initialized")
+
+        text = incoming.text.strip()
+
+        if text.startswith("/comments-sync "):
+            doc_id = text.split(maxsplit=1)[1].strip()
+            ss = getattr(self, "comment_sync_service", None)
+            if ss is None:
+                self.im.reply(incoming.chat_id, "[错误] comment_sync_service 未配置")
+                return {"status": "sync_failed"}
+            out = ss.sync(doc_id=doc_id)
+            self.im.reply(
+                incoming.chat_id,
+                f"[成功] 已同步 {doc_id} 评论：拉取 {out['fetched']}"
+                f"，新增 {out['new']}，更新 {out['updated']}",
+            )
+            return {"status": "comments_synced", "doc_id": doc_id, **out}
+
+        if text.startswith("/comment-apply "):
+            doc_id = text.split(maxsplit=1)[1].strip()
+            ca = getattr(self, "comment_action_service", None)
+            if ca is None:
+                self.im.reply(incoming.chat_id, "[错误] comment_action_service 未配置")
+                return {"status": "apply_failed"}
+            out = ca.apply(doc_id=doc_id,
+                            caller_open_id=incoming.sender_open_id)
+            self.im.reply(
+                incoming.chat_id,
+                f"[结果] 已应用 {out['applied']} 条，跳过 {out['skipped']} 条"
+                f"普通评论，失败 {out['failed']} 条",
+            )
+            return {"status": "actions_applied", "doc_id": doc_id, **out}
+
+        if text.startswith("/template-diff "):
+            parts = text.split()
+            if len(parts) < 4:
+                self.im.reply(incoming.chat_id,
+                              "[错误] 用法: /template-diff <id> <v_a> <v_b>")
+                return {"status": "diff_failed", "reason": "bad_args"}
+            tid, v_a, v_b = parts[1], int(parts[2]), int(parts[3])
+            ds = getattr(self, "diff_service", None)
+            if ds is None:
+                self.im.reply(incoming.chat_id, "[错误] diff_service 未配置")
+                return {"status": "diff_failed"}
+            try:
+                rendered = ds.render(ds.diff(template_id=tid, v_a=v_a, v_b=v_b))
+                self.im.reply(incoming.chat_id, rendered)
+                return {"status": "diff_rendered", "template_id": tid}
+            except ValueError as e:
+                self.im.reply(incoming.chat_id, f"[错误] {e}")
+                return {"status": "diff_failed", "reason": str(e)}
+
+        if text.startswith("/template-tag "):
+            parts = text.split(maxsplit=2)
+            if len(parts) < 3:
+                self.im.reply(incoming.chat_id,
+                              "[错误] 用法: /template-tag <id> <tag>")
+                return {"status": "tag_failed", "reason": "bad_args"}
+            tid, tag = parts[1], parts[2]
+            ts = getattr(self, "tag_service", None)
+            if ts is None:
+                self.im.reply(incoming.chat_id, "[错误] tag_service 未配置")
+                return {"status": "tag_failed"}
+            try:
+                normalized = ts.attach(
+                    template_id=tid, tag=tag,
+                    caller_open_id=incoming.sender_open_id,
+                )
+                self.im.reply(incoming.chat_id,
+                              f"[成功] 模板 {tid} 已打标签 {normalized}")
+                return {"status": "tagged", "template_id": tid, "tag": normalized}
+            except PermissionError:
+                self.im.reply(incoming.chat_id, "[错误] 您不是模板所有者")
+                return {"status": "tag_failed", "reason": "not_owner"}
+            except ValueError as e:
+                self.im.reply(incoming.chat_id, f"[错误] {e}")
+                return {"status": "tag_failed", "reason": str(e)}
+
+        if text.startswith("/template-favorite "):
+            tid = text.split(maxsplit=1)[1].strip()
+            fs = getattr(self, "favorite_service", None)
+            if fs is None:
+                self.im.reply(incoming.chat_id, "[错误] favorite_service 未配置")
+                return {"status": "favorite_failed"}
+            try:
+                fs.favorite(template_id=tid,
+                             caller_open_id=incoming.sender_open_id)
+                self.im.reply(incoming.chat_id, f"[成功] 已收藏模板 {tid}")
+                return {"status": "favorited", "template_id": tid}
+            except ValueError as e:
+                self.im.reply(incoming.chat_id, f"[错误] {e}")
+                return {"status": "favorite_failed", "reason": str(e)}
+
+        if text == "/template-favorites":
+            fs = getattr(self, "favorite_service", None)
+            if fs is None:
+                self.im.reply(incoming.chat_id, "[错误] favorite_service 未配置")
+                return {"status": "favorites_failed"}
+            tpls = fs.list_favorites(incoming.sender_open_id)
+            ids = [getattr(t, "template_id", t) for t in tpls]
+            self.im.reply(incoming.chat_id,
+                          f"我的收藏: {', '.join(ids) or '(无)'}")
+            return {"status": "favorites_listed", "templates": ids}
+
+        # 普通消息：复用 process_phase7
+        return self.process_phase7(incoming)

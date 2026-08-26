@@ -501,6 +501,69 @@ class TemplateFavoriteRow(Base):
 
 ---
 
-## 14. 实施结果（交付后填写）
+## 14. 实施结果（已交付）
 
-待 plan 实施 + 回归后填写（commit / 实际测试数 / 文件清单 / 累计测试曲线）。
+### 测试与提交
+
+- **全量回归：445 passed / 0 failed**（Phase 7 基线 389 + 新增 56，0 回归）✅
+- commit：`feat(phase8): implement comment-driven loop (sync + actions + diff + tags/favorites)`
+
+### 实际测试数
+
+| 模块 | 计划 | 实际 |
+|---|---|---|
+| CommentRepo | 4 | **4** |
+| TagRepo + FavoriteRepo | 6 | **6** |
+| CommentSyncService | 4 | **4** |
+| CommentActionService（含 parse） | 7 | **8** |
+| VersionDiffService | 5 | **7** |
+| TagService + FavoriteService | 6 | **6** |
+| Orchestrator phase8 smoke | 1 | **2** |
+| 评论 API（sync/stored/apply） | 3 | **3** |
+| 模板 API（diff/tags/favorites） | 7 | **8** |
+| E2E E1-E8 | 8 | **8** |
+| **新增小计** | 51 | **56** |
+| Phase 7 累计 | 389 | 389 |
+| **总计** | 440 | **445** ✅ |
+
+### 累计测试曲线
+
+```
+Phase 1:86 → 2:147 → 3:216 → 4:230 → 5:278 → 6:336 → 7:389 → 8:445
+                                                   +53        +56
+```
+
+### 新增/修改文件清单
+
+```
+新增（源码 8）：
+- persistence/repositories/comment_repo.py          # 评论幂等 upsert + pending + 打标
+- persistence/repositories/template_tag_repo.py     # 标签 CRUD
+- persistence/repositories/template_favorite_repo.py# 收藏 CRUD
+- orchestrator/templates/comment_sync_service.py    # 拉取+展平+落库
+- orchestrator/templates/comment_action_service.py  # 前缀解析 + owner apply
+- orchestrator/templates/diff_service.py            # 块级结构化 diff + IM 渲染
+- orchestrator/templates/tag_service.py             # 标签服务（owner + 归一化）
+- orchestrator/templates/favorite_service.py        # 收藏服务
+
+新增（测试 10）：
+- tests/unit/test_comment_repo.py
+- tests/unit/test_template_tag_favorite_repo.py
+- tests/unit/test_comment_sync_service.py
+- tests/unit/test_comment_action_service.py
+- tests/unit/test_diff_service.py
+- tests/unit/test_tag_favorite_service.py
+- tests/unit/test_orchestrator_phase8.py
+- tests/integration/test_comments_phase8_api.py
+- tests/integration/test_templates_phase8_api.py
+- tests/integration/test_e2e_phase8_e1_e8.py
+
+修改：
+- persistence/models.py        # +CommentRow +TemplateTagRow +TemplateFavoriteRow（13→16 表）
+- gateway/app.py               # +5 service 注入 + 10 路由（sync/stored/apply/diff/tags×2/by-tag/favorite×2/favorites）
+- orchestrator/app.py          # +process_phase8 + 6 IM 指令
+```
+
+### 交付能力（评论驱动闭环全链路）
+
+导师在飞书 doc 评论 `/replan t1 增加对照组` → 用户 IM `/comments-sync <doc_id>` 落库 → `/comment-apply <doc_id>` 执行（owner 权限 + version bump + processed 打标）→ `/template-diff t1 1 2` 查看变更 → `/template-rollback t1 1` 可回滚。配套 `/template-tag` / `/template-favorite` / `/template-favorites` 完成公共库可用性闭环。
