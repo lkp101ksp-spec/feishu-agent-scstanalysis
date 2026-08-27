@@ -4,6 +4,7 @@ annotated-types==0.8.0
 anyio==4.14.2
 certifi==2026.7.22
 cfgv==3.5.0
+charset-normalizer==3.5.1
 click==8.5.0
 colorama==0.4.6
 coverage==7.15.4
@@ -19,6 +20,7 @@ httpx==0.28.1
 identify==2.6.19
 idna==3.19
 iniconfig==2.3.0
+lark-oapi==1.7.3
 Mako==1.4.1
 MarkupSafe==3.0.3
 mirakuru==3.0.2
@@ -31,6 +33,7 @@ pre_commit==4.6.2
 psutil==7.2.2
 psycopg==3.3.4
 psycopg-binary==3.3.4
+pycryptodome==3.23.0
 pydantic==2.13.4
 pydantic_core==2.46.4
 Pygments==2.21.0
@@ -41,6 +44,8 @@ pytest-postgresql==8.1.0
 python-discovery==1.5.3
 python-ulid==4.0.1
 PyYAML==6.0.3
+requests==2.34.2
+requests-toolbelt==1.0.0
 respx==0.23.1
 ruff==0.16.4
 SQLAlchemy==2.0.52
@@ -48,5 +53,7 @@ starlette==1.6.0
 typing-inspection==0.4.4
 typing_extensions==4.16.0
 tzdata==2026.3
+urllib3==2.7.0
 uvicorn==0.52.4
 virtualenv==21.7.5
+websockets==15.0.1

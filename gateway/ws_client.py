@@ -1,0 +1,118 @@
+"""飞书事件长连接进程（ADR-0031）。
+
+入口：python -m gateway.ws_client
+行为：lark-oapi SDK 以 App ID/Secret 建立 WebSocket，接收
+- im.message.receive_v1 → 适配为 webhook 兼容 payload → run_im_pipeline
+- card.action.trigger    → 适配为平铺 payload → process_card_payload
+通道由 SDK 鉴权（auto_reconnect），不走 HTTP 验签；与 uvicorn webhook
+共用同一套管线函数，行为零分叉。
+"""
+from __future__ import annotations
+
+import logging
+
+import lark_oapi as lark
+from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
+from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTrigger
+
+from gateway.app import process_card_payload, run_im_pipeline
+from gateway.normalizer import NormalizeError
+from gateway.runtime import Runtime, build_runtime
+from shared.errors import FeishuAgentError, RateLimitExceededError
+
+logger = logging.getLogger(__name__)
+
+
+def im_event_to_payload(model: P2ImMessageReceiveV1) -> dict:
+    """SDK model → webhook 兼容 payload（normalize_im_event 可直接消费）。"""
+    msg = model.event.message
+    mentions = list(getattr(msg, "mentions", None) or [])
+    return {
+        "header": {
+            "event_id": model.header.event_id,
+            "event_type": model.header.event_type,
+            "app_id": model.header.app_id,
+        },
+        "event": {
+            "sender": {
+                "sender_id": {"open_id": model.event.sender.sender_id.open_id},
+                "sender_type": model.event.sender.sender_type,
+            },
+            "message": {
+                "chat_id": msg.chat_id,
+                "message_id": msg.message_id,
+                "message_type": msg.message_type,
+                "chat_type": getattr(msg, "chat_type", None) or "",
+                "content": msg.content,
+                # normalizer 仅做真值判断以剥离 @提及
+                "mentions": mentions or None,
+            },
+        },
+    }
+
+
+def card_event_to_payload(model: P2CardActionTrigger) -> dict:
+    """SDK 卡片回调 → 平铺 payload（与卡片 webhook 验签后结构一致）。
+
+    约定：卡片按钮 value 为平铺字段载体（action/session_id/approval_id...），
+    适配层将 operator open_id 一并合入。
+    """
+    payload: dict = dict(model.event.action.value or {})
+    operator = model.event.operator
+    if operator is not None and getattr(operator, "open_id", None):
+        payload.setdefault("open_id", operator.open_id)
+    return payload
+
+
+def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
+    """构造事件分发器：IM/卡片事件闭包到公共管线（异常吃掉保连接）。"""
+
+    def on_im(data: P2ImMessageReceiveV1) -> None:
+        app_id = data.header.app_id or "default"
+        try:
+            result = run_im_pipeline(rt.app, app_id, im_event_to_payload(data))
+            logger.info("ws im handled: %s", result)
+        except RateLimitExceededError as e:
+            logger.warning("ws im rate_limited: %s", e)
+        except NormalizeError as e:
+            logger.info("ws im skipped: %s", e)
+        except FeishuAgentError:
+            logger.exception("ws im pipeline failed")
+        except Exception:
+            logger.exception("ws im unexpected error")
+
+    def on_card(data: P2CardActionTrigger) -> None:
+        try:
+            result = process_card_payload(rt.app, card_event_to_payload(data))
+            logger.info("ws card handled: %s", result)
+        except Exception:
+            logger.exception("ws card unexpected error")
+
+    return (
+        lark.EventDispatcherHandler.builder("", "")
+        .register_p2_im_message_receive_v1(on_im)
+        .register_p2_card_action_trigger(on_card)
+        .build()
+    )
+
+
+def main() -> None:
+    """长连接进程入口：组装 runtime → 建 ws client → 阻塞接收。"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    )
+    rt = build_runtime()
+    client = lark.ws.Client(
+        rt.settings.feishu.app_id,
+        rt.settings.feishu.app_secret,
+        log_level=lark.LogLevel.INFO,
+        event_handler=build_dispatcher(rt),
+        auto_reconnect=True,
+    )
+    logger.info("ws long-connection starting (app_id=%s)", rt.settings.feishu.app_id)
+    client.start()
+
+
+if __name__ == "__main__":
+    main()

@@ -32,6 +32,110 @@ from shared.errors import (
 logger = logging.getLogger(__name__)
 
 
+def run_im_pipeline(app: FastAPI, app_id: str, payload: dict) -> dict:
+    """IM 事件公共管线（ADR-0031）：限流 → 归一化 → 幂等 → process → link_task。
+
+    webhook 路由（验签后）与 ws 长连接进程共用本函数，保证行为一致；
+    业务异常（RateLimitExceededError/NormalizeError/FeishuAgentError）透传给
+    调用方，由各自入口转译（HTTP 状态码 / ws 日志）。
+    """
+    ctx: AppContext = app.state.ctx
+    # 1. 限流
+    try:
+        ctx.rate.acquire(key=app_id)
+    except RateLimitExceededError as e:
+        logger.warning("rate_limited app=%s: %s", app_id, e)
+        raise
+
+    # 2. 归一化
+    try:
+        incoming = normalize_im_event(payload)
+    except NormalizeError as e:
+        logger.warning("normalize_failed: %s", e)
+        raise
+
+    # 3. 幂等去重
+    idem_key = build_idempotency_key(app_id, incoming.chat_id, incoming.message_id)
+    if app.state.session_factory is not None:
+        factory = app.state.session_factory
+    else:
+        from persistence.engine import get_engine
+        factory = sessionmaker(bind=get_engine(), expire_on_commit=False, autoflush=False)
+    s = factory()
+    try:
+        idem_repo = IdempotencyRepo(s)
+        if not idem_repo.try_reserve(idem_key):
+            logger.info("duplicate event key=%s", idem_key)
+            return {"status": "duplicate", "idempotency_key": idem_key}
+        s.commit()  # 确保幂等行对后续请求可见
+    finally:
+        s.close()
+
+    # 4. 业务处理
+    result = ctx.orchestrator.process(incoming)
+
+    # 5. 关联 task_id 到幂等键
+    task_id = result.get("task_id") if isinstance(result, dict) else None
+    if task_id:
+        s = factory()
+        try:
+            idem_repo = IdempotencyRepo(s)
+            idem_repo.link_task(idem_key, task_id)
+            s.commit()
+        finally:
+            s.close()
+
+    return result
+
+
+def process_card_payload(app: FastAPI, payload: dict) -> dict:
+    """卡片回调公共处理（ADR-0031）：audit 落库 + renew_bind 分支。
+
+    输入为平铺 dict（open_id/action/approval_id/session_id...，
+    与 webhook 卡片路由验签后的 payload 结构一致）；ws 卡片适配层产出同构 dict。
+    """
+    ctx: AppContext = app.state.ctx
+    if app.state.session_factory is not None:
+        factory = app.state.session_factory
+    else:
+        from persistence.engine import get_engine
+        factory = sessionmaker(bind=get_engine(), expire_on_commit=False, autoflush=False)
+    try:
+        s = factory()
+        try:
+            from persistence.repositories.audit_repo import AuditRepo
+            from shared.ulid_ import new_ulid
+            AuditRepo(s).write(
+                audit_id=new_ulid(),
+                actor_type="user",
+                actor_id=payload.get("open_id", ""),
+                action=f"card_{payload.get('action', 'unknown')}",
+                target_type="approval",
+                target_id=payload.get("approval_id", ""),
+                detail=payload,
+            )
+            s.commit()
+        finally:
+            s.close()
+    except Exception:
+        logger.exception("audit write failed (ignored)")
+    # renew_bind 分支（Phase 3）
+    action = payload.get("action", "")
+    if action == "renew_bind":
+        session_id = payload.get("session_id", "")
+        bind_doc_service = ctx.bind_doc_service
+        if bind_doc_service is None:
+            logger.warning("renew_bind received but bind_doc_service not configured")
+            return {"ok": False, "reason": "bind_doc_service not configured"}
+        try:
+            new_exp = bind_doc_service.renew(session_id=session_id)
+            return {"ok": True, "new_expires": new_exp.isoformat()}
+        except Exception as e:
+            logger.exception("renew_bind failed")
+            return {"ok": False, "reason": str(e)}
+    return {"ok": True}
+
+
 @dataclass
 class AppContext:
     """每个 App 实例的上下文（secret、限流、orchestrator）。"""
@@ -96,6 +200,7 @@ def create_app(
         from persistence.engine import get_engine
         return sessionmaker(bind=get_engine(), expire_on_commit=False, autoflush=False)()
 
+    app.state.session_factory = session_factory
     app.state.ctx = AppContext(
         secret=secret,
         rate=TokenBucket(capacity=rate_per_min, refill_per_sec=rate_per_min / 60.0),
@@ -142,10 +247,8 @@ def create_app(
     async def lark_card_webhook(request: Request):
         """Phase 2 卡片回调入口。
 
-        流程：HMAC 验签 → 解析 body → 落 audit（Phase 2 简化版）。
-        Phase 2.1 接入真实 approval_id → resolve_callback → Future resolve。
+        流程：HMAC 验签 → 解析 body → 公共卡片处理管线（ADR-0031）。
         """
-        ctx: AppContext = app.state.ctx
         body_bytes = await request.body()
         signature = request.headers.get("X-Lark-Signature", "")
         svc = ApprovalService(secret=card_secret)
@@ -156,40 +259,8 @@ def create_app(
             payload = _json.loads(body_bytes)
         except Exception as e:
             raise _HTTPException(status_code=400, detail=f"bad json: {e}")
-        try:
-            s = _factory()
-            try:
-                from persistence.repositories.audit_repo import AuditRepo
-                from shared.ulid_ import new_ulid
-                AuditRepo(s).write(
-                    audit_id=new_ulid(),
-                    actor_type="user",
-                    actor_id=payload.get("open_id", ""),
-                    action=f"card_{payload.get('action', 'unknown')}",
-                    target_type="approval",
-                    target_id=payload.get("approval_id", ""),
-                    detail=payload,
-                )
-                s.commit()
-            finally:
-                s.close()
-        except Exception:
-            logger.exception("audit write failed (ignored)")
-        # === Phase 3: renew_bind action ===
-        action = payload.get("action", "")
-        if action == "renew_bind":
-            session_id = payload.get("session_id", "")
-            bind_doc_service = getattr(ctx, "bind_doc_service", None)
-            if bind_doc_service is None:
-                logger.warning("renew_bind received but bind_doc_service not configured")
-                return {"ok": False, "reason": "bind_doc_service not configured"}
-            try:
-                new_exp = bind_doc_service.renew(session_id=session_id)
-                return {"ok": True, "new_expires": new_exp.isoformat()}
-            except Exception as e:
-                logger.exception("renew_bind failed")
-                return {"ok": False, "reason": str(e)}
-        return {"ok": True}
+        # 验签通过：复用公共卡片处理管线（ADR-0031，ws 长连接同源）
+        return process_card_payload(app, payload)
 
     # === Phase 5: 模板市场 API ===
     @app.post("/templates/block")
@@ -604,52 +675,16 @@ def create_app(
             logger.warning("signature_invalid: %s", e)
             raise HTTPException(status_code=401, detail=str(e))
 
-        # 2. 限流
+        # 2-6. 限流/归一化/幂等/业务处理：公共管线（ADR-0031，ws 长连接同源）
         app_id = request.headers.get("X-Lark-App-Id", "default")
         try:
-            ctx.rate.acquire(key=app_id)
+            return run_im_pipeline(app, app_id, await request.json())
         except RateLimitExceededError as e:
-            logger.warning("rate_limited app=%s: %s", app_id, e)
             raise HTTPException(status_code=429, detail=str(e))
-
-        # 3. 归一化
-        try:
-            payload = await request.json()
-            incoming = normalize_im_event(payload)
         except NormalizeError as e:
-            logger.warning("normalize_failed: %s", e)
             raise HTTPException(status_code=400, detail=str(e))
-
-        # 4. 幂等去重
-        idem_key = build_idempotency_key(app_id, incoming.chat_id, incoming.message_id)
-        s = _factory()
-        try:
-            idem_repo = IdempotencyRepo(s)
-            if not idem_repo.try_reserve(idem_key):
-                logger.info("duplicate webhook key=%s", idem_key)
-                return {"status": "duplicate", "idempotency_key": idem_key}
-            s.commit()  # 确保幂等行对后续请求可见
-        finally:
-            s.close()
-
-        # 5. 业务处理
-        try:
-            result = ctx.orchestrator.process(incoming)
         except FeishuAgentError as e:
             logger.exception("orchestrator process failed: %s", e)
             raise HTTPException(status_code=500, detail=str(e))
-
-        # 6. 关联 task_id 到幂等键
-        task_id = result.get("task_id") if isinstance(result, dict) else None
-        if task_id:
-            s = _factory()
-            try:
-                idem_repo = IdempotencyRepo(s)
-                idem_repo.link_task(idem_key, task_id)
-                s.commit()
-            finally:
-                s.close()
-
-        return result
 
     return app
