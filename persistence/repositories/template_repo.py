@@ -119,13 +119,23 @@ class TemplateRepo:
         # 全文相关度（方言分支）
         if query:
             if _is_postgres(self.session):
+                # WHERE 用与 0002 迁移 GIN 表达式索引一致的表达式（可命中索引）
                 ts_vec = func.to_tsvector(
                     "simple",
                     func.coalesce(TemplateRow.name, "")
                     + " " + func.coalesce(TemplateRow.description, ""),
                 )
                 ts_query = func.plainto_tsquery("simple", query)
-                text_score = func.ts_rank(ts_vec, ts_query)
+                name_vec = func.to_tsvector(
+                    "simple", func.coalesce(TemplateRow.name, "")
+                )
+                # 档位与 SQLite 分支对齐（name=2.0 / desc=1.0），
+                # ts_rank 仅作同档内细分排序（ADR-0026 融合公式）
+                text_score = case(
+                    (name_vec.op("@@")(ts_query), 2.0 + func.ts_rank(ts_vec, ts_query)),
+                    (ts_vec.op("@@")(ts_query), 1.0 + func.ts_rank(ts_vec, ts_query)),
+                    else_=0.0,
+                )
                 base = base.filter(ts_vec.op("@@")(ts_query))
             else:
                 like = f"%{query}%"
