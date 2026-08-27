@@ -76,7 +76,7 @@ class DocAdapter:
                .queries({"token": [wiki_token], "obj_type": ["wiki"]})
                .build())
         resp = self.sdk_client.request(req)
-        payload = json.loads(resp.content)
+        payload = json.loads(resp.raw.content)
         if payload.get("code") != 0:
             raise LarkCLIError(
                 f"wiki get_node failed: code={payload.get('code')} "
@@ -99,7 +99,7 @@ class DocAdapter:
         if body is not None:
             builder = builder.body(body)
         resp = self.sdk_client.request(builder.build())
-        payload = json.loads(resp.content)
+        payload = json.loads(resp.raw.content)
         if payload.get("code") != 0:
             raise LarkCLIError(
                 f"docx api failed: code={payload.get('code')} "
@@ -128,7 +128,7 @@ class DocAdapter:
                        .uri(uri)
                        .token_types({lark.AccessTokenType.TENANT}))
             resp = self.sdk_client.request(builder.build())
-            payload = json.loads(resp.content)
+            payload = json.loads(resp.raw.content)
             if payload.get("code") != 0:
                 raise LarkCLIError(
                     f"docx list blocks failed: code={payload.get('code')} "

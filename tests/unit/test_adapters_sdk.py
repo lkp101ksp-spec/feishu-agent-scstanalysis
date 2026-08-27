@@ -36,10 +36,10 @@ def _im_sdk(message_id: str = "om_sdk", success: bool = True,
 
 
 def _doc_sdk(payload: dict):
-    """构造 mock sdk client：request() 返回指定 JSON payload 的 RawResponse。"""
+    """构造 mock sdk client：request() 返回 BaseResponse（.raw.content 为 JSON 字节）。"""
     sdk = MagicMock()
     sdk.request.return_value = SimpleNamespace(
-        content=json.dumps(payload).encode("utf-8"))
+        raw=SimpleNamespace(content=json.dumps(payload).encode("utf-8")))
     return sdk
 
 
@@ -114,8 +114,8 @@ def test_doc_get_block_tree_sdk_pagination():
     page2 = {"code": 0, "data": {"items": [{"block_id": "b2"}],
                                  "has_more": False}}
     sdk.request.side_effect = [
-        SimpleNamespace(content=json.dumps(page1).encode()),
-        SimpleNamespace(content=json.dumps(page2).encode()),
+        SimpleNamespace(raw=SimpleNamespace(content=json.dumps(page1).encode())),
+        SimpleNamespace(raw=SimpleNamespace(content=json.dumps(page2).encode())),
     ]
     adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,
                          rate_limiter=NoWaitLimiter())
