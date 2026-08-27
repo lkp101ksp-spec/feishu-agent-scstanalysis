@@ -1,4 +1,3 @@
-from pydantic import ValidationError
 
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 from shared.errors import ToolNotFoundError

@@ -53,7 +53,7 @@ class DockerSandbox:
             "--cap-drop=ALL",
             "--security-opt=no-new-privileges",
             "--read-only",
-            "--tmpfs", f"/tmp:size=64m",
+            "--tmpfs", "/tmp:size=64m",
             "--tmpfs", f"/{cfg.workspace_dir_name}:size={cfg.tmpfs_workspace_mb}m",
             "-u", "1000:1000",
             "--restart", "no",

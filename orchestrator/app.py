@@ -32,7 +32,6 @@ from orchestrator.tools.tool_registry import ToolRegistry
 from shared.errors import BindDocInvalidError, DocWriteError, FeishuAgentError, LLMCallError
 from shared.schemas import ChatMessage, IncomingMessage
 
-
 SYSTEM_PROMPT = "你是飞书科研助手。请用简洁中文回答，不超过 200 字。"
 
 

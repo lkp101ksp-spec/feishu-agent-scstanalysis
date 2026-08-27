@@ -1,8 +1,6 @@
 import asyncio
 import datetime as dt
 
-import pytest
-
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan
 from orchestrator.planner.scheduler import Scheduler
 from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle

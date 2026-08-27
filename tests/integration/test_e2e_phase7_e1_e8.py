@@ -1,5 +1,4 @@
 """E1-E8: Phase 7 端到端场景。"""
-import tempfile
 from unittest.mock import MagicMock
 
 import httpx

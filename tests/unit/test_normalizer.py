@@ -1,7 +1,7 @@
 """Webhook payload → IncomingMessage 归一化测试。"""
 import pytest
 
-from gateway.normalizer import normalize_im_event, parse_bind_doc_cmd, NormalizeError
+from gateway.normalizer import NormalizeError, normalize_im_event, parse_bind_doc_cmd
 
 
 def _payload(text: str, msg_type: str = "text", mentions: list | None = None) -> dict:

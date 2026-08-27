@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from typing import Optional
 
 from orchestrator.blocks.schemas import AnyBlock
 from orchestrator.blocks.serializer import blocks_to_json

@@ -5,12 +5,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from feishu_adapter.doc_adapter import DocAdapter
-from feishu_adapter.im_adapter import IMAdapter
 from orchestrator.app import Orchestrator
 from orchestrator.bind_doc_service import BindDocService
 from orchestrator.doc_write_service import DocWriteService
-from orchestrator.llm_router import LLMRouter
 from orchestrator.session_service import SessionService
 from orchestrator.task_service import TaskService
 from persistence.models import Base

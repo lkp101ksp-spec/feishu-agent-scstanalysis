@@ -1,8 +1,14 @@
 import pytest
 
-from orchestrator.blocks.schemas import (CodeBlock, HeadingBlock, ImageBlock,
-                                          ListBlock, QuoteBlock, TableBlock,
-                                          TextBlock)
+from orchestrator.blocks.schemas import (
+    CodeBlock,
+    HeadingBlock,
+    ImageBlock,
+    ListBlock,
+    QuoteBlock,
+    TableBlock,
+    TextBlock,
+)
 from orchestrator.blocks.serializer import blocks_to_json, json_to_blocks
 
 

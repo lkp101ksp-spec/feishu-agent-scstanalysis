@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
-    Column,
     DateTime,
     Integer,
     String,

@@ -1,10 +1,16 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.blocks.schemas import (CalloutBlock, DividerBlock,
-                                          EmbedBlock, EquationBlock,
-                                          FileBlock, MathBlock,
-                                          MermaidBlock, VideoBlock)
+from orchestrator.blocks.schemas import (
+    CalloutBlock,
+    DividerBlock,
+    EmbedBlock,
+    EquationBlock,
+    FileBlock,
+    MathBlock,
+    MermaidBlock,
+    VideoBlock,
+)
 
 
 def test_embed_block_minimal():

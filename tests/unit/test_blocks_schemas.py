@@ -1,9 +1,15 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.blocks.schemas import (CodeBlock, HeadingBlock, ImageBlock,
-                                          ListBlock, QuoteBlock, TableBlock,
-                                          TextBlock)
+from orchestrator.blocks.schemas import (
+    CodeBlock,
+    HeadingBlock,
+    ImageBlock,
+    ListBlock,
+    QuoteBlock,
+    TableBlock,
+    TextBlock,
+)
 
 
 def test_heading_block_validates_level():

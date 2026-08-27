@@ -21,6 +21,9 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "respx>=0.21.0",
     "pytest-postgresql>=6.0.0",
+    "ruff>=0.6.0",
+    "pytest-cov>=5.0.0",
+    "pre-commit>=3.7.0",
 ]
 
 [build-system]
@@ -33,3 +36,23 @@ include = ["shared*", "gateway*", "orchestrator*", "feishu_adapter*", "persisten
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "pg: 需要 docker compose 的 PostgreSQL 真库（默认无 Docker 时自动 skip）",
+]
+
+[tool.ruff]
+# 110 覆盖项目自 Phase 1 以来的单行列定义既定风格（最长 108），不做大规模重排
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+# E701（case x: return y）豁免：块分发/路由表采用紧凑单行风格，为有意为之
+ignore = ["E701"]
+
+[tool.ruff.lint.per-file-ignores]
+# 测试代码放宽行长与局部命名；docs/scripts 容忍部分风格
+"tests/**" = ["E501", "F841", "E741"]
+
+[tool.coverage.run]
+source = ["gateway", "orchestrator", "persistence", "feishu_adapter", "shared", "config"]

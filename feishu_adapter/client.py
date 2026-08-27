@@ -6,7 +6,7 @@ Phase 2 评估是否切换到 Feishu Python SDK。
 import json
 import shlex
 import subprocess
-from typing import Any, Optional
+from typing import Any
 
 
 class LarkCLIError(RuntimeError):

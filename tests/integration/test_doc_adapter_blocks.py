@@ -5,9 +5,15 @@ import pytest
 import respx
 
 from feishu_adapter.doc_adapter import DocAdapter
-from orchestrator.blocks.schemas import (CodeBlock, HeadingBlock, ImageBlock,
-                                          ListBlock, QuoteBlock, TableBlock,
-                                          TextBlock)
+from orchestrator.blocks.schemas import (
+    CodeBlock,
+    HeadingBlock,
+    ImageBlock,
+    ListBlock,
+    QuoteBlock,
+    TableBlock,
+    TextBlock,
+)
 
 
 class NoWaitLimiter:

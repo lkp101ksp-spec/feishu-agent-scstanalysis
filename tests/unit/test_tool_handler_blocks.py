@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock
 
+from orchestrator.tools.tool_handler import ToolHandler
 from orchestrator.tools.tool_registry import ToolSpec
-from orchestrator.tools.tool_handler import ToolHandler, ToolResult
 
 
 def test_tool_handler_extracts_blocks_field():

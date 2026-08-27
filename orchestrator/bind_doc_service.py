@@ -4,14 +4,11 @@ Phase 3：续期 / 续期卡片。
 """
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
+from orchestrator.session_service import SessionService
 from persistence.repositories.audit_repo import AuditRepo
 from shared.errors import BindDocInvalidError
 from shared.ulid_ import new_ulid
-
-from orchestrator.session_service import SessionService
-
 
 _DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 

@@ -2,7 +2,6 @@
 import time
 
 import httpx
-import pytest
 import respx
 
 from orchestrator.tools.bio.rate_limiter import RateLimiter

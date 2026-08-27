@@ -87,6 +87,7 @@ class ToolHandler:
             blocks = None
             if blocks_raw:
                 import json
+
                 from orchestrator.blocks.serializer import json_to_blocks
                 blocks = json_to_blocks(json.dumps(blocks_raw))
             return ToolResult(

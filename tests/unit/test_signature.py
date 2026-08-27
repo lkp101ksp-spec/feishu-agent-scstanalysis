@@ -9,7 +9,6 @@ import pytest
 from gateway.signature import verify_lark_signature
 from shared.errors import SignatureInvalidError
 
-
 SECRET = "test_secret_key"
 
 

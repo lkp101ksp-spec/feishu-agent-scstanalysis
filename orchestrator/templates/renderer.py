@@ -23,6 +23,7 @@ def substitute(obj: Any, params: dict[str, str]) -> Any:
 def render_block(blocks_json: str, params: dict[str, str]) -> list[Any]:
     """渲染 Block 模板：先用 substitute 替换 blocks_json 中的 {{var}}，再解析。"""
     import json
+
     from orchestrator.blocks.serializer import json_to_blocks
     raw = json.loads(blocks_json)
     raw_subst = substitute(raw, params)

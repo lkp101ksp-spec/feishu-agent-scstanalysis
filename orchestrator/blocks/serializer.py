@@ -4,13 +4,25 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from orchestrator.blocks.schemas import (AnyBlock, CalloutBlock, CodeBlock,
-                                           DividerBlock, EmbedBlock,
-                                           EquationBlock, FileBlock,
-                                           HeadingBlock, ImageBlock, ListBlock,
-                                           MathBlock, MermaidBlock, QuoteBlock,
-                                           QuoteContainerBlock, TableBlock,
-                                           TextBlock, VideoBlock)
+from orchestrator.blocks.schemas import (
+    AnyBlock,
+    CalloutBlock,
+    CodeBlock,
+    DividerBlock,
+    EmbedBlock,
+    EquationBlock,
+    FileBlock,
+    HeadingBlock,
+    ImageBlock,
+    ListBlock,
+    MathBlock,
+    MermaidBlock,
+    QuoteBlock,
+    QuoteContainerBlock,
+    TableBlock,
+    TextBlock,
+    VideoBlock,
+)
 
 
 def blocks_to_json(blocks: list[AnyBlock]) -> str:

@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan
 from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle

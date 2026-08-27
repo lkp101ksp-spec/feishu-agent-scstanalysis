@@ -1,4 +1,4 @@
-from orchestrator.blocks.schemas import AnyBlock, HeadingBlock, TableBlock, TextBlock
+from orchestrator.blocks.schemas import AnyBlock, HeadingBlock, TextBlock
 from orchestrator.template_engine import TemplateEngine
 
 

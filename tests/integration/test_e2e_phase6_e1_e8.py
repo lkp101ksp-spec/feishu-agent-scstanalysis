@@ -7,17 +7,21 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 import respx
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from gateway.app import create_app
-from orchestrator.blocks.schemas import (CalloutBlock, DividerBlock,
-                                          EmbedBlock, EquationBlock,
-                                          HeadingBlock, MathBlock,
-                                          MermaidBlock, TextBlock,
-                                          VideoBlock)
+from orchestrator.blocks.schemas import (
+    CalloutBlock,
+    DividerBlock,
+    EmbedBlock,
+    EquationBlock,
+    HeadingBlock,
+    MathBlock,
+    MermaidBlock,
+    TextBlock,
+    VideoBlock,
+)
 from orchestrator.templates.share_service import ShareService
 from orchestrator.templates.template_service import TemplateService
 from orchestrator.templates.version_service import VersionService

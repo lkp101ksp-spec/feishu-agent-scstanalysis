@@ -1,8 +1,6 @@
 """飞书适配层测试（mock lark-cli）。"""
 from unittest.mock import patch
 
-import pytest
-
 from feishu_adapter.base_projection_adapter import BaseProjectionAdapter
 from feishu_adapter.client import LarkCLIError
 from feishu_adapter.doc_adapter import DocAdapter

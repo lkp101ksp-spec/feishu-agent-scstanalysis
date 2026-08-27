@@ -1,4 +1,4 @@
-from orchestrator.templates.renderer import substitute, render_block, render_subplan
+from orchestrator.templates.renderer import render_subplan, substitute
 from orchestrator.templates.schemas import SubPlanTemplateStep
 
 

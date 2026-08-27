@@ -6,7 +6,7 @@ from shared.errors import (
     ToolBlockedError,
     ToolDeniedError,
 )
-from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle
+from shared.executor_types import ExecutionState, ExecutionTask
 
 
 def test_execution_state_enum():

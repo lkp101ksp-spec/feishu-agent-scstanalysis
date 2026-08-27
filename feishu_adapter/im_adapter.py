@@ -1,5 +1,4 @@
 """IM 消息发送：Phase 1 仅支持文本消息回复。"""
-from typing import Any
 
 from feishu_adapter.client import LarkCLI
 

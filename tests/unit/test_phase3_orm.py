@@ -1,6 +1,5 @@
 import pytest
 from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from persistence.models import Base

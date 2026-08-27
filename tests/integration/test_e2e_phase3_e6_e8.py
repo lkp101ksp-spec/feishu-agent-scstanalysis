@@ -5,10 +5,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from orchestrator.bind_doc_service import BindDocService
-from orchestrator.runtime.plan_runtime import PlanRuntime
 from orchestrator.planner.dag_schema import DAGNode
-from shared.errors import (BindDocInvalidError, DAGValidationError,
-                             DynamicAppendError)
+from orchestrator.runtime.plan_runtime import PlanRuntime
+from shared.errors import BindDocInvalidError, DAGValidationError, DynamicAppendError
 
 
 class FakeSession:

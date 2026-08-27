@@ -52,7 +52,7 @@ class ContextCompressor:
         recent = messages[-self.preserve_recent_n:]
 
         prompt = (
-            f"将以下对话压缩到500 字以内：\n\n"
+            "将以下对话压缩到500 字以内：\n\n"
             + "\n".join(f"[{m.role}] {m.content}" for m in old)
         )
         summary_text = self.llm_router.call(role="context_compressor", prompt=prompt)

@@ -1,8 +1,6 @@
 import datetime as dt
 
-import pytest
-
-from orchestrator.executor.kernel_manager import KernelHandle, KernelPool
+from orchestrator.executor.kernel_manager import KernelPool
 
 
 class FakeSandbox:

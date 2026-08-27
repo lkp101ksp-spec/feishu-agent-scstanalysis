@@ -1,11 +1,11 @@
 """Phase 9 T5: CommentAutoSyncWorker 单元测试（SQLite 真 session_repo + stub 服务）。"""
 from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from unittest.mock import MagicMock
 
 from orchestrator.templates.auto_sync_worker import CommentAutoSyncWorker
 from persistence.models import Base

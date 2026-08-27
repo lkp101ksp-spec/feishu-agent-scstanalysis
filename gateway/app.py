@@ -14,17 +14,15 @@
 """
 import logging
 from dataclasses import dataclass
-from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
+from sqlalchemy.orm import sessionmaker
 
 from gateway.idempotency import build_idempotency_key
-from gateway.normalizer import normalize_im_event, NormalizeError
+from gateway.normalizer import NormalizeError, normalize_im_event
 from gateway.rate_limit import TokenBucket
 from gateway.signature import verify_lark_signature
-from persistence.engine import configure_engine
 from persistence.repositories.idempotency_repo import IdempotencyRepo
-from sqlalchemy.orm import sessionmaker
 from shared.errors import (
     FeishuAgentError,
     RateLimitExceededError,
@@ -133,7 +131,9 @@ def create_app(
 
     # === Phase 2: 卡片回调入口 ===
     import json as _json
+
     from fastapi import HTTPException as _HTTPException
+
     from orchestrator.approval_service import ApprovalService
 
     card_secret = "phase2-dev-secret-change-me"
@@ -200,6 +200,7 @@ def create_app(
         if ts is None:
             return {"ok": False, "reason": "template_service not configured"}
         import json as _json
+
         from orchestrator.blocks.serializer import json_to_blocks
         blocks = json_to_blocks(_json.dumps(body["blocks"]))
         tid = ts.create_block(

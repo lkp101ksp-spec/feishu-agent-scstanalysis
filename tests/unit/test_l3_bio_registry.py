@@ -1,5 +1,5 @@
-from orchestrator.tools.tool_registry import ToolRegistry
 from orchestrator.tools.builtin.l3_bio import register_l3_bio
+from orchestrator.tools.tool_registry import ToolRegistry
 
 
 def test_register_l3_bio_adds_blast_search():

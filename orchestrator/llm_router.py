@@ -72,10 +72,6 @@ class LLMRouter:
         Phase 3 简化版：role 仅作为 audit 标签；调用同 chat()。
         Phase 5 扩展：每个 role 独立 primary/fallback 模型配置。
         """
-        msgs = [
-            {"role": "system", "content": f"[role={role}]"},
-            {"role": "user", "content": prompt},
-        ]
         return self.chat([
             ChatMessage(role="system", content=f"[role={role}]"),
             ChatMessage(role="user", content=prompt),

@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 
 from gateway.app import create_app
 
-
 SECRET = "test_secret_key"
 
 
@@ -62,6 +61,7 @@ def session_factory_fixture():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
+
     from persistence.models import Base
 
     engine = create_engine(

@@ -4,7 +4,6 @@ E1 replan 闭环 / E2 add-step / E3 越权 / E4 幂等 /
 E5 revise + diff / E6 标签检索 / E7 收藏 / E8 展平 + block 锚定
 """
 import json
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine

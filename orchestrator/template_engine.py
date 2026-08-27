@@ -109,8 +109,7 @@ class TemplateEngine:
         self, *, status: str, node_states: dict, artifacts_count: int
     ) -> list:
         """Phase 5: 返回 Pydantic Block 列表（用于飞书 doc 渲染）。"""
-        from orchestrator.blocks.schemas import (HeadingBlock, TableBlock,
-                                                  TextBlock)
+        from orchestrator.blocks.schemas import HeadingBlock, TableBlock, TextBlock
         return [
             HeadingBlock(level=2, text=f"Plan 执行结果（{status}）"),
             TextBlock(text=f"Nodes: {len(node_states)}; Artifacts: {artifacts_count}"),

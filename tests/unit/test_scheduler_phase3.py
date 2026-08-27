@@ -4,8 +4,9 @@ from orchestrator.runtime.plan_runtime import PlanRuntime
 
 
 def _make_executor():
-    from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle
     import datetime as dt
+
+    from shared.executor_types import ExecutionState, TaskHandle
 
     class FakeExecutor:
         def submit(self, task):

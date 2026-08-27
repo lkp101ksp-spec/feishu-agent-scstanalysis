@@ -6,7 +6,6 @@ from orchestrator.llm_router import LLMRouter
 from shared.errors import LLMCallError
 from shared.schemas import ChatMessage
 
-
 PRIMARY_RESP = {
     "choices": [{"message": {"role": "assistant", "content": "primary ok"}}],
 }

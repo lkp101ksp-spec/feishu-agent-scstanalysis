@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from persistence.models import TaskRow
 
-
 # 终态：finished_at 应被填充
 _TERMINAL_STATUSES = {"success", "success_with_partial_failure", "failed", "cancelled"}
 

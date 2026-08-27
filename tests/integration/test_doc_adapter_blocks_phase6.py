@@ -3,10 +3,16 @@ import pytest
 import respx
 
 from feishu_adapter.doc_adapter import DocAdapter
-from orchestrator.blocks.schemas import (CalloutBlock, DividerBlock,
-                                          EmbedBlock, EquationBlock,
-                                          FileBlock, MathBlock,
-                                          MermaidBlock, VideoBlock)
+from orchestrator.blocks.schemas import (
+    CalloutBlock,
+    DividerBlock,
+    EmbedBlock,
+    EquationBlock,
+    FileBlock,
+    MathBlock,
+    MermaidBlock,
+    VideoBlock,
+)
 
 
 class NoWaitLimiter:
