@@ -1,0 +1,14 @@
+# Phase 10 T5：本地质量门（ADR-0028 venv 内工具链）
+# 安装：.venv\Scripts\pip install pre-commit && pre-commit install
+# 说明：仅挂 ruff check（--fix 自动修 import 排序/尾随空白）。
+# 不挂 ruff-format：存量 200+ 文件未整体重排（Phase 10 约束"不改行为"），
+# 逐文件 format 会造成触达文件与其余代码风格割裂，留待后续专门轮。
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check --fix
+        entry: ruff check --fix
+        language: system
+        types: [python]
+        pass_filenames: true
