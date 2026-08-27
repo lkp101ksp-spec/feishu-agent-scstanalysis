@@ -43,6 +43,13 @@ def test_parse_bind_doc_cmd_invalid_returns_none():
     assert doc_id is None
 
 
+def test_parse_bind_doc_cmd_accepts_full_url():
+    """完整文档链接自动提取 doc_id token（联调 UX 修正）。"""
+    _, doc_id = parse_bind_doc_cmd(
+        "/bind-doc https://xxx.feishu.cn/docx/ABCdef123?from=copy")
+    assert doc_id == "ABCdef123"
+
+
 def test_normalize_bind_doc_command_sets_flags():
     msg = normalize_im_event(_payload("/bind-doc doccnABC123"))
     assert msg.is_bind_doc_cmd is True

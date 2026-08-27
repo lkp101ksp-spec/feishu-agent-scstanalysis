@@ -12,19 +12,25 @@ class NormalizeError(FeishuAgentError):
 
 
 _BIND_DOC_RE = re.compile(r"^/bind-doc\s+(\S+)\s*$", re.IGNORECASE)
+_DOC_URL_RE = re.compile(r"/docx/([A-Za-z0-9]+)")
 _MENTION_RE = re.compile(r"@\w+\s*")
 
 
 def parse_bind_doc_cmd(text: str) -> tuple[None, Optional[str]]:
     """识别 `/bind-doc <doc_id>` 指令。
 
+    参数兼容两种形态：裸 doc_id（doxcn...）或完整文档链接
+    （https://xxx.feishu.cn/docx/<doc_id>?...），链接形态自动提取 token。
+
     返回 (None, doc_id)：是 bind-doc 指令；
     返回 (None, None)：不是。
     """
     m = _BIND_DOC_RE.match(text.strip())
-    if m:
-        return None, m.group(1)
-    return None, None
+    if not m:
+        return None, None
+    arg = m.group(1)
+    url_m = _DOC_URL_RE.search(arg)
+    return None, (url_m.group(1) if url_m else arg)
 
 
 def normalize_im_event(payload: dict) -> IncomingMessage:
