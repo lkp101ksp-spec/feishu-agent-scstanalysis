@@ -12,6 +12,7 @@
 """
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from feishu_adapter.doc_adapter import DocAdapter
 from persistence.repositories.doc_write_repo import DocWriteRepo
@@ -36,9 +37,12 @@ class DocWriteService:
         self.doc_adapter = doc_adapter
 
     def write_plain_text(
-        self, session_id: str, task_id: str, requested_by: str, text: str
+        self, session_id: str, task_id: str, requested_by: str, text: str,
+        anchor_text: Optional[str] = None,
     ) -> dict:
         """在授权窗口内追加纯文本。返回 {doc_write_id, doc_id, anchor_block_id, status}。
+
+        anchor_text：本条消息的临时锚点（#写到 语法），优先于会话级 bind_anchor。
 
         异常：DocWriteError（无 bind / bind 过期 / 写入失败）
         """
@@ -64,12 +68,14 @@ class DocWriteService:
             requested_by=requested_by,
             approval_mode="bind_scope",
             payload_text=text,
+            anchor_text=anchor_text or getattr(session_row, "bind_anchor", None),
         )
         self.doc_repo.transition(doc_write_id, "approved")
         self.doc_repo.transition(doc_write_id, "writing")
 
-        # 2. 真正写入（绑定带锚点时定位插入，否则追加文档末尾）
-        insert_index = self._resolve_insert_index(session_row, session_id, doc_id)
+        # 2. 真正写入（消息级/会话级锚点定位插入，否则追加文档末尾）
+        insert_index = self._resolve_insert_index(session_row, session_id, doc_id,
+                                                  anchor_text)
         try:
             anchor = self.doc_adapter.append_plain_text(
                 doc_id=doc_id, text=text, index=insert_index)
@@ -90,15 +96,15 @@ class DocWriteService:
         }
 
     def _resolve_insert_index(self, session_row, session_id: str,
-                              doc_id: str) -> int:
+                              doc_id: str, msg_anchor: Optional[str] = None) -> int:
         """锚点定位：返回根块下的插入下标；-1 = 追加到文档末尾。
 
-        规则：session 绑定带 bind_anchor 时——
-        1. 有历史成功写入：插到最近一次写入块之后（保证多次写入顺序向下）；
+        锚点来源优先级：消息级 #写到锚点 > 会话级 bind_anchor。规则：
+        1. 同锚点有历史成功写入：插到最近一次写入块之后（保证顺序向下）；
         2. 否则插到第一个文字包含锚点的块之后；
         3. 锚点找不到：回退末尾追加并记 warning。
         """
-        anchor_text = getattr(session_row, "bind_anchor", None)
+        anchor_text = msg_anchor or getattr(session_row, "bind_anchor", None)
         if not anchor_text:
             return -1
         try:
@@ -107,7 +113,8 @@ class DocWriteService:
             logger.warning("anchor locate failed, fallback to end: %s", e)
             return -1
 
-        last_anchor = self.doc_repo.latest_success_anchor_for_session(session_id)
+        last_anchor = self.doc_repo.latest_success_anchor_for_session(
+            session_id, anchor_text=anchor_text)
         if last_anchor:
             for i, block in enumerate(children):
                 if block.get("block_id") == last_anchor:

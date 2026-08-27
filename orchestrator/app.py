@@ -118,6 +118,15 @@ class Orchestrator:
         if incoming.is_bind_doc_cmd and incoming.bind_doc_id:
             return self._handle_bind(incoming)
 
+        # 1.5 #写到 语法不完整（有锚点没正文）：提示用法，不进 LLM
+        if incoming.write_anchor and not incoming.text.strip():
+            self.im.reply(
+                incoming.chat_id,
+                "「#写到」用法：#写到 <章节标题> | <消息内容>，"
+                "例如：#写到 1 测试 | 帮我记录今天的分析结论",
+            )
+            return {"status": "skipped", "reason": "write_to_usage"}
+
         # 2. 普通消息：创建 session + task
         session_id = self.session_service.get_or_create(
             owner_open_id=incoming.sender_open_id,
@@ -162,6 +171,7 @@ class Orchestrator:
                     task_id=task_id,
                     requested_by=incoming.sender_open_id,
                     text=reply_text,
+                    anchor_text=incoming.write_anchor,
                 )
                 doc_written = True
                 doc_id = result["doc_id"]

@@ -127,6 +127,60 @@ def test_process_message_with_active_bind_writes_doc(orch):
     )
 
 
+def test_process_write_to_msg_locates_anchor(orch):
+    """#写到 语法：消息级锚点定位写入，LLM 只见剥离前缀后的正文。"""
+    # 1. 先 bind-doc
+    bind_incoming = IncomingMessage(
+        message_id="om_b",
+        chat_id="oc_1",
+        sender_open_id="ou_1",
+        text="/bind-doc doccnABC123",
+        is_bind_doc_cmd=True,
+        bind_doc_id="doccnABC123",
+    )
+    orch.process(bind_incoming)
+    orch._test_session.commit()
+
+    # 2. mock 文档块树：锚点章节在 index 0
+    orch.doc_write_service.doc_adapter.list_root_children.return_value = [
+        {"block_id": "b0", "block_type": 2,
+         "text": {"elements": [{"text_run": {"content": "1 测试"}}]}},
+        {"block_id": "b1", "block_type": 2,
+         "text": {"elements": [{"text_run": {"content": "其他"}}]}},
+    ]
+
+    # 3. 发 #写到 消息（normalizer 已剥离前缀 → 干净正文 + write_anchor）
+    msg_incoming = IncomingMessage(
+        message_id="om_m", chat_id="oc_1", sender_open_id="ou_1",
+        text="帮我记录结论", write_anchor="1 测试",
+    )
+    result = orch.process(msg_incoming)
+    orch._test_session.commit()
+
+    assert result["status"] == "success"
+    assert result["doc_written"] is True
+    # LLM 收到的 user 消息是干净正文（不含 #写到 前缀）
+    user_msg = orch.llm.chat.call_args.args[0][-1]
+    assert user_msg.content == "帮我记录结论"
+    # 写入插到锚点块之后（index=1）
+    orch.doc_write_service.doc_adapter.append_plain_text.assert_called_once_with(
+        doc_id="doccnABC123", text="你好，我是 AI 助手。", index=1
+    )
+
+
+def test_process_write_to_without_body_replies_usage(orch):
+    """#写到 语法不完整（有锚点没正文）：回用法提示，不进 LLM。"""
+    incoming = IncomingMessage(
+        message_id="om_u", chat_id="oc_1", sender_open_id="ou_1",
+        text="", write_anchor="1 测试",
+    )
+    result = orch.process(incoming)
+    assert result["status"] == "skipped"
+    orch.llm.chat.assert_not_called()
+    orch.im.reply.assert_called_once()
+    assert "#写到" in orch.im.reply.call_args.args[1]
+
+
 def test_process_llm_failure_marks_task_failed_and_replies_error(orch):
     orch.llm.chat.side_effect = LLMCallError("provider down")
     incoming = IncomingMessage(

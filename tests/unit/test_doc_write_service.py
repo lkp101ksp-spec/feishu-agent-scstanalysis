@@ -107,6 +107,40 @@ def test_write_with_anchor_not_found_falls_back_to_end():
         doc_id="doccnABC123", text="hi", index=-1)
 
 
+def test_write_msg_anchor_overrides_session_anchor():
+    """消息级锚点（#写到）优先于会话级 bind_anchor 定位。"""
+    children = [
+        _text_block("b0", "旧章节"),
+        _text_block("b1", "新章节"),
+        _text_block("b2", "其他"),
+    ]
+    svc, _, doc_repo, doc_adapter = _make_service(
+        bind_anchor="旧章节", root_children=children)
+    svc.write_plain_text(session_id="s1", task_id="t1", requested_by="ou_x",
+                         text="hi", anchor_text="新章节")
+    doc_adapter.append_plain_text.assert_called_once_with(
+        doc_id="doccnABC123", text="hi", index=2)
+    # 续写跟随按同锚点过滤查询
+    follow_kwargs = doc_repo.latest_success_anchor_for_session.call_args.kwargs
+    assert follow_kwargs == {"anchor_text": "新章节"}
+    # 写入记录也落 anchor_text，供下次同锚点跟随
+    assert doc_repo.create_pending.call_args.kwargs["anchor_text"] == "新章节"
+
+
+def test_write_msg_anchor_follows_same_anchor_history():
+    """同锚点有历史成功写入：插到上次写入块之后。"""
+    children = [
+        _text_block("b0", "1 测试"),
+        _text_block("b_last", "上次写入"),
+    ]
+    svc, _, _, doc_adapter = _make_service(
+        root_children=children, last_anchor="b_last")
+    svc.write_plain_text(session_id="s1", task_id="t1", requested_by="ou_x",
+                         text="hi", anchor_text="1 测试")
+    doc_adapter.append_plain_text.assert_called_once_with(
+        doc_id="doccnABC123", text="hi", index=2)
+
+
 def test_write_without_session_raises():
     svc, _, _, _ = _make_service(bound_doc_id=None)
     with pytest.raises(DocWriteError) as exc:

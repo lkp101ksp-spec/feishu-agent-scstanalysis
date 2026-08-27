@@ -97,6 +97,8 @@ class DocWriteRow(Base):
     approval_id: Mapped[str | None] = mapped_column(String, nullable=True)
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     anchor_block_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # 本次写入生效的锚点文字（会话级或消息级）：同锚点续写跟随定位用
+    anchor_text: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
     fail_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

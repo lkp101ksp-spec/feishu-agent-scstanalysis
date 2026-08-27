@@ -1,7 +1,12 @@
 """Webhook payload → IncomingMessage 归一化测试。"""
 import pytest
 
-from gateway.normalizer import NormalizeError, normalize_im_event, parse_bind_doc_cmd
+from gateway.normalizer import (
+    NormalizeError,
+    normalize_im_event,
+    parse_bind_doc_cmd,
+    parse_write_to,
+)
 
 
 def _payload(text: str, msg_type: str = "text", mentions: list | None = None) -> dict:
@@ -80,6 +85,51 @@ def test_normalize_bind_doc_command_sets_flags():
     assert msg.is_bind_doc_cmd is True
     assert msg.bind_doc_id == "doccnABC123"
     assert msg.text == "/bind-doc doccnABC123"
+
+
+def test_parse_write_to_pipe_separator():
+    """单行用法：#写到 <锚点> | <正文>，锚点标题可含空格。"""
+    anchor, body = parse_write_to("#写到 1 测试 | 帮我记录今天的结论")
+    assert anchor == "1 测试"
+    assert body == "帮我记录今天的结论"
+
+
+def test_parse_write_to_newline_separator():
+    """多行用法：锚点独占一行，正文跟在换行后（正文含 | 不受影响）。"""
+    anchor, body = parse_write_to("#写到 1 测试\n帮我记录 a|b")
+    assert anchor == "1 测试"
+    assert body == "帮我记录 a|b"
+
+
+def test_parse_write_to_no_body():
+    """语法不完整：只有锚点没正文 → (锚点, "")。"""
+    anchor, body = parse_write_to("#写到 1 测试")
+    assert anchor == "1 测试"
+    assert body == ""
+
+
+def test_parse_write_to_not_write_to_returns_untouched():
+    """非 #写到 开头：原文返回，锚点 None。"""
+    anchor, body = parse_write_to("帮我分析这个数据 #tag")
+    assert anchor is None
+    assert body == "帮我分析这个数据 #tag"
+
+
+def test_normalize_write_to_strips_prefix_and_sets_anchor():
+    """归一化：#写到 前缀剥离，正文干净，write_anchor 生效。"""
+    msg = normalize_im_event(_payload("#写到 1 测试 | 帮我记录结论"))
+    assert msg.write_anchor == "1 测试"
+    assert msg.text == "帮我记录结论"
+    assert msg.is_bind_doc_cmd is False
+
+
+def test_normalize_write_to_with_mention():
+    """群聊 @机器人 + #写到：mention 剥离后语法仍识别。"""
+    msg = normalize_im_event(_payload(
+        "@_user_1 #写到 结果章节 | 记录一下",
+        mentions=[{"key": "@_user_1"}]))
+    assert msg.write_anchor == "结果章节"
+    assert msg.text == "记录一下"
 
 
 def test_normalize_with_mention_strips_at():

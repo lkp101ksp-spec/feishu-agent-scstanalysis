@@ -14,6 +14,9 @@ class IncomingMessage(BaseModel):
     is_bind_doc_cmd: bool = False
     bind_doc_id: Optional[str] = None
     bind_anchor: Optional[str] = None
+    # 消息级临时写入锚点（#写到 语法）：仅影响本条消息的写入位置，
+    # 优先于会话级 bind_anchor
+    write_anchor: Optional[str] = None
 
 
 class ChatMessage(BaseModel):

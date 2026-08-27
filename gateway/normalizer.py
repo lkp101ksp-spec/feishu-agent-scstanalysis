@@ -15,6 +15,7 @@ _BIND_DOC_RE = re.compile(r"^/bind-doc\s+(\S+?)(?:\s+@\s*(.+?))?\s*$", re.IGNORE
 _DOC_URL_RE = re.compile(r"/docx/([A-Za-z0-9]+)")
 _WIKI_URL_RE = re.compile(r"/wiki/([A-Za-z0-9]+)")
 _MENTION_RE = re.compile(r"@\w+\s*")
+_WRITE_TO_RE = re.compile(r"^#写到[:：]?\s*(.+)$", re.DOTALL)
 
 
 def parse_bind_doc_cmd(text: str) -> tuple[Optional[str], Optional[str]]:
@@ -38,6 +39,31 @@ def parse_bind_doc_cmd(text: str) -> tuple[Optional[str], Optional[str]]:
     if wiki_m:
         return anchor, f"wiki:{wiki_m.group(1)}"
     return anchor, arg
+
+
+def parse_write_to(text: str) -> tuple[Optional[str], str]:
+    """识别 `#写到 <锚点> | <正文>` 或 `#写到 <锚点>\\n<正文>` 消息级锚点。
+
+    分隔规则（锚点标题可含空格）：
+    - 锚点独占一行：首个换行前是锚点，其后是正文；
+    - 单行用法：锚点与正文用 `|` 分隔（正文中的 `|` 原样保留）。
+
+    返回 (write_anchor, body)：非 #写到 开头返回 (None, 原文)；
+    语法不完整（只有锚点没正文）返回 (锚点, "")，由上层提示用法。
+    """
+    m = _WRITE_TO_RE.match(text)
+    if not m:
+        return None, text
+    rest = m.group(1)
+    first_line, nl, remainder = rest.partition("\n")
+    if "|" in first_line:
+        anchor, _, inline_body = first_line.partition("|")
+        body = f"{inline_body}\n{remainder}" if nl else inline_body
+    elif nl:
+        anchor, body = first_line, remainder
+    else:
+        anchor, body = rest, ""
+    return (anchor.strip() or None), body.strip()
 
 
 def normalize_im_event(payload: dict) -> IncomingMessage:
@@ -89,12 +115,18 @@ def normalize_im_event(payload: dict) -> IncomingMessage:
     anchor, doc_id = parse_bind_doc_cmd(text)
     is_bind_cmd = doc_id is not None
 
+    # 识别 #写到 消息级临时锚点（非指令消息才解析；剥离前缀，正文干净送 LLM）
+    write_anchor, body = (None, text)
+    if not is_bind_cmd:
+        write_anchor, body = parse_write_to(text)
+
     return IncomingMessage(
         message_id=message_id,
         chat_id=chat_id,
         sender_open_id=sender_open_id,
-        text=text,
+        text=body,
         is_bind_doc_cmd=is_bind_cmd,
         bind_doc_id=doc_id,
         bind_anchor=anchor,
+        write_anchor=write_anchor,
     )
