@@ -84,12 +84,20 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         bind=get_engine(), expire_on_commit=False, autoflush=False,
     )()
 
-    # --- 出站适配层（Phase 1 现状：lark-cli 子进程；直连参数按需注入） ---
+    # --- 出站适配层（联调轮：IM/Doc 走 lark-oapi SDK tenant 直连；Base/Drive 仍走 lark-cli） ---
+    import lark_oapi as lark
+
+    sdk = (lark.Client.builder()
+           .app_id(settings.feishu.app_id)
+           .app_secret(settings.feishu.app_secret)
+           .log_level(lark.LogLevel.INFO)
+           .build())
     cli = LarkCLI()
-    im = IMAdapter(cli=cli)
+    im = IMAdapter(cli=cli, sdk_client=sdk)
     api_base = os.environ.get("FEISHU_API_BASE_URL", "")
     api_token = os.environ.get("FEISHU_API_TOKEN", "")
-    doc = DocAdapter(cli=cli, base_url=api_base, api_token=api_token)
+    doc = DocAdapter(cli=cli, base_url=api_base, api_token=api_token,
+                     sdk_client=sdk)
     base = None
     if os.environ.get("FEISHU_BASE_APP_TOKEN"):
         base = BaseProjectionAdapter(os.environ["FEISHU_BASE_APP_TOKEN"], cli=cli)
