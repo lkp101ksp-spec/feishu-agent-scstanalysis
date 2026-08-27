@@ -71,8 +71,18 @@ def run_im_pipeline(app: FastAPI, app_id: str, payload: dict) -> dict:
     finally:
         s.close()
 
-    # 4. 业务处理
-    result = ctx.orchestrator.process(incoming)
+    # 4. 业务处理（orchestrator 共享主 session：成功后 commit，异常 rollback。
+    #    repo 层只 flush 不 commit，生产组装必须把主 session 挂到
+    #    app.state.main_session，否则 sessions/tasks 等写入永不落库）
+    main_session = getattr(app.state, "main_session", None)
+    try:
+        result = ctx.orchestrator.process(incoming)
+    except Exception:
+        if main_session is not None:
+            main_session.rollback()
+        raise
+    if main_session is not None:
+        main_session.commit()
 
     # 5. 关联 task_id 到幂等键
     task_id = result.get("task_id") if isinstance(result, dict) else None
@@ -129,6 +139,9 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
             return {"ok": False, "reason": "bind_doc_service not configured"}
         try:
             new_exp = bind_doc_service.renew(session_id=session_id)
+            main_session = getattr(app.state, "main_session", None)
+            if main_session is not None:
+                main_session.commit()
             return {"ok": True, "new_expires": new_exp.isoformat()}
         except Exception as e:
             logger.exception("renew_bind failed")

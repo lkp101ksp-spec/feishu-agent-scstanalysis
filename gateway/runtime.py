@@ -233,6 +233,8 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         unified_search_service=unified_search_service,
         auto_sync_worker=auto_sync_worker,
     )
+    # 主 session 挂载：run_im_pipeline / 卡片管线在处理成功后负责 commit
+    app.state.main_session = session
     return Runtime(app=app, orchestrator=orch, settings=settings)
 
 
