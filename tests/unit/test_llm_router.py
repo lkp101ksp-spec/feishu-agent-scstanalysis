@@ -39,6 +39,26 @@ def test_primary_success(respx_mock):
     assert reply == "primary ok"
 
 
+def test_strip_think_removes_inline_reasoning():
+    """Phase 10 实测：MiniMax-M3 content 内联 <think> 块，需剥离。"""
+    from orchestrator.llm_router import strip_think
+    assert strip_think("<think>思考中…</think>\n\n答案") == "答案"
+    assert strip_think("<think>a</think><think>b</think> 只留这行") == "只留这行"
+    assert strip_think("无标签原样") == "无标签原样"
+
+
+def test_chat_strips_think_from_fallback_content(respx_mock):
+    """fallback 返回带 <think> 的 content：chat() 输出应干净。"""
+    resp = {"choices": [{"message": {"role": "assistant",
+             "content": "<think>推理…</think>\n\n最终答案"}}]}
+    respx_mock.post("http://primary/chat/completions").mock(
+        return_value=httpx.Response(500, json={"err": "boom"}))
+    respx_mock.post("http://fallback/chat/completions").mock(
+        return_value=httpx.Response(200, json=resp))
+    reply = _router().chat([ChatMessage(role="user", content="hi")])
+    assert reply == "最终答案"
+
+
 def test_fallback_after_primary_500(respx_mock):
     respx_mock.post("http://primary/chat/completions").mock(return_value=httpx.Response(500, json={"err": "boom"}))
     respx_mock.post("http://fallback/chat/completions").mock(return_value=httpx.Response(200, json=FALLBACK_RESP))

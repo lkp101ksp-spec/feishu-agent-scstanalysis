@@ -5,7 +5,10 @@
 - 任一次主调用成功立即返回
 - 主模型全部失败 → 调用备用 1 次
 - 备用仍失败 → 抛 LLMCallError
+- 统一剥离 reasoning 模型的 <think>…</think> content 前缀
+  （Phase 10 联调实测：MiniMax-M3 将思考过程内联在 content 中）
 """
+import re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
@@ -13,6 +16,13 @@ import httpx
 
 from shared.errors import LLMCallError
 from shared.schemas import ChatMessage
+
+_THINK_RE = re.compile(r"<think>.*?</think>\s*", flags=re.DOTALL)
+
+
+def strip_think(content: str) -> str:
+    """剥离 reasoning 模型内联的 <think> 块；无标签则原样返回。"""
+    return _THINK_RE.sub("", content).strip()
 
 
 @dataclass
@@ -53,14 +63,14 @@ class LLMRouter:
         for _ in range(self.max_retries + 1):
             try:
                 data = self._call_once(self.primary, msgs)
-                return data["choices"][0]["message"]["content"]
+                return strip_think(data["choices"][0]["message"]["content"])
             except (httpx.HTTPError, KeyError, IndexError) as e:
                 last_err = e
 
         # 备用模型：1 次
         try:
             data = self._call_once(self.fallback, msgs)
-            return data["choices"][0]["message"]["content"]
+            return strip_think(data["choices"][0]["message"]["content"])
         except (httpx.HTTPError, KeyError, IndexError) as e:
             raise LLMCallError(
                 f"primary failed ({last_err!r}), fallback failed ({e!r})"

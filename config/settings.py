@@ -74,7 +74,27 @@ def _load_yaml(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+def load_env_file(path: str = ".env") -> None:
+    """Phase 10 联调补充：存在 .env 时注入未设置的环境变量。
+
+    纯标准库实现（不引 python-dotenv）；已存在的环境变量优先
+    （setdefault 语义，保证测试 monkeypatch 与部署注入不受影响）。
+    """
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(
+                key.strip(), value.strip().strip('"').strip("'")
+            )
+
+
 def load_settings() -> Settings:
+    load_env_file()
     feishu_cfg = _load_yaml("config/feishu.yaml")
     llm_cfg = _load_yaml("config/llm.yaml")
     return Settings(
