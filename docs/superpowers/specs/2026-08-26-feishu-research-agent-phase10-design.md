@@ -257,4 +257,28 @@ USING GIN (to_tsvector('simple', coalesce(name,'') || ' ' || coalesce(descriptio
 
 ## 14. 实施结果（交付后填写）
 
-待 plan 实施 + 回归后填写（commit / 实际测试数 / 文件清单 / 累计测试曲线 / 联调就绪清单）。
+**状态：已完成（2026-08-27）**。测试：默认层 **493 passed**（485+8 新增 config_check 单测）+ pg 层 **6 passed**（docker compose 真库执行）；ruff 0 error；覆盖率 85%（3813 stmts）。
+
+### 14.1 交付物清单
+
+| 板块 | 文件 | 说明 |
+|------|------|------|
+| 依赖锁定 | `.venv` / `requirements-lock.txt`（43 行） | 3.12.10 + freeze；ruff/pytest-cov/pre-commit 入 dev 组并锁 |
+| 迁移补齐 | `migrations/versions/0002_phase2_to_phase9.py` | 12 表 + sessions 三列 + templates GIN 表达式索引，downgrade 反向 |
+| pg 层 | `docker-compose.yml`、`tests/pg/`（conftest + 2 模块） | postgres:16-alpine @5433；迁移 2 + 检索 4 测试 |
+| 质量门 | `pyproject.toml [tool.ruff]`、`.pre-commit-config.yaml`、`scripts/check.ps1` | ruff check 硬门 + cov 摘要 + `-Pg` 真库门 |
+| 就绪包 | `scripts/config_check.py` + 8 单测、`.env.example`、`docs/联调指南.md` | 纯标准库校验器（error/warn/info，exit 0/2） |
+
+### 14.2 实施中修正（超出 plan 的发现）
+
+1. **conftest `pytestmark` 不传播**：`-m pg` 标记必须写在各测试模块内，否则 6 项全 deselected。
+2. **psycopg 方言前缀**：`postgresql://` 会让 SQLAlchemy 找 psycopg2（未装）；conftest/模板统一 `postgresql+psycopg://`，libpq 探测连接时剥离方言段。
+3. **alembic.ini GBK 解码**：Windows 下 `Config("alembic.ini")` 按 locale（cp936）读中文注释崩；测试改程序化 cfg（仅 script_location），URL 由 env.py 经 `DATABASE_URL` 注入（conftest monkeypatch 齐飞书/LLM 九变量，migrations 不真用其值）。
+4. **search_v2 PG 档位对齐**：裸 `ts_rank` 无法区分 name/desc 命中（单词元文档等分，排序随机）；改为 `case(name 命中=2.0, 全文命中=1.0) + ts_rank 微分`，与 SQLite 分支口径一致，WHERE 仍用与 GIN 索引一致的表达式（EXPLAIN 验证 bitmap index scan 命中）。
+5. **ruff format 降级 informational**：存量 201 文件会被整体重排，违背"不改行为"约束；check.ps1 不以其为门，pre-commit 仅挂 ruff check（偏差记录，留后续专门轮）。
+6. **EXPLAIN 断言细节**：`.scalar()` 只取计划首行（Bitmap Heap Scan）漏掉第二行 Index Scan；改 fetchall 拼接 + 小写比较；空表必 seq scan，故 `SET enable_seqscan=off` 强制暴露索引可用性。
+7. **本机系统 Temp 受限**：pytest `tmp_path` 夹具 PermissionError；config_check 单测改 `tempfile.TemporaryDirectory(dir=ROOT)`。
+
+### 14.3 联调就绪清单（见 `docs/联调指南.md`）
+
+环境搭建 → 租户 checklist（6 项）→ 穿透三方案 → 启动序列（config_check → compose → alembic → uvicorn）→ 8 步冒烟 → 常见排障（含本轮全部新坑）。
