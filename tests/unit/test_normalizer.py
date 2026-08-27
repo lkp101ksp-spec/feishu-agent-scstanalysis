@@ -50,6 +50,13 @@ def test_parse_bind_doc_cmd_accepts_full_url():
     assert doc_id == "ABCdef123"
 
 
+def test_parse_bind_doc_cmd_wiki_url_gets_prefix():
+    """wiki 链接提取后加 wiki: 前缀，交由 BindDocService 解析。"""
+    _, doc_id = parse_bind_doc_cmd(
+        "/bind-doc https://xxx.feishu.cn/wiki/HlTGwdTO4i8VGLkYUnDcgJAxnXb?from=copy")
+    assert doc_id == "wiki:HlTGwdTO4i8VGLkYUnDcgJAxnXb"
+
+
 def test_normalize_bind_doc_command_sets_flags():
     msg = normalize_im_event(_payload("/bind-doc doccnABC123"))
     assert msg.is_bind_doc_cmd is True

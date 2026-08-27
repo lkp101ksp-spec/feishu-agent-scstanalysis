@@ -159,3 +159,28 @@ def test_doc_render_blocks_sdk_batches_over_50():
                          rate_limiter=NoWaitLimiter())
     adapter.render_blocks("doc_x", [TextBlock(text=f"t{i}") for i in range(60)])
     assert sdk.request.call_count == 2  # 50 + 10 两批
+
+
+def test_doc_resolve_wiki_token_sdk():
+    sdk = _doc_sdk({"code": 0, "data": {"node": {
+        "obj_type": "docx", "obj_token": "doxcnRealXYZ"}}})
+    adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,
+                         rate_limiter=NoWaitLimiter())
+    assert adapter.resolve_wiki_token("HlTGw123") == "doxcnRealXYZ"
+    req = sdk.request.call_args.args[0]
+    assert "wiki/v2/spaces/get_node" in req.uri
+
+
+def test_doc_resolve_wiki_token_non_docx_raises():
+    sdk = _doc_sdk({"code": 0, "data": {"node": {
+        "obj_type": "sheet", "obj_token": "shtabc"}}})
+    adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,
+                         rate_limiter=NoWaitLimiter())
+    with pytest.raises(LarkCLIError, match="不是云文档"):
+        adapter.resolve_wiki_token("HlTGw123")
+
+
+def test_doc_resolve_wiki_token_without_sdk_raises():
+    adapter = DocAdapter(cli=MagicMock(), rate_limiter=NoWaitLimiter())
+    with pytest.raises(LarkCLIError, match="sdk_client"):
+        adapter.resolve_wiki_token("HlTGw123")

@@ -61,6 +61,33 @@ class DocAdapter:
         ])
         return result.get("block_id", "")
 
+    def resolve_wiki_token(self, wiki_token: str) -> str:
+        """wiki 节点 token → 真实 docx document_id（SDK 路径，get_node 接口）。
+
+        需要应用具备 wiki:wiki:readonly 权限且机器人可访问该知识库节点。
+        解析失败 / 节点非 docx 文档时抛 LarkCLIError。
+        """
+        if self.sdk_client is None:
+            raise LarkCLIError("wiki 链接解析需要 SDK 直连通道（sdk_client 未注入）")
+        req = (lark.BaseRequest.builder()
+               .http_method(lark.HttpMethod.GET)
+               .uri("/open-apis/wiki/v2/spaces/get_node")
+               .token_types({lark.AccessTokenType.TENANT})
+               .queries({"token": [wiki_token], "obj_type": ["wiki"]})
+               .build())
+        resp = self.sdk_client.request(req)
+        payload = json.loads(resp.content)
+        if payload.get("code") != 0:
+            raise LarkCLIError(
+                f"wiki get_node failed: code={payload.get('code')} "
+                f"msg={payload.get('msg')}")
+        node = payload.get("data", {}).get("node", {})
+        if node.get("obj_type") != "docx":
+            raise LarkCLIError(
+                f"wiki 节点不是云文档（obj_type={node.get('obj_type')}），"
+                "请绑定 docx 类型文档")
+        return node.get("obj_token", "")
+
     # === lark-oapi SDK 直连路径 ===
     def _sdk_request(self, method, uri: str, body: dict | None = None) -> dict:
         """原始 BaseRequest 调 docx API（tenant token 由 SDK 托管），返回 data 段。"""

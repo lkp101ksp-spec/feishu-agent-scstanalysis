@@ -133,6 +133,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         session_service, audit_repo, settings.bind_doc_ttl_sec,
         session_repo=SessionRepo(session), im_adapter=im,
         renew_threshold_sec=settings.bind_doc_renew_threshold_sec,
+        doc_adapter=doc,
     )
     doc_write_service = DocWriteService(
         SessionRepo(session), DocWriteRepo(session), doc,

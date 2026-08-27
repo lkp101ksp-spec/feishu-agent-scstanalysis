@@ -33,6 +33,7 @@ class BindDocService:
         session_repo=None,
         im_adapter=None,
         renew_threshold_sec: int = 300,
+        doc_adapter=None,
     ):
         self.session_service = session_service
         self.audit_repo = audit_repo
@@ -40,9 +41,16 @@ class BindDocService:
         self.session_repo = session_repo
         self.im_adapter = im_adapter
         self.renew_threshold_sec = renew_threshold_sec
+        self.doc_adapter = doc_adapter
 
     def bind(self, session_id: str, owner_open_id: str, doc_id: str) -> datetime:
-        """绑定 doc_id 到 session。返回过期时间。"""
+        """绑定 doc_id 到 session。返回过期时间。
+
+        支持 "wiki:<token>" 前缀（normalizer 从 /wiki/ 链接提取）：
+        经 doc_adapter.resolve_wiki_token 解析为真实 docx document_id。
+        """
+        if doc_id.startswith("wiki:"):
+            doc_id = self._resolve_wiki(doc_id[5:])
         if not doc_id or not _DOC_ID_RE.match(doc_id):
             raise BindDocInvalidError(f"invalid doc_id: {doc_id!r}")
 
@@ -61,6 +69,21 @@ class BindDocService:
         )
 
         return expires_at
+
+    def _resolve_wiki(self, wiki_token: str) -> str:
+        """wiki token → docx document_id；通道缺失或解析失败转 BindDocInvalidError。"""
+        if self.doc_adapter is None:
+            raise BindDocInvalidError(
+                "wiki 链接需要 DocAdapter（SDK 通道）支持，当前未配置")
+        if not _DOC_ID_RE.match(wiki_token):
+            raise BindDocInvalidError(f"invalid wiki token: {wiki_token!r}")
+        try:
+            obj_token = self.doc_adapter.resolve_wiki_token(wiki_token)
+        except Exception as e:
+            raise BindDocInvalidError(f"wiki 文档解析失败：{e}") from e
+        if not obj_token:
+            raise BindDocInvalidError("wiki 文档解析失败：空 obj_token")
+        return obj_token
 
     # === Phase 3 ===
     def renew(self, *, session_id: str) -> datetime:

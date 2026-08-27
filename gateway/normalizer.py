@@ -13,14 +13,16 @@ class NormalizeError(FeishuAgentError):
 
 _BIND_DOC_RE = re.compile(r"^/bind-doc\s+(\S+)\s*$", re.IGNORECASE)
 _DOC_URL_RE = re.compile(r"/docx/([A-Za-z0-9]+)")
+_WIKI_URL_RE = re.compile(r"/wiki/([A-Za-z0-9]+)")
 _MENTION_RE = re.compile(r"@\w+\s*")
 
 
 def parse_bind_doc_cmd(text: str) -> tuple[None, Optional[str]]:
     """识别 `/bind-doc <doc_id>` 指令。
 
-    参数兼容两种形态：裸 doc_id（doxcn...）或完整文档链接
-    （https://xxx.feishu.cn/docx/<doc_id>?...），链接形态自动提取 token。
+    参数兼容三种形态：裸 doc_id、/docx/ 文档链接（自动提取 token）、
+    /wiki/ 知识库链接（提取后加 "wiki:" 前缀，由 BindDocService 经
+    wiki get_node 接口解析成真实 docx document_id）。
 
     返回 (None, doc_id)：是 bind-doc 指令；
     返回 (None, None)：不是。
@@ -30,7 +32,12 @@ def parse_bind_doc_cmd(text: str) -> tuple[None, Optional[str]]:
         return None, None
     arg = m.group(1)
     url_m = _DOC_URL_RE.search(arg)
-    return None, (url_m.group(1) if url_m else arg)
+    if url_m:
+        return None, url_m.group(1)
+    wiki_m = _WIKI_URL_RE.search(arg)
+    if wiki_m:
+        return None, f"wiki:{wiki_m.group(1)}"
+    return None, arg
 
 
 def normalize_im_event(payload: dict) -> IncomingMessage:
