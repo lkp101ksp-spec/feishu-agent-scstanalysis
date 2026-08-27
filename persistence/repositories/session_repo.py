@@ -24,6 +24,7 @@ class SessionRepo:
         source_chat_id: str,
         bound_doc_id: Optional[str],
         bind_expires_at: Optional[datetime],
+        bind_anchor: Optional[str] = None,
     ) -> SessionRow:
         """创建或更新会话。返回 ORM 行实例（未 commit，由调用方决定 commit 时机）。"""
         row = self.session.get(SessionRow, session_id)
@@ -33,12 +34,14 @@ class SessionRepo:
                 owner_open_id=owner_open_id,
                 source_chat_id=source_chat_id,
                 bound_doc_id=bound_doc_id,
+                bind_anchor=bind_anchor,
                 bind_expires_at=bind_expires_at,
             )
             self.session.add(row)
         else:
             # 已存在时只覆盖可变字段；owner/source 不变
             row.bound_doc_id = bound_doc_id
+            row.bind_anchor = bind_anchor
             row.bind_expires_at = bind_expires_at
         self.session.flush()
         return row

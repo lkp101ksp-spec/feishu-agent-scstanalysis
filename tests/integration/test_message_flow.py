@@ -121,9 +121,9 @@ def test_process_message_with_active_bind_writes_doc(orch):
     assert result["status"] == "success"
     assert result["doc_written"] is True
     assert result["doc_id"] == "doccnABC123"
-    # doc_adapter.append_plain_text 应被调用一次
+    # doc_adapter.append_plain_text 应被调用一次（无锚点 → index=-1 追加末尾）
     orch.doc_write_service.doc_adapter.append_plain_text.assert_called_once_with(
-        doc_id="doccnABC123", text="你好，我是 AI 助手。"
+        doc_id="doccnABC123", text="你好，我是 AI 助手。", index=-1
     )
 
 

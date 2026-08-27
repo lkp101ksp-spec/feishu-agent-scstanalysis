@@ -215,9 +215,14 @@ class Orchestrator:
                 "error": str(e),
             }
 
+        anchor_tip = (
+            f"，写入位置锚点：{incoming.bind_anchor!r}（插到该章节下方）"
+            if incoming.bind_anchor else ""
+        )
         self.im.reply(
             incoming.chat_id,
-            f"[成功] 已绑定文档 {incoming.bind_doc_id}，授权有效期至 {expires_at.isoformat()}。",
+            f"[成功] 已绑定文档 {incoming.bind_doc_id}，授权有效期至 "
+            f"{expires_at.isoformat()}{anchor_tip}。",
         )
         return {
             "status": "bind_doc_success",

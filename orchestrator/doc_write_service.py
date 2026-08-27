@@ -68,9 +68,11 @@ class DocWriteService:
         self.doc_repo.transition(doc_write_id, "approved")
         self.doc_repo.transition(doc_write_id, "writing")
 
-        # 2. 真正写入
+        # 2. 真正写入（绑定带锚点时定位插入，否则追加文档末尾）
+        insert_index = self._resolve_insert_index(session_row, session_id, doc_id)
         try:
-            anchor = self.doc_adapter.append_plain_text(doc_id=doc_id, text=text)
+            anchor = self.doc_adapter.append_plain_text(
+                doc_id=doc_id, text=text, index=insert_index)
         except Exception as e:
             reason = f"{type(e).__name__}: {e}"
             self.doc_repo.mark_failed(doc_write_id, reason=reason)
@@ -86,3 +88,46 @@ class DocWriteService:
             "anchor_block_id": anchor,
             "status": "success",
         }
+
+    def _resolve_insert_index(self, session_row, session_id: str,
+                              doc_id: str) -> int:
+        """锚点定位：返回根块下的插入下标；-1 = 追加到文档末尾。
+
+        规则：session 绑定带 bind_anchor 时——
+        1. 有历史成功写入：插到最近一次写入块之后（保证多次写入顺序向下）；
+        2. 否则插到第一个文字包含锚点的块之后；
+        3. 锚点找不到：回退末尾追加并记 warning。
+        """
+        anchor_text = getattr(session_row, "bind_anchor", None)
+        if not anchor_text:
+            return -1
+        try:
+            children = self.doc_adapter.list_root_children(doc_id)
+        except Exception as e:
+            logger.warning("anchor locate failed, fallback to end: %s", e)
+            return -1
+
+        last_anchor = self.doc_repo.latest_success_anchor_for_session(session_id)
+        if last_anchor:
+            for i, block in enumerate(children):
+                if block.get("block_id") == last_anchor:
+                    return i + 1
+            logger.info("last write block %s gone, relocate by anchor text",
+                        last_anchor)
+
+        for i, block in enumerate(children):
+            if anchor_text in _block_text(block):
+                return i + 1
+        logger.warning("anchor text %r not found in doc %s, fallback to end",
+                       anchor_text, doc_id)
+        return -1
+
+
+def _block_text(block: dict) -> str:
+    """提取块的纯文本（text/heading1-9 等带 elements 的块类型）。"""
+    for value in block.values():
+        if isinstance(value, dict) and "elements" in value:
+            return "".join(
+                e.get("text_run", {}).get("content", "")
+                for e in value.get("elements", []))
+    return ""

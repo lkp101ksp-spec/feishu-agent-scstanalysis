@@ -57,6 +57,24 @@ def test_parse_bind_doc_cmd_wiki_url_gets_prefix():
     assert doc_id == "wiki:HlTGwdTO4i8VGLkYUnDcgJAxnXb"
 
 
+def test_parse_bind_doc_cmd_with_anchor():
+    """@锚点 语法：/bind-doc <链接> @章节标题。"""
+    anchor, doc_id = parse_bind_doc_cmd(
+        "/bind-doc https://xxx.feishu.cn/docx/ABCdef123 @1 测试")
+    assert doc_id == "ABCdef123"
+    assert anchor == "1 测试"
+
+
+def test_normalize_bind_cmd_with_mention_keeps_anchor():
+    """群聊 @机器人 + @锚点：按 mention key 精确剥离，锚点保留。"""
+    msg = normalize_im_event(_payload(
+        "@_user_1 /bind-doc https://xxx.feishu.cn/docx/ABCdef123 @结果章节",
+        mentions=[{"key": "@_user_1"}]))
+    assert msg.is_bind_doc_cmd is True
+    assert msg.bind_doc_id == "ABCdef123"
+    assert msg.bind_anchor == "结果章节"
+
+
 def test_normalize_bind_doc_command_sets_flags():
     msg = normalize_im_event(_payload("/bind-doc doccnABC123"))
     assert msg.is_bind_doc_cmd is True

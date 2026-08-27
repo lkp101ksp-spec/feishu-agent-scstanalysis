@@ -46,12 +46,17 @@ class DocAdapter:
         result = self.cli.run(["docx", "block", "list", "--doc-id", doc_id])
         return result.get("blocks", [])
 
-    def append_plain_text(self, doc_id: str, text: str) -> str:
-        """在文档末尾追加一段纯文本块。返回新 block_id。"""
+    def append_plain_text(self, doc_id: str, text: str,
+                          index: int = -1) -> str:
+        """追加一段纯文本块。返回新 block_id。
+
+        index=-1（默认）追加到文档末尾；index>=0 插入到根块对应位置
+        （锚点定位写入用，仅 SDK 路径支持）。
+        """
         if self.sdk_client is not None:
             blocks = [{"block_type": 2, "text": {
                 "elements": [{"text_run": {"content": text}}]}}]
-            children = self._sdk_create_children(doc_id, blocks)
+            children = self._sdk_create_children(doc_id, blocks, index=index)
             return children[0].get("block_id", "") if children else ""
         result = self.cli.run([
             "docx", "block", "create",
@@ -106,14 +111,44 @@ class DocAdapter:
                 f"msg={payload.get('msg')} uri={uri}")
         return payload.get("data", {})
 
-    def _sdk_create_children(self, doc_id: str, blocks: list[dict]) -> list[dict]:
-        """在文档根块末尾追加子块，返回新建块列表。"""
+    def _sdk_create_children(self, doc_id: str, blocks: list[dict],
+                             index: int = -1) -> list[dict]:
+        """在文档根块创建子块，返回新建块列表。index=-1 末尾追加，>=0 指定位置。"""
         data = self._sdk_request(
             lark.HttpMethod.POST,
             f"/open-apis/docx/v1/documents/{doc_id}/blocks/{doc_id}/children",
-            body={"children": blocks, "index": -1},
+            body={"children": blocks, "index": index},
         )
         return data.get("children", [])
+
+    def list_root_children(self, doc_id: str) -> list[dict[str, Any]]:
+        """按序列出文档根块的一级子块（锚点定位用，仅 SDK 路径）。"""
+        if self.sdk_client is None:
+            raise LarkCLIError("list_root_children 需要 SDK 直连通道")
+        items: list[dict[str, Any]] = []
+        page_token = ""
+        while True:
+            uri = (f"/open-apis/docx/v1/documents/{doc_id}"
+                   f"/blocks/{doc_id}/children?page_size=500")
+            if page_token:
+                uri += f"&page_token={page_token}"
+            req = (lark.BaseRequest.builder()
+                   .http_method(lark.HttpMethod.GET)
+                   .uri(uri)
+                   .token_types({lark.AccessTokenType.TENANT})
+                   .queries({"document_revision_id": ["-1"]})
+                   .build())
+            resp = self.sdk_client.request(req)
+            payload = json.loads(resp.raw.content)
+            if payload.get("code") != 0:
+                raise LarkCLIError(
+                    f"docx list children failed: code={payload.get('code')} "
+                    f"msg={payload.get('msg')}")
+            data = payload.get("data", {})
+            items.extend(data.get("items", []))
+            if not data.get("has_more"):
+                return items
+            page_token = data.get("page_token", "")
 
     def _sdk_list_blocks(self, doc_id: str) -> list[dict[str, Any]]:
         """分页拉取文档全部块（page_size=500 上限）。"""

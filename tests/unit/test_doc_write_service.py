@@ -16,6 +16,9 @@ def _make_service(
     expires_in_sec: int = 600,
     append_returns: str = "blk_x",
     append_raises: Exception | None = None,
+    bind_anchor: str | None = None,
+    root_children: list | None = None,
+    last_anchor: str | None = None,
 ) -> tuple[DocWriteService, MagicMock, MagicMock, MagicMock]:
     session_repo = MagicMock(spec=SessionRepo)
     if bound_doc_id is None:
@@ -23,21 +26,29 @@ def _make_service(
     else:
         session_repo.get.return_value = MagicMock(
             bound_doc_id=bound_doc_id,
+            bind_anchor=bind_anchor,
             bind_expires_at=datetime.now(timezone.utc) + timedelta(seconds=expires_in_sec),
         )
 
     doc_repo = MagicMock(spec=DocWriteRepo)
+    doc_repo.latest_success_anchor_for_session.return_value = last_anchor
 
     doc_adapter = MagicMock(spec=DocAdapter)
     if append_raises is not None:
         doc_adapter.append_plain_text.side_effect = append_raises
     else:
         doc_adapter.append_plain_text.return_value = append_returns
+    doc_adapter.list_root_children.return_value = root_children or []
 
     service = DocWriteService(
         session_repo=session_repo, doc_repo=doc_repo, doc_adapter=doc_adapter
     )
     return service, session_repo, doc_repo, doc_adapter
+
+
+def _text_block(block_id: str, text: str, key: str = "text") -> dict:
+    return {"block_id": block_id, "block_type": 2,
+            key: {"elements": [{"text_run": {"content": text}}]}}
 
 
 def test_write_to_bound_doc_success():
@@ -52,8 +63,48 @@ def test_write_to_bound_doc_success():
     mark_success_kwargs = doc_repo.mark_success.call_args.kwargs
     assert mark_success_kwargs["anchor_block_id"] == "blk_x"
     doc_adapter.append_plain_text.assert_called_once_with(
-        doc_id="doccnABC123", text="hello"
+        doc_id="doccnABC123", text="hello", index=-1
     )
+
+
+def test_write_with_anchor_inserts_after_matched_block():
+    """绑定带锚点：插到第一个文字包含锚点的块之后。"""
+    children = [
+        _text_block("b0", "引言"),
+        _text_block("b1", "1 测试", key="heading2"),
+        _text_block("b2", "其他内容"),
+    ]
+    svc, _, _, doc_adapter = _make_service(
+        bind_anchor="1 测试", root_children=children)
+    svc.write_plain_text(session_id="s1", task_id="t1",
+                         requested_by="ou_x", text="hi")
+    doc_adapter.append_plain_text.assert_called_once_with(
+        doc_id="doccnABC123", text="hi", index=2)
+
+
+def test_write_with_anchor_follows_last_write():
+    """有历史成功写入：插到上次写入块之后，保证顺序向下。"""
+    children = [
+        _text_block("b0", "1 测试"),
+        _text_block("b_last", "上次写入"),
+        _text_block("b2", "其他"),
+    ]
+    svc, _, _, doc_adapter = _make_service(
+        bind_anchor="1 测试", root_children=children, last_anchor="b_last")
+    svc.write_plain_text(session_id="s1", task_id="t1",
+                         requested_by="ou_x", text="hi")
+    doc_adapter.append_plain_text.assert_called_once_with(
+        doc_id="doccnABC123", text="hi", index=2)
+
+
+def test_write_with_anchor_not_found_falls_back_to_end():
+    """锚点找不到：回退末尾追加（index=-1）。"""
+    svc, _, _, doc_adapter = _make_service(
+        bind_anchor="不存在的章节", root_children=[_text_block("b0", "引言")])
+    svc.write_plain_text(session_id="s1", task_id="t1",
+                         requested_by="ou_x", text="hi")
+    doc_adapter.append_plain_text.assert_called_once_with(
+        doc_id="doccnABC123", text="hi", index=-1)
 
 
 def test_write_without_session_raises():

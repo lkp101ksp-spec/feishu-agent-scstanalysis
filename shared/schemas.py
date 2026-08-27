@@ -13,6 +13,7 @@ class IncomingMessage(BaseModel):
     app_id: Optional[str] = None
     is_bind_doc_cmd: bool = False
     bind_doc_id: Optional[str] = None
+    bind_anchor: Optional[str] = None
 
 
 class ChatMessage(BaseModel):

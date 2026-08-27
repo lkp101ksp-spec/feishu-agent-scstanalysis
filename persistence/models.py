@@ -32,6 +32,7 @@ class SessionRow(Base):
     owner_open_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     source_chat_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     bound_doc_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    bind_anchor: Mapped[str | None] = mapped_column(String, nullable=True)
     bind_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     approval_scope: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")

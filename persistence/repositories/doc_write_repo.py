@@ -3,7 +3,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from persistence.models import DocWriteRow
+from persistence.models import DocWriteRow, TaskRow
 
 
 class DocWriteRepo:
@@ -66,3 +66,17 @@ class DocWriteRepo:
         row.status = "failed"
         row.fail_reason = reason
         self.session.flush()
+
+    def latest_success_anchor_for_session(self, session_id: str) -> Optional[str]:
+        """该 session 最近一次成功写入的 anchor_block_id（锚点续写定位用）。"""
+        row = (
+            self.session.query(DocWriteRow.anchor_block_id)
+            .join(TaskRow, DocWriteRow.task_id == TaskRow.task_id)
+            .filter(TaskRow.session_id == session_id,
+                    DocWriteRow.status == "success",
+                    DocWriteRow.anchor_block_id.isnot(None),
+                    DocWriteRow.anchor_block_id != "")
+            .order_by(DocWriteRow.created_at.desc())
+            .first()
+        )
+        return row[0] if row else None

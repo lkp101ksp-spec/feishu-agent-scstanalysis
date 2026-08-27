@@ -184,3 +184,26 @@ def test_doc_resolve_wiki_token_without_sdk_raises():
     adapter = DocAdapter(cli=MagicMock(), rate_limiter=NoWaitLimiter())
     with pytest.raises(LarkCLIError, match="sdk_client"):
         adapter.resolve_wiki_token("HlTGw123")
+
+
+def test_doc_append_plain_text_with_index():
+    """锚点定位写入：index>=0 时按指定位置插入。"""
+    sdk = _doc_sdk({"code": 0, "data": {"children": [{"block_id": "blk_new"}]}})
+    adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,
+                         rate_limiter=NoWaitLimiter())
+    block_id = adapter.append_plain_text("doc_x", "hi", index=3)
+    assert block_id == "blk_new"
+    body = sdk.request.call_args.args[0].body
+    assert body["index"] == 3
+
+
+def test_doc_list_root_children():
+    sdk = _doc_sdk({"code": 0, "data": {
+        "items": [{"block_id": "b0"}, {"block_id": "b1"}],
+        "has_more": False}})
+    adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,
+                         rate_limiter=NoWaitLimiter())
+    children = adapter.list_root_children("doc_x")
+    assert [b["block_id"] for b in children] == ["b0", "b1"]
+    req = sdk.request.call_args.args[0]
+    assert "blocks/doc_x/children" in req.uri

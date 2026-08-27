@@ -46,8 +46,13 @@ class SessionService:
         )
         return sid
 
-    def bind_doc(self, session_id: str, doc_id: str, ttl_sec: int) -> datetime:
-        """把 doc_id 绑定到 session 上，TTL 后过期。返回 expires_at。"""
+    def bind_doc(self, session_id: str, doc_id: str, ttl_sec: int,
+                 anchor: Optional[str] = None) -> datetime:
+        """把 doc_id 绑定到 session 上，TTL 后过期。返回 expires_at。
+
+        anchor：可选写入锚点文字（/bind-doc <链接> @锚点），
+        绑定后写入会插到锚点块之后；None 表示追加到文档末尾。
+        """
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_sec)
         # 查询已有 owner / source 保留
         existing = self.repo.get(session_id)
@@ -59,6 +64,7 @@ class SessionService:
             source_chat_id=source_chat_id,
             bound_doc_id=doc_id,
             bind_expires_at=expires_at,
+            bind_anchor=anchor,
         )
         return expires_at
 

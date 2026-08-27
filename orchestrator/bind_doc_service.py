@@ -43,11 +43,13 @@ class BindDocService:
         self.renew_threshold_sec = renew_threshold_sec
         self.doc_adapter = doc_adapter
 
-    def bind(self, session_id: str, owner_open_id: str, doc_id: str) -> datetime:
+    def bind(self, session_id: str, owner_open_id: str, doc_id: str,
+             anchor: str | None = None) -> datetime:
         """绑定 doc_id 到 session。返回过期时间。
 
         支持 "wiki:<token>" 前缀（normalizer 从 /wiki/ 链接提取）：
         经 doc_adapter.resolve_wiki_token 解析为真实 docx document_id。
+        anchor：可选写入锚点文字，随绑定持久化到 session。
         """
         if doc_id.startswith("wiki:"):
             doc_id = self._resolve_wiki(doc_id[5:])
@@ -55,7 +57,8 @@ class BindDocService:
             raise BindDocInvalidError(f"invalid doc_id: {doc_id!r}")
 
         expires_at = self.session_service.bind_doc(
-            session_id=session_id, doc_id=doc_id, ttl_sec=self.ttl_sec
+            session_id=session_id, doc_id=doc_id, ttl_sec=self.ttl_sec,
+            anchor=anchor,
         )
 
         self.audit_repo.write(
@@ -65,7 +68,8 @@ class BindDocService:
             action="bind_doc",
             target_type="session",
             target_id=session_id,
-            detail={"doc_id": doc_id, "expires_at": expires_at.isoformat()},
+            detail={"doc_id": doc_id, "expires_at": expires_at.isoformat(),
+                    "anchor": anchor},
         )
 
         return expires_at

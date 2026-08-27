@@ -16,7 +16,8 @@ def test_bind_doc_writes_to_session_and_audit():
 
     expires_at = service.bind(session_id="s1", owner_open_id="ou_x", doc_id="doccnABC123")
 
-    session_svc.bind_doc.assert_called_once_with(session_id="s1", doc_id="doccnABC123", ttl_sec=1800)
+    session_svc.bind_doc.assert_called_once_with(
+        session_id="s1", doc_id="doccnABC123", ttl_sec=1800, anchor=None)
     audit_repo.write.assert_called_once()
     audit_kwargs = audit_repo.write.call_args.kwargs
     assert audit_kwargs["actor_type"] == "user"
@@ -44,7 +45,21 @@ def test_bind_doc_wiki_prefix_resolves_via_adapter():
     doc_adapter.resolve_wiki_token.assert_called_once_with(
         "HlTGwdTO4i8VGLkYUnDcgJAxnXb")
     session_svc.bind_doc.assert_called_once_with(
-        session_id="s1", doc_id="doxcnRealDocId", ttl_sec=1800)
+        session_id="s1", doc_id="doxcnRealDocId", ttl_sec=1800, anchor=None)
+
+
+def test_bind_doc_anchor_passed_through():
+    """@锚点 随绑定透传到 session 持久化。"""
+    session_svc = MagicMock()
+    session_svc.bind_doc.return_value = datetime(2026, 8, 27, 22, 0, 0)
+    service = BindDocService(
+        session_service=session_svc, audit_repo=MagicMock(), ttl_sec=1800)
+
+    service.bind(session_id="s1", owner_open_id="ou_x",
+                 doc_id="doxcnABC123", anchor="1 测试")
+
+    session_svc.bind_doc.assert_called_once_with(
+        session_id="s1", doc_id="doxcnABC123", ttl_sec=1800, anchor="1 测试")
 
 
 def test_bind_doc_wiki_resolve_failure_raises():
