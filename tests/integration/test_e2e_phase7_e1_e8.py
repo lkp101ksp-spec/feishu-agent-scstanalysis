@@ -1,9 +1,7 @@
 """E1-E8: Phase 7 端到端场景。"""
 from unittest.mock import MagicMock
 
-import httpx
 import pytest
-import respx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -38,45 +36,37 @@ def _make_full():
     return ts, ss, ps, fs, t_repo, a_repo
 
 
-class NoWaitLimiter:
-    def wait(self):
-        pass
+class _StubCommentClient:
+    """E1/E2 桩客户端：返回扁平结构，验证 CommentService 渲染/过滤逻辑。"""
+
+    def __init__(self, comments):
+        self._comments = comments
+
+    def list_comments(self, *, doc_id):
+        return self._comments
+
+    def list_block_comments(self, *, doc_id, block_id):
+        return [c for c in self._comments if c.get("block_id") == block_id]
 
 
-@respx.mock
 def test_e1_comments_fetch_thread():
-    respx.get(
-        "https://example.feishu.cn/open-apis/docx/v1/documents/doc_1/comments"
-    ).mock(return_value=httpx.Response(200, json={
-        "items": [
-            {"id": "c1", "user_name": "张三", "text": "Hi",
-             "block_id": "b1", "replies": [
-                 {"user_name": "李四", "text": "回复"},
-             ]},
-        ]
-    }))
-    from feishu_adapter.comment_client import CommentClient
-    client = CommentClient(base_url="https://example.feishu.cn",
-                            api_token="t", rate_limiter=NoWaitLimiter())
+    client = _StubCommentClient([{
+        "comment_id": "c1", "user_name": "张三", "text": "Hi",
+        "block_id": "b1", "replies": [
+            {"user_name": "李四", "text": "回复"},
+        ],
+    }])
     service = CommentService(client=client)
     text = service.fetch_thread(doc_id="doc_1")
     assert "张三" in text
     assert "李四" in text
 
 
-@respx.mock
 def test_e2_comments_filter_by_block():
-    respx.get(
-        "https://example.feishu.cn/open-apis/docx/v1/documents/doc_1/comments"
-    ).mock(return_value=httpx.Response(200, json={
-        "items": [
-            {"id": "c1", "block_id": "b1", "text": "x"},
-            {"id": "c2", "block_id": "b2", "text": "y"},
-        ]
-    }))
-    from feishu_adapter.comment_client import CommentClient
-    client = CommentClient(base_url="https://example.feishu.cn",
-                            api_token="t", rate_limiter=NoWaitLimiter())
+    client = _StubCommentClient([
+        {"comment_id": "c1", "block_id": "b1", "text": "x"},
+        {"comment_id": "c2", "block_id": "b2", "text": "y"},
+    ])
     service = CommentService(client=client)
     out = service.fetch_thread(doc_id="doc_1", block_id="b1")
     assert "x" in out

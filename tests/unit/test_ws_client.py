@@ -182,8 +182,6 @@ def _runtime_env(monkeypatch):
         "LLM_FALLBACK_BASE_URL", "LLM_FALLBACK_API_KEY", "LLM_FALLBACK_MODEL",
     ):
         monkeypatch.setenv(key, f"ws-test-{key.lower()}")
-    monkeypatch.delenv("FEISHU_API_BASE_URL", raising=False)
-    monkeypatch.delenv("FEISHU_API_TOKEN", raising=False)
     monkeypatch.delenv("FEISHU_BASE_APP_TOKEN", raising=False)
     monkeypatch.delenv("FEISHU_DRIVE_PARENT_TOKEN", raising=False)
 
@@ -203,7 +201,7 @@ def _runtime_env(monkeypatch):
 
 
 def test_build_runtime_assembles_real_graph(_runtime_env):
-    """全量真实组件装配：app/orchestrator 类型正确，评论子系统优雅缺席。"""
+    """全量真实组件装配：app/orchestrator 类型正确，评论子系统 SDK 零凭据恒组装。"""
     from config.settings import load_settings
     from orchestrator.app import Orchestrator
 
@@ -212,8 +210,8 @@ def test_build_runtime_assembles_real_graph(_runtime_env):
     assert isinstance(rt, Runtime)
     assert isinstance(rt.app, FastAPI)
     assert isinstance(rt.orchestrator, Orchestrator)
-    # 无 API 直连凭据 → 评论子系统为 None（API 返回 not configured）
-    assert rt.app.state.ctx.comment_service is None
+    # 评论子系统 SDK 化后零凭据恒组装（ADR-0032）
+    assert rt.app.state.ctx.comment_service is not None
     assert rt.app.state.ctx.unified_search_service is not None
     assert rt.app.state.ctx.bind_doc_service is not None
     # health 路由可用
@@ -221,13 +219,13 @@ def test_build_runtime_assembles_real_graph(_runtime_env):
     assert TestClient(rt.app).get("/health").json() == {"status": "ok"}
 
 
-def test_build_runtime_with_api_credentials(_runtime_env, monkeypatch):
-    """提供直连凭据时评论全家桶（含自动同步 worker）装配。"""
+def test_build_runtime_comment_dual_channel_handles(_runtime_env):
+    """评论全家桶 + 事件/轮询双通道句柄恒组装（独立 session，ADR-0033）。"""
     from config.settings import load_settings
 
-    monkeypatch.setenv("FEISHU_API_BASE_URL", "https://open.feishu.cn/open-apis")
-    monkeypatch.setenv("FEISHU_API_TOKEN", "t-fake")
     rt = build_runtime(settings=load_settings())
     assert rt.app.state.ctx.comment_service is not None
     assert rt.app.state.ctx.comment_sync_service is not None
     assert rt.app.state.ctx.auto_sync_worker is not None
+    assert rt.comment_event_service is not None
+    assert rt.auto_sync_worker is not None

@@ -501,7 +501,7 @@ class Orchestrator:
         生产 process() 与 process_phase5-9 共用本路由器，保证指令行为单份维护。
         命中指令则执行并返回结果 dict；非本批指令返回 None（调用方继续正常流程）。
         各服务为可选注入（getattr None 检查）：未配置时回复提示而非抛错，
-        其中评论三件套依赖 FEISHU_API_BASE_URL/FEISHU_API_TOKEN 环境变量。
+        评论三件套已 SDK 化零凭据恒组装（ADR-0032），此处保留 None 防御仅供测试注入。
         """
         text = incoming.text.strip()
 

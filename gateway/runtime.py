@@ -9,7 +9,6 @@ repos/services 全家桶 → Orchestrator（Phase 5-9 服务双通道注入）�
 多实例部署需另行改造（见 ADR-0024 分布式锁议题）。
 
 可选环境变量（不设则对应子系统为 None，相关 API 返回 not configured）：
-- FEISHU_API_BASE_URL / FEISHU_API_TOKEN : 开放平台直连（评论拉取/Doc 写 API）
 - FEISHU_BASE_APP_TOKEN                  : Base 投影（L0 read）
 - FEISHU_DRIVE_PARENT_TOKEN              : Drive 上传父目录
 - FEISHU_ADMIN_OPEN_IDS                  : 公共模板审核管理员，逗号分隔
@@ -23,6 +22,7 @@ from sqlalchemy.orm import sessionmaker
 
 from config.settings import Settings, load_settings
 from feishu_adapter.base_projection_adapter import BaseProjectionAdapter
+from feishu_adapter.bot_info import get_bot_open_id
 from feishu_adapter.client import LarkCLI
 from feishu_adapter.comment_client import CommentClient
 from feishu_adapter.doc_adapter import DocAdapter
@@ -38,6 +38,7 @@ from orchestrator.session_service import SessionService
 from orchestrator.task_service import TaskService
 from orchestrator.templates.auto_sync_worker import CommentAutoSyncWorker
 from orchestrator.templates.comment_action_service import CommentActionService
+from orchestrator.templates.comment_event_service import CommentEventService
 from orchestrator.templates.comment_service import CommentService
 from orchestrator.templates.comment_sync_service import CommentSyncService
 from orchestrator.templates.diff_service import VersionDiffService
@@ -70,13 +71,18 @@ class Runtime:
     """组装产物容器：app（FastAPI）+ ws 进程所需句柄。"""
 
     def __init__(self, app, orchestrator: Orchestrator, settings: Settings,
-                 renew_scan_service=None, renew_scan_interval_sec: int = 60):
+                 renew_scan_service=None, renew_scan_interval_sec: int = 60,
+                 comment_event_service=None, auto_sync_worker=None):
         self.app = app
         self.orchestrator = orchestrator
         self.settings = settings
         # 续期卡片扫描（独立 session，避免与主管线共享 Session 跨线程竞争）
         self.renew_scan_service = renew_scan_service
         self.renew_scan_interval_sec = renew_scan_interval_sec
+        # 评论事件处理（独立 event_session：ws 回调线程隔离，ADR-0033）
+        self.comment_event_service = comment_event_service
+        # 评论轮询兜底（独立 scan_session：ws_client 守护线程隔离）
+        self.auto_sync_worker = auto_sync_worker
 
 
 def build_runtime(settings: Settings | None = None) -> Runtime:
@@ -98,10 +104,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
            .build())
     cli = LarkCLI()
     im = IMAdapter(cli=cli, sdk_client=sdk)
-    api_base = os.environ.get("FEISHU_API_BASE_URL", "")
-    api_token = os.environ.get("FEISHU_API_TOKEN", "")
-    doc = DocAdapter(cli=cli, base_url=api_base, api_token=api_token,
-                     sdk_client=sdk)
+    doc = DocAdapter(cli=cli, sdk_client=sdk)
     base = None
     if os.environ.get("FEISHU_BASE_APP_TOKEN"):
         base = BaseProjectionAdapter(os.environ["FEISHU_BASE_APP_TOKEN"], cli=cli)
@@ -182,34 +185,29 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     orch.diff_service = diff_service
     orch.unified_search_service = unified_search_service
 
-    # --- Phase 7-9：评论闭环（需开放平台直连凭据，可选） ---
-    comment_service = None
-    comment_sync_service = None
-    comment_action_service = None
-    auto_sync_worker = None
-    if api_base and api_token:
-        comment_client = CommentClient(
-            base_url=api_base, api_token=api_token,
-            rate_limiter=RateLimiter(rate=3.0, per_sec=1.0),
-        )
-        comment_service = CommentService(comment_client)
-        comment_repo = CommentRepo(session)
-        comment_sync_service = CommentSyncService(comment_client, comment_repo)
-        comment_action_service = CommentActionService(
-            comment_repo, template_repo, version_service,
-        )
-        notify = CommentNotifyService(
-            comment_repo, CommentNotifyRepo(session), im,
-        )
-        auto_sync_worker = CommentAutoSyncWorker(
-            session_repo=SessionRepo(session),
-            sync_service=comment_sync_service,
-            notify_service=notify,
-            interval_sec=settings.comment_sync_interval_sec,
-        )
-        orch.comment_service = comment_service
-        orch.comment_sync_service = comment_sync_service
-        orch.comment_action_service = comment_action_service
+    # --- Phase 7-9：评论闭环（SDK 直连零凭据，ADR-0032；无条件组装） ---
+    comment_client = CommentClient(
+        sdk_client=sdk, rate_limiter=RateLimiter(rate=3.0, per_sec=1.0),
+    )
+    comment_service = CommentService(comment_client)
+    comment_repo = CommentRepo(session)
+    comment_sync_service = CommentSyncService(comment_client, comment_repo)
+    comment_action_service = CommentActionService(
+        comment_repo, template_repo, version_service,
+        comment_client=comment_client,
+    )
+    notify = CommentNotifyService(
+        comment_repo, CommentNotifyRepo(session), im,
+    )
+    auto_sync_worker_startup = CommentAutoSyncWorker(
+        session_repo=SessionRepo(session),
+        sync_service=comment_sync_service,
+        notify_service=notify,
+        interval_sec=settings.comment_sync_interval_sec,
+    )
+    orch.comment_service = comment_service
+    orch.comment_sync_service = comment_sync_service
+    orch.comment_action_service = comment_action_service
 
     # --- 卡片回调 HMAC（Phase 2） ---
     _approval = ApprovalService(secret=settings.approval_hmac_secret)  # noqa: F841 预热校验
@@ -235,7 +233,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         tag_service=tag_service,
         favorite_service=favorite_service,
         unified_search_service=unified_search_service,
-        auto_sync_worker=auto_sync_worker,
+        auto_sync_worker=auto_sync_worker_startup,
     )
     # 主 session 挂载：run_im_pipeline / 卡片管线在处理成功后负责 commit
     app.state.main_session = session
@@ -251,10 +249,42 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         session_repo=SessionRepo(scan_session), im_adapter=im,
         renew_threshold_sec=settings.bind_doc_renew_threshold_sec,
     )
+
+    # --- 评论事件服务（独立 event_session：ws 回调线程隔离，ADR-0033） ---
+    event_session = sessionmaker(
+        bind=get_engine(), expire_on_commit=False, autoflush=False,
+    )()
+    comment_event_service = CommentEventService(
+        session_repo=SessionRepo(event_session),
+        sync_service=CommentSyncService(
+            CommentClient(sdk_client=sdk,
+                          rate_limiter=RateLimiter(rate=3.0, per_sec=1.0)),
+            CommentRepo(event_session)),
+        notify_service=CommentNotifyService(
+            CommentRepo(event_session), CommentNotifyRepo(event_session), im),
+        bot_open_id=get_bot_open_id(sdk),
+    )
+
+    # --- 轮询兜底 worker（独立 session：ws_client 守护线程隔离，ADR-0033） ---
+    poll_session = sessionmaker(
+        bind=get_engine(), expire_on_commit=False, autoflush=False,
+    )()
+    auto_sync_worker = CommentAutoSyncWorker(
+        session_repo=SessionRepo(poll_session),
+        sync_service=CommentSyncService(
+            CommentClient(sdk_client=sdk,
+                          rate_limiter=RateLimiter(rate=3.0, per_sec=1.0)),
+            CommentRepo(poll_session)),
+        notify_service=CommentNotifyService(
+            CommentRepo(poll_session), CommentNotifyRepo(poll_session), im),
+        interval_sec=settings.comment_sync_interval_sec,
+    )
     return Runtime(
         app=app, orchestrator=orch, settings=settings,
         renew_scan_service=renew_scan_service,
         renew_scan_interval_sec=settings.bind_doc_renew_card_interval_sec,
+        comment_event_service=comment_event_service,
+        auto_sync_worker=auto_sync_worker,
     )
 
 
