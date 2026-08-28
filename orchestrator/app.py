@@ -118,6 +118,23 @@ class Orchestrator:
         if incoming.is_bind_doc_cmd and incoming.bind_doc_id:
             return self._handle_bind(incoming)
 
+        # 1.2 /bind-doc-renew 指令：手动续期（卡片链路的命令行等价物）
+        if incoming.text.strip() == "/bind-doc-renew":
+            session_id = self.session_service.get_or_create(
+                owner_open_id=incoming.sender_open_id,
+                source_chat_id=incoming.chat_id,
+            )
+            try:
+                new_exp = self.bind_doc_service.renew(session_id=session_id)
+            except Exception as e:
+                self.im.reply(incoming.chat_id, f"[错误] 续期失败：{e}")
+                return {"status": "renew_bind_failed", "session_id": session_id,
+                        "error": str(e)}
+            self.im.reply(incoming.chat_id,
+                          f"[成功] 已续期到 {new_exp.isoformat()}")
+            return {"status": "renew_bind", "session_id": session_id,
+                    "new_expires": new_exp.isoformat()}
+
         # 1.5 #写到 语法不完整（有锚点没正文）：提示用法，不进 LLM
         if incoming.write_anchor and not incoming.text.strip():
             self.im.reply(

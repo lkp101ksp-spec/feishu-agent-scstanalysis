@@ -115,4 +115,8 @@ def load_settings() -> Settings:
         database_url=os.environ["DATABASE_URL"],
         bind_doc_ttl_sec=int(os.environ.get("BIND_DOC_TTL_SEC", "1800")),
         rate_limit_per_min=int(os.environ.get("GATEWAY_RATE_LIMIT_PER_MIN", "60")),
+        bind_doc_renew_threshold_sec=int(
+            os.environ.get("BIND_DOC_RENEW_THRESHOLD_SEC", "300")),
+        bind_doc_renew_card_interval_sec=int(
+            os.environ.get("BIND_DOC_RENEW_CARD_INTERVAL_SEC", "60")),
     )

@@ -42,6 +42,9 @@ class BindDocService:
         self.im_adapter = im_adapter
         self.renew_threshold_sec = renew_threshold_sec
         self.doc_adapter = doc_adapter
+        # 续期卡片防重发：key = "session_id:expires_at"（续期/重绑后 key 变化，
+        # 新一轮临期可再次提醒），value = 上次发卡时间
+        self._renew_card_sent: dict[str, datetime] = {}
 
     def bind(self, session_id: str, owner_open_id: str, doc_id: str,
              anchor: str | None = None) -> datetime:
@@ -122,7 +125,11 @@ class BindDocService:
         return new_exp
 
     async def maybe_send_renew_card(self) -> None:
-        """扫描所有 active session，剩余有效期 ≤ 阈值的发续期卡片。"""
+        """扫描所有 active session，剩余有效期 ≤ 阈值的发续期卡片。
+
+        同一 (session, expires_at) 只发一次（内存去重，单进程 MVP；
+        续期或重新绑定后 key 变化，下一轮临期会再提醒）。
+        """
         if self.im_adapter is None or self.session_repo is None:
             return
         threshold = timedelta(seconds=self.renew_threshold_sec)
@@ -135,19 +142,28 @@ class BindDocService:
             if expires.tzinfo is None:
                 expires = expires.replace(tzinfo=timezone.utc)
             remaining = expires - now
-            if timedelta(0) < remaining <= threshold:
-                self.im_adapter.send_card(
-                    chat_id=sess.source_chat_id,
-                    card={
-                        "header": "bind_doc 即将过期",
-                        "elements": [{
-                            "tag": "action",
-                            "actions": [{
-                                "tag": "button",
-                                "text": {"tag": "plain_text", "content": "续期 30 分钟"},
-                                "value": {"action": "renew_bind",
-                                          "session_id": sess.session_id},
-                            }],
+            if not (timedelta(0) < remaining <= threshold):
+                continue
+            card_key = f"{sess.session_id}:{expires.isoformat()}"
+            if card_key in self._renew_card_sent:
+                continue
+            self._renew_card_sent[card_key] = now
+            # 按钮文案随 TTL 配置（冒烟时常用短 TTL）
+            ttl_text = (f"{self.ttl_sec // 60} 分钟" if self.ttl_sec >= 60
+                        else f"{self.ttl_sec} 秒")
+            self.im_adapter.send_card(
+                chat_id=sess.source_chat_id,
+                card={
+                    "header": "bind_doc 即将过期",
+                    "elements": [{
+                        "tag": "action",
+                        "actions": [{
+                            "tag": "button",
+                            "text": {"tag": "plain_text",
+                                     "content": f"续期 {ttl_text}"},
+                            "value": {"action": "renew_bind",
+                                      "session_id": sess.session_id},
                         }],
-                    },
-                )
+                    }],
+                },
+            )

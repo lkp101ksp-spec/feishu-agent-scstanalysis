@@ -34,7 +34,8 @@ def orch():
 
     session_svc = SessionService(session_repo)
     task_svc = TaskService(task_repo, audit_repo)
-    bind_svc = BindDocService(session_svc, audit_repo, ttl_sec=1800)
+    bind_svc = BindDocService(session_svc, audit_repo, ttl_sec=1800,
+                               session_repo=session_repo)
 
     doc_adapter = MagicMock()
     doc_adapter.append_plain_text.return_value = "blk_x"
@@ -96,6 +97,38 @@ def test_process_bind_doc_command_does_not_call_llm(orch):
     orch.im.reply.assert_called_once()
     reply_text = orch.im.reply.call_args.args[1]
     assert "doccnABC123" in reply_text
+
+
+def test_bind_doc_renew_command(orch):
+    """生产 process() 路由 /bind-doc-renew：绑定后可手动续期。"""
+    from datetime import datetime, timezone
+
+    from persistence.models import SessionRow
+
+    orch.process(IncomingMessage(
+        message_id="om_b", chat_id="oc_1", sender_open_id="ou_1",
+        text="/bind-doc doccnABC123", is_bind_doc_cmd=True,
+        bind_doc_id="doccnABC123",
+    ))
+    orch._test_session.commit()
+    sid_row = orch._test_session.query(SessionRow).one()
+    old_exp = sid_row.bind_expires_at
+
+    result = orch.process(IncomingMessage(
+        message_id="om_r", chat_id="oc_1", sender_open_id="ou_1",
+        text="/bind-doc-renew",
+    ))
+    orch._test_session.commit()
+
+    assert result["status"] == "renew_bind"
+    orch._test_session.expire_all()
+    new_exp = orch._test_session.get(SessionRow, result["session_id"]).bind_expires_at
+    assert new_exp >= old_exp
+    # SQLite 存回的 naive UTC → 补 tz 再比 now
+    assert new_exp.replace(tzinfo=timezone.utc) > datetime.now(timezone.utc)
+    # 回复了续期成功消息，且没有走 LLM
+    orch.llm.chat.assert_not_called()
+    assert "已续期" in orch.im.reply.call_args.args[-1]
 
 
 def test_process_message_with_active_bind_writes_doc(orch):

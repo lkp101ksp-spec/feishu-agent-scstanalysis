@@ -18,6 +18,8 @@ from gateway.ws_client import (
     build_dispatcher,
     card_event_to_payload,
     im_event_to_payload,
+    run_renew_scan_once,
+    start_renew_scanner,
 )
 
 # --- IM 事件 fixture（真实 v2 schema 结构） ---
@@ -103,6 +105,46 @@ def test_ws_client_module_has_main():
     """进程入口存在（python -m gateway.ws_client）。"""
     from gateway import ws_client
     assert callable(ws_client.main)
+
+
+# --- 续期卡片扫描线程 ---
+
+def test_run_renew_scan_once_invokes_scan():
+    """一轮扫描：async maybe_send_renew_card 被同步包装调用一次。"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    svc = MagicMock()
+    svc.maybe_send_renew_card = AsyncMock(return_value=None)
+    run_renew_scan_once(svc)
+    svc.maybe_send_renew_card.assert_awaited_once()
+
+
+def test_start_renew_scanner_thread_scans():
+    """扫描线程按 interval 周期调用扫描（等首轮即可）。"""
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    svc = MagicMock()
+    svc.maybe_send_renew_card = AsyncMock(return_value=None)
+    svc.renew_threshold_sec = 300
+    rt = SimpleNamespace(renew_scan_service=svc,
+                         renew_scan_interval_sec=0.05)
+    t = start_renew_scanner(rt)
+    assert t is not None and t.daemon
+    for _ in range(100):
+        if svc.maybe_send_renew_card.await_count >= 1:
+            break
+        time.sleep(0.02)
+    assert svc.maybe_send_renew_card.await_count >= 1
+
+
+def test_start_renew_scanner_no_service_is_noop():
+    """renew_scan_service 为 None：不启动线程，返回 None。"""
+    from types import SimpleNamespace
+
+    rt = SimpleNamespace(renew_scan_service=None, renew_scan_interval_sec=60)
+    assert start_renew_scanner(rt) is None
 
 
 # --- 生产组装（runtime） ---

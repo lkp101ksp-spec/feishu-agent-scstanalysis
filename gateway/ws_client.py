@@ -9,7 +9,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
+import time
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
@@ -21,6 +24,33 @@ from gateway.runtime import Runtime, build_runtime
 from shared.errors import FeishuAgentError, RateLimitExceededError
 
 logger = logging.getLogger(__name__)
+
+
+def run_renew_scan_once(renew_scan_service) -> None:
+    """同步执行一轮续期卡片扫描（async 方法在独立 event loop 跑一次）。"""
+    asyncio.run(renew_scan_service.maybe_send_renew_card())
+
+
+def start_renew_scanner(rt: Runtime) -> threading.Thread | None:
+    """启动续期卡片扫描守护线程：每 interval 秒扫一轮临期绑定并发卡片。"""
+    svc = getattr(rt, "renew_scan_service", None)
+    if svc is None:
+        return None
+    interval = getattr(rt, "renew_scan_interval_sec", 60) or 60
+
+    def loop() -> None:
+        while True:
+            time.sleep(interval)
+            try:
+                run_renew_scan_once(svc)
+            except Exception:
+                logger.exception("renew card scan failed")
+
+    t = threading.Thread(target=loop, daemon=True, name="renew-card-scanner")
+    t.start()
+    logger.info("renew card scanner started (interval=%ss, threshold=%ss)",
+                interval, getattr(svc, "renew_threshold_sec", "?"))
+    return t
 
 
 def im_event_to_payload(model: P2ImMessageReceiveV1) -> dict:
@@ -103,6 +133,7 @@ def main() -> None:
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
     rt = build_runtime()
+    start_renew_scanner(rt)
     client = lark.ws.Client(
         rt.settings.feishu.app_id,
         rt.settings.feishu.app_secret,

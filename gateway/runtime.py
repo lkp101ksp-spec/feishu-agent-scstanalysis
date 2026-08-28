@@ -69,10 +69,14 @@ from persistence.repositories.template_version_repo import TemplateVersionRepo
 class Runtime:
     """组装产物容器：app（FastAPI）+ ws 进程所需句柄。"""
 
-    def __init__(self, app, orchestrator: Orchestrator, settings: Settings):
+    def __init__(self, app, orchestrator: Orchestrator, settings: Settings,
+                 renew_scan_service=None, renew_scan_interval_sec: int = 60):
         self.app = app
         self.orchestrator = orchestrator
         self.settings = settings
+        # 续期卡片扫描（独立 session，避免与主管线共享 Session 跨线程竞争）
+        self.renew_scan_service = renew_scan_service
+        self.renew_scan_interval_sec = renew_scan_interval_sec
 
 
 def build_runtime(settings: Settings | None = None) -> Runtime:
@@ -235,7 +239,23 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     )
     # 主 session 挂载：run_im_pipeline / 卡片管线在处理成功后负责 commit
     app.state.main_session = session
-    return Runtime(app=app, orchestrator=orch, settings=settings)
+
+    # --- 续期卡片扫描服务（独立 session：扫描线程与主管线不共享 Session） ---
+    scan_session = sessionmaker(
+        bind=get_engine(), expire_on_commit=False, autoflush=False,
+    )()
+    renew_scan_service = BindDocService(
+        SessionService(SessionRepo(scan_session),
+                       audit_repo=AuditRepo(scan_session)),
+        AuditRepo(scan_session), settings.bind_doc_ttl_sec,
+        session_repo=SessionRepo(scan_session), im_adapter=im,
+        renew_threshold_sec=settings.bind_doc_renew_threshold_sec,
+    )
+    return Runtime(
+        app=app, orchestrator=orch, settings=settings,
+        renew_scan_service=renew_scan_service,
+        renew_scan_interval_sec=settings.bind_doc_renew_card_interval_sec,
+    )
 
 
 def build_app() -> "FastAPI":
