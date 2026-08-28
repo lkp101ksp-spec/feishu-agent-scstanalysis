@@ -130,3 +130,37 @@ def test_apply_skips_plain_comments(session):
     # 普通评论不打标
     rows = CommentRepo(session).list_by_doc("d1")
     assert rows[0].processed_at is None
+
+
+# --- Phase 11: 回执写回（ADR-0034） ---
+
+
+def test_apply_sends_receipt_after_applied(session):
+    """applied 的评论逐条回写回执；文案含模板 id 与版本号。"""
+    svc, vs = _setup(session)
+    vs.on_template_upsert.return_value = 3
+    client = MagicMock()
+    svc.comment_client = client
+    _comment(session, "c1", "/replan t1 增加对照组")
+    out = svc.apply(doc_id="d1", caller_open_id="ou_owner")
+    assert out["applied"] == 1
+    client.reply_comment.assert_called_once()
+    kwargs = client.reply_comment.call_args.kwargs
+    assert kwargs["file_token"] == "d1"
+    assert kwargs["comment_id"] == "c1"
+    assert "已按此评论完成修改" in kwargs["text"]
+    assert "t1" in kwargs["text"] and "版本 3" in kwargs["text"]
+
+
+def test_apply_receipt_failure_does_not_break(session):
+    """回执抛错不阻断 apply 主流程，评论仍被 mark_processed。"""
+    svc, vs = _setup(session)
+    vs.on_template_upsert.return_value = 2
+    client = MagicMock()
+    client.reply_comment.side_effect = RuntimeError("network down")
+    svc.comment_client = client
+    _comment(session, "c1", "/replan t1 增加对照组")
+    out = svc.apply(doc_id="d1", caller_open_id="ou_owner")
+    assert out["applied"] == 1 and out["failed"] == 0  # 业务动作成功
+    rows = CommentRepo(session).list_by_doc("d1")
+    assert rows[0].processed_at is not None  # 仍打标
