@@ -282,3 +282,22 @@ USING GIN (to_tsvector('simple', coalesce(name,'') || ' ' || coalesce(descriptio
 ### 14.3 联调就绪清单（见 `docs/联调指南.md`）
 
 环境搭建 → 租户 checklist（6 项）→ 穿透三方案 → 启动序列（config_check → compose → alembic → uvicorn）→ 8 步冒烟 → 常见排障（含本轮全部新坑）。
+
+### 14.4 真租户联调记录（2026-08-27 ~ 08-28）
+
+真实租户冒烟已打通：长连接事件接收（单聊 + 群@）、LLM 应答（MiniMax-M3）、/bind-doc（直链 + wiki）、云文档写入、会话级 + 消息级锚点定位写入、PG 全文库、幂等去重、续期卡片全链路（扫描发卡 → 按钮回调 → 续期落库 → Toast 反馈）。测试规模演进：493 → **559 passed**（默认层）+ 6 passed（pg 层）+ ruff 0 error。
+
+超出原设计的修正与发现（对应 commit）：
+
+1. **wiki 链接解析**：绑定 `/wiki/<token>` 链接需经 `get_node` 解析为 docx document_id 再校验（normalizer 提取 `wiki:` 前缀 + `DocAdapter.resolve_wiki_token`）（`8ae7d5e`）。
+2. **BaseResponse 判成功**：lark-oapi 1.7.3 的 `resp.success()` 方法与属性语义差异导致发送误判，统一按官方用法修正（`ec55187`）。
+3. **生产 session 无人 commit**：repo 层只 flush；webhook 路径靠请求级 session，而生产 runtime 长持有 session 导致绑定"成功"但不落库。修法：`app.state.main_session` + 主管线成功 commit / 异常 rollback（`4d81243`）。
+4. **锚点两级语法**：会话级 `/bind-doc <链接> @章节标题`（`sessions.bind_anchor`，迁移 0003，`bbe2b26`）+ 消息级 `#写到 <章节> | <正文>`（`doc_writes.anchor_text`，迁移 0004，`0b66ab0`）。优先级：消息级 > 会话级 > 末尾追加；同锚点续写跟随（`latest_success_anchor_for_session` 按 anchor_text 过滤，插到上次同锚点写入块之后，不同锚点互不串位）。
+5. **`_handle_bind` 漏传 anchor（静默丢锚点）**：解析与回复提示都对，但 `bind()` 调用没传 anchor。补传参 + 集成回归（`304f043`）。
+6. **续期链路生产接线缺口**：`maybe_send_renew_card` 与 `/bind-doc-renew` 此前只在 phase 分支存在，生产无人调用。接线：ws_client 守护线程周期扫描（独立 scan_session 防跨线程竞争）+ 内存去重（key=`session_id:expires_at`，续期/重绑后可再提醒）+ 按钮文案随 TTL + `/bind-doc-renew` 接入 `process()`（`e76665e`）。
+7. **卡片回调订阅是独立配置**：事件订阅（im.message.receive_v1）≠ 回调订阅（card.action.trigger），开发者后台两个标签页。未订阅回调时点卡片按钮弹「应用不存在」。修复路径：事件与回调 → 回调配置 → 长连接 → 添加「卡片回传交互」→ 发布版本。
+8. **卡片点击 Toast 反馈**：`on_card` 返回 `P2CardActionTriggerResponse`（CallBackToast），成功「已续期至 HH:MM」（北京时间）/ 失败带原因（`21826f5`）。
+9. **同机双进程陷阱**：手动起多个 ws_client 会重复消费事件、续期卡片双发（内存去重是进程级的）；起停流程固定为「先清旧进程再单实例启动」。
+10. **冒烟配置陷阱**：TTL < 临期阈值时续期后仍临期，扫描器连环发卡属预期；冒烟用 TTL=180/阈值=240/扫描=30s，验证后恢复 1800/300/60。
+
+未接入项（待产品决策）：模板指令（/template-*）与评论指令（/comments-sync、/revise 等）仍在 `process_phase5/9` 分支，生产 `process()` 未路由。
