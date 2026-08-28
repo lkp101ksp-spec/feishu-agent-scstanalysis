@@ -127,6 +127,27 @@ def test_process_message_with_active_bind_writes_doc(orch):
     )
 
 
+def test_bind_doc_with_anchor_persists_to_session(orch):
+    """回归：/bind-doc 带 @锚点 必须把 anchor 落库到 session.bind_anchor。"""
+    from persistence.models import SessionRow
+
+    incoming = IncomingMessage(
+        message_id="om_b",
+        chat_id="oc_1",
+        sender_open_id="ou_1",
+        text="/bind-doc doccnABC123 @1 测试",
+        is_bind_doc_cmd=True,
+        bind_doc_id="doccnABC123",
+        bind_anchor="1 测试",
+    )
+    result = orch.process(incoming)
+    orch._test_session.commit()
+
+    assert result["status"] == "bind_doc_success"
+    row = orch._test_session.get(SessionRow, result["session_id"])
+    assert row.bind_anchor == "1 测试"
+
+
 def test_process_write_to_msg_locates_anchor(orch):
     """#写到 语法：消息级锚点定位写入，LLM 只见剥离前缀后的正文。"""
     # 1. 先 bind-doc

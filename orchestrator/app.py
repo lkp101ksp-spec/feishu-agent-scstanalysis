@@ -209,6 +209,7 @@ class Orchestrator:
                 session_id=session_id,
                 owner_open_id=incoming.sender_open_id,
                 doc_id=incoming.bind_doc_id,
+                anchor=incoming.bind_anchor,
             )
         except BindDocInvalidError as e:
             self.im.reply(incoming.chat_id, f"[错误] bind-doc 失败：{e}")
