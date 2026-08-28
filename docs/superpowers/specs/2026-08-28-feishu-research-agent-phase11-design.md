@@ -216,3 +216,37 @@ ADR-0015 方案 A 的「Agent 不能回复评论」条款由本板块修订为�
 - `CommentSyncService.sync` / `CommentNotifyService.notify_new_pending` / `CommentActionService.apply` 签名不变，板块②③④仅新增调用方
 - `_try_market_commands` 12 条指令行为不变（/comments、/comments-sync、/comment-apply 由「未配置」变为真实可用）
 - IM 主管线、bind-doc、锚点写入、续期卡片链路零改动
+
+## 14. 实施结果（2026-08-28）
+
+### 14.1 交付物（9 任务全完成）
+
+- **Task 1-4**：CommentClient SDK 化（BaseRequest 模式 + `_to_flat` 防腐层）/ `on_template_upsert -> int` / CommentActionService 回执挂钩 / CommentEventService + bot_info（BaseRequest 调 `GET /bot/v3/info`，真机验证 bot 在顶层无 data 包裹）
+- **Task 5**（commit `5760fa9`）：runtime 删 `FEISHU_API_*` 零凭据恒组装；event_session/poll_session 独立隔离；同步清理旧 httpx 集成测试（单测 SDK mock 全覆盖）、e2e E1/E2 改桩客户端、ws_client 条件装配断言改恒组装
+- **Task 6**（commit `25b4645`）：dispatcher 注册 `drive.notice.comment_add_v1` + `start_auto_sync_scanner` 守护线程（修复 ws 模式下轮询从未运转缺陷；`interval_sec=0` 允许测试即时触发）
+- **Task 7**（commit `e693f5b`）：`scripts/diag_comments.py` 真机诊断
+- **Task 8**（commit `6140d63`）：ADR-0032/0033/0034 + 联调指南 §5/§6
+- **Task 9**：全量 578 passed + ruff 0 error；真机闭环验证见 14.3
+
+### 14.2 实施期修正（真机驱动）
+
+- **element.type 为 `text_run` 而非 `text`**（commit `5b441b3`）：真机列表返回 `content.elements[].type=="text_run"`，旧解析致全量正文为空、通知不触发；修复后兼容两种 type
+- **POST replies 响应 reply 对象直接在 `data` 顶层**（无 `reply` 包裹），`reply_comment` 返回值适配
+- bot info 响应无 data 包裹（Task 4 期真机发现，已记入 bot_info 注释）
+
+### 14.3 真机验证（2026-08-28 23:45）
+
+| 验证点 | 结果 |
+|---|---|
+| 评论列表解析（text_run 适配） | ✅ 5 条评论正文全部正确入库 |
+| 轮询兜底 + IM 待处理通知 | ✅ 手动 tick 验证 `notified=1`（等价轮询单轮） |
+| /comment-apply | ✅ applied 1 / skipped 4，模板 tpl_test 升至 v1 |
+| 回执写回（ADR-0034） | ✅ 文档评论区出现 bot 回复「已按此评论完成修改：模板 tpl_test 已更新至版本 1。」 |
+| 评论打标 | ✅ processed_at 置位 |
+| 事件通道（drive.notice.comment_add_v1） | ⏳ 待后台订阅配置后验证（轮询兜底已覆盖） |
+
+### 14.4 遗留与后续
+
+1. **事件订阅未配置**：后台「事件与回调 → 事件配置（长连接）」添加 `drive.notice.comment_add_v1` 并发布版本后，重启无需（dispatcher 已注册），发评论验证 ≤5s 通知
+2. **群消息权限**：机器人在群内默认只收 @消息；如需群聊使用，申请「获取群组中所有消息」权限（私聊全功能不受影响）
+3. 联调过程再现「双 ws_client 进程抢事件」坑（系统 Python 与 venv 同时起）：已按 §6 排障清理，惯例为清旧再单实例启动
