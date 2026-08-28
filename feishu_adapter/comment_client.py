@@ -33,12 +33,16 @@ class _AttrWrap:
 
 
 def _extract_text(reply: Any) -> str:
-    """从 reply.content.elements 拼接纯文本（仅 type=text 片段）。"""
+    """从 reply.content.elements 拼接纯文本。
+
+    真机 element.type 为 "text_run"（2026-08-28 真机验证）；
+    兼容旧假设 "text"。仅拼接有 text_run.text 的片段。
+    """
     content = getattr(reply, "content", None)
     elements = getattr(content, "elements", None) or []
     parts = []
     for el in elements:
-        if getattr(el, "type", None) == "text":
+        if getattr(el, "type", None) in ("text", "text_run"):
             run = getattr(el, "text_run", None)
             if run is not None and getattr(run, "text", None):
                 parts.append(run.text)
@@ -118,8 +122,9 @@ class CommentClient:
             f"/open-apis/drive/v1/files/{file_token}/comments/{comment_id}/replies",
             queries={"file_type": ["docx"], "user_id_type": ["open_id"]},
             body={"content": {"elements": [
-                {"type": "text", "text_run": {"text": text}},
+                {"type": "text_run", "text_run": {"text": text}},
             ]}},
         )
-        reply = data.get("reply") or {}
+        # 真机：reply 对象直接在 data 顶层，无 reply 包裹（2026-08-28 验证）
+        reply = data.get("reply") or data
         return {"reply_id": reply.get("reply_id", "")}

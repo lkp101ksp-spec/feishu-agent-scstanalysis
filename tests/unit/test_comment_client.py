@@ -30,13 +30,15 @@ class _FakeLimiter:
 
 def _official_item(cid="c1", text="导师：结论要补统计检验", replies=None,
                    solved=False):
-    """构造官方 list API 的单条评论 JSON（正文在 replies[0]）。"""
+    """构造官方 list API 的单条评论 JSON（正文在 replies[0]，真机结构）。"""
+    def _el(t):
+        return {"type": "text_run", "text_run": {"text": t}}
+
     return {
         "comment_id": cid, "user_id": "ou_teacher", "is_solved": solved,
         "reply_list": {"replies": [
             {"reply_id": f"{cid}_r0", "user_id": "ou_teacher",
-             "content": {"elements": [{"type": "text",
-                                       "text_run": {"text": text}}]}},
+             "content": {"elements": [_el(text)]}},
         ] + (replies or [])},
     }
 
@@ -45,7 +47,7 @@ def test_list_comments_adapts_official_structure():
     """官方结构 → 下游扁平 dict：root 正文取 replies[0]，replies[1:] 为回复。"""
     item = _official_item(replies=[
         {"reply_id": "c1_r1", "user_id": "ou_student",
-         "content": {"elements": [{"type": "text",
+         "content": {"elements": [{"type": "text_run",
                                    "text_run": {"text": "已补充"}}]}},
     ])
     client = CommentClient(sdk_client=_sdk_list_returning([item]),
@@ -60,10 +62,10 @@ def test_list_comments_adapts_official_structure():
 
 
 def test_list_comments_multi_text_elements_concat():
-    """正文多个 text 片段拼接；非文本片段跳过；无后续回复时 replies=[]。"""
+    """正文多个 text_run 片段拼接；非文本片段跳过；无后续回复时 replies=[]。"""
     item = _official_item()
     item["reply_list"]["replies"][0]["content"]["elements"] = [
-        {"type": "text", "text_run": {"text": "第一段"}},
+        {"type": "text_run", "text_run": {"text": "第一段"}},
         {"type": "person", "user_id": "ou_x"},
         {"type": "text", "text_run": {"text": "第二段"}},
     ]
@@ -89,7 +91,7 @@ def test_reply_comment_posts_text_element():
     """reply_comment 用纯文本 element POST 到 replies 接口。"""
     sdk = MagicMock()
     sdk.request.return_value = _fake_response(
-        {"code": 0, "data": {"reply": {"reply_id": "c1_r9"}}})
+        {"code": 0, "data": {"reply_id": "c1_r9"}})
     client = CommentClient(sdk_client=sdk, rate_limiter=_FakeLimiter())
     out = client.reply_comment(file_token="doccnX", comment_id="c1",
                                text="已按评论修改")
@@ -97,7 +99,7 @@ def test_reply_comment_posts_text_element():
     req = sdk.request.call_args.args[0]
     assert "comments/c1/replies" in req.uri
     assert req.body == {"content": {"elements": [
-        {"type": "text", "text_run": {"text": "已按评论修改"}}]}}
+        {"type": "text_run", "text_run": {"text": "已按评论修改"}}]}}
 
 
 def test_extract_text_none_safe():
