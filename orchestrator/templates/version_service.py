@@ -19,8 +19,11 @@ class VersionService:
         blocks_json: Optional[str] = None,
         steps_json: Optional[str] = None,
         created_by: str,
-    ) -> None:
-        """Phase 6: 每次 upsert 写新版本；硬上限 10（自动删最旧）。"""
+    ) -> int:
+        """Phase 6: 每次 upsert 写新版本；硬上限 10（自动删最旧）。
+
+        返回新版本号（Phase 11：评论回执文案数据源）。
+        """
         current = self.version_repo.count(template_id)
         if current >= 10:
             self.version_repo.delete_oldest(template_id, keep=9)
@@ -35,6 +38,7 @@ class VersionService:
         )
         # flush 让 count() 实时
         self.version_repo.session.flush()
+        return current + 1
 
     def list_versions(self, template_id: str) -> list:
         return self.version_repo.list_by_template(template_id)

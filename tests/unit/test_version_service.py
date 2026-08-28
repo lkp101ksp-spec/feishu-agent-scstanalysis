@@ -30,6 +30,22 @@ def test_on_template_upsert_creates_version():
     assert kwargs["version_number"] == 1
 
 
+def test_on_template_upsert_returns_version_number():
+    """upsert 后返回新版本号（评论回执文案数据源，Phase 11）。"""
+    svc, version_repo, _ = _make_service()
+    version_repo.count.return_value = 0
+    n = svc.on_template_upsert(
+        template_id="t1", name="x", description="d",
+        blocks_json="[]", steps_json=None, created_by="ou_1",
+    )
+    assert n == 1
+    version_repo.count.return_value = 3
+    assert svc.on_template_upsert(
+        template_id="t1", name="x", description="d",
+        blocks_json="[]", steps_json=None, created_by="ou_1",
+    ) == 4
+
+
 def test_on_template_upsert_increments_version():
     svc, version_repo, _ = _make_service()
     version_repo.count.return_value = 3
