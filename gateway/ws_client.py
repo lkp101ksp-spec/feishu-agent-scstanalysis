@@ -13,10 +13,15 @@ import asyncio
 import logging
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
-from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTrigger
+from lark_oapi.event.callback.model.p2_card_action_trigger import (
+    CallBackToast,
+    P2CardActionTrigger,
+    P2CardActionTriggerResponse,
+)
 
 from gateway.app import process_card_payload, run_im_pipeline
 from gateway.normalizer import NormalizeError
@@ -94,6 +99,31 @@ def card_event_to_payload(model: P2CardActionTrigger) -> dict:
     return payload
 
 
+def _utc_iso_to_beijing_hm(iso: str) -> str:
+    """UTC ISO 时间串 → 北京时间 HH:MM（Toast 展示用，解析失败原样返回）。"""
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError:
+        return iso
+    return dt.astimezone(timezone(timedelta(hours=8))).strftime("%H:%M")
+
+
+def card_result_to_response(result: dict) -> P2CardActionTriggerResponse | None:
+    """管线结果 → 卡片回调 Toast 响应；无需反馈的动作（无 new_expires）返回 None。"""
+    if "new_expires" not in result:
+        return None
+    toast = CallBackToast({})
+    if result.get("ok"):
+        toast.type = "success"
+        toast.content = f"已续期至 {_utc_iso_to_beijing_hm(result['new_expires'])}"
+    else:
+        toast.type = "error"
+        toast.content = f"续期失败：{result.get('reason', 'unknown')}"
+    resp = P2CardActionTriggerResponse({})
+    resp.toast = toast
+    return resp
+
+
 def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
     """构造事件分发器：IM/卡片事件闭包到公共管线（异常吃掉保连接）。"""
 
@@ -111,12 +141,14 @@ def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
         except Exception:
             logger.exception("ws im unexpected error")
 
-    def on_card(data: P2CardActionTrigger) -> None:
+    def on_card(data: P2CardActionTrigger) -> P2CardActionTriggerResponse | None:
         try:
             result = process_card_payload(rt.app, card_event_to_payload(data))
             logger.info("ws card handled: %s", result)
+            return card_result_to_response(result)
         except Exception:
             logger.exception("ws card unexpected error")
+            return None
 
     return (
         lark.EventDispatcherHandler.builder("", "")

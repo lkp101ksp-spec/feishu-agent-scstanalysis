@@ -17,6 +17,7 @@ from gateway.runtime import Runtime, build_runtime
 from gateway.ws_client import (
     build_dispatcher,
     card_event_to_payload,
+    card_result_to_response,
     im_event_to_payload,
     run_renew_scan_once,
     start_renew_scanner,
@@ -92,6 +93,28 @@ def test_card_event_to_payload_flattens_value():
         {"action": "x", "open_id": "ou_self"}, with_operator=True,
     ))
     assert p2["open_id"] == "ou_self"  # value 优先
+
+
+def test_card_result_to_response_success_toast():
+    """renew 成功 → success Toast，UTC 时间转北京时间 HH:MM。"""
+    resp = card_result_to_response(
+        {"ok": True, "new_expires": "2026-08-28T02:57:18+00:00"})
+    assert resp is not None
+    assert resp.toast.type == "success"
+    assert resp.toast.content == "已续期至 10:57"
+
+
+def test_card_result_to_response_error_toast():
+    """renew 失败 → error Toast，携带失败原因。"""
+    resp = card_result_to_response({"ok": False, "new_expires": "", "reason": "no bind"})
+    assert resp is not None
+    assert resp.toast.type == "error"
+    assert "no bind" in resp.toast.content
+
+
+def test_card_result_to_response_none_for_silent_action():
+    """非续期动作（无 new_expires）→ 不弹 Toast。"""
+    assert card_result_to_response({"ok": True}) is None
 
 
 def test_build_dispatcher_smoke():
