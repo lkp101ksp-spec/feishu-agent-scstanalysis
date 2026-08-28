@@ -285,3 +285,85 @@ def test_process_creates_task_and_audit_records(orch):
     actions = [log.action for log in audit_logs]
     assert "create_task" in actions
     assert "complete_task" in actions
+
+
+# === Phase 5-9 市场指令接入生产 process()（_try_market_commands 路由器） ===
+
+
+def test_process_routes_template_list(orch):
+    """生产 process() 路由 /template-list：不调 LLM，回复模板清单。"""
+    ts = MagicMock()
+    ts.list_by_owner.return_value = [
+        type("T", (), {"template_id": "tpl_a"})(),
+        type("T", (), {"template_id": "tpl_b"})(),
+    ]
+    orch.template_service = ts
+
+    result = orch.process(IncomingMessage(
+        message_id="om_tl", chat_id="oc_1", sender_open_id="ou_1",
+        text="/template-list",
+    ))
+
+    assert result["status"] == "template_listed"
+    assert result["templates"] == ["tpl_a", "tpl_b"]
+    orch.llm.chat.assert_not_called()
+    orch.im.reply.assert_called_once()
+    assert "tpl_a" in orch.im.reply.call_args.args[1]
+
+
+def test_process_routes_template_find(orch):
+    """生产 process() 路由 /template-find：走统一检索并渲染结果。"""
+    us = MagicMock()
+    us.search.return_value = [{"template_id": "tpl_x"}]
+    us.render.return_value = "(1) tpl_x"
+    orch.unified_search_service = us
+
+    result = orch.process(IncomingMessage(
+        message_id="om_tf", chat_id="oc_1", sender_open_id="ou_1",
+        text="/template-find 单细胞 #范文",
+    ))
+
+    assert result["status"] == "find_rendered"
+    us.search.assert_called_once_with(query="单细胞", tag="范文", limit=10)
+    orch.llm.chat.assert_not_called()
+    assert orch.im.reply.call_args.args[1] == "(1) tpl_x"
+
+
+def test_process_market_command_not_configured_replies_hint(orch):
+    """评论服务未注入（无 FEISHU_API_* 环境变量）：回复未配置提示而非抛错。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_cs", chat_id="oc_1", sender_open_id="ou_1",
+        text="/comments-sync doccnXYZ",
+    ))
+
+    assert result["status"] == "sync_failed"
+    orch.llm.chat.assert_not_called()
+    assert "未配置" in orch.im.reply.call_args.args[1]
+
+
+def test_process_ordinary_message_still_goes_to_llm(orch):
+    """普通消息不受市场路由影响：照常走 LLM。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_norm", chat_id="oc_1", sender_open_id="ou_1",
+        text="帮我总结一下",
+    ))
+
+    assert result["status"] == "success"
+    orch.llm.chat.assert_called_once()
+
+
+def test_process_template_tag_routes(orch):
+    """生产 process() 路由 /template-tag：打标签并回显规范化结果。"""
+    tag_svc = MagicMock()
+    tag_svc.attach.return_value = "范文"
+    orch.tag_service = tag_svc
+
+    result = orch.process(IncomingMessage(
+        message_id="om_tag", chat_id="oc_1", sender_open_id="ou_1",
+        text="/template-tag tpl_a 范文模板",
+    ))
+
+    assert result["status"] == "tagged"
+    tag_svc.attach.assert_called_once_with(
+        template_id="tpl_a", tag="范文模板", caller_open_id="ou_1")
+    orch.llm.chat.assert_not_called()

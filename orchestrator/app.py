@@ -144,6 +144,11 @@ class Orchestrator:
             )
             return {"status": "skipped", "reason": "write_to_usage"}
 
+        # 1.6 模板市场/评论指令（Phase 5-9 全量 12 条）：命中直接返回，不进 LLM
+        market_result = self._try_market_commands(incoming)
+        if market_result is not None:
+            return market_result
+
         # 2. 普通消息：创建 session + task
         session_id = self.session_service.get_or_create(
             owner_open_id=incoming.sender_open_id,
@@ -422,13 +427,85 @@ class Orchestrator:
 
     # === Phase 5 ===
     def process_phase5(self, incoming) -> dict:
-        """Phase 5 入口：复用 process_phase4 + 模板市场指令。"""
+        """Phase 5 入口：市场指令路由（_try_market_commands）+ 复用 process_phase4。"""
         from shared.errors import FeishuAgentError
         if not hasattr(self, "planner"):
             raise FeishuAgentError("Phase 5 subsystems not initialized")
 
+        result = self._try_market_commands(incoming)
+        if result is not None:
+            return result
+
+        # 普通消息：复用 process_phase4
+        return self.process_phase4(incoming)
+
+    # === Phase 6 ===
+    def process_phase6(self, incoming) -> dict:
+        """Phase 6 入口：市场指令路由 + 复用 process_phase5。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 6 subsystems not initialized")
+
+        result = self._try_market_commands(incoming)
+        if result is not None:
+            return result
+
+        # 普通消息：复用 process_phase5
+        return self.process_phase5(incoming)
+
+    # === Phase 7 ===
+    def process_phase7(self, incoming) -> dict:
+        """Phase 7 入口：市场指令路由 + 复用 process_phase6。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 7 subsystems not initialized")
+
+        result = self._try_market_commands(incoming)
+        if result is not None:
+            return result
+
+        # 普通消息：复用 process_phase6
+        return self.process_phase6(incoming)
+
+    # === Phase 8 ===
+    def process_phase8(self, incoming) -> dict:
+        """Phase 8 入口：市场指令路由 + 复用 process_phase7。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 8 subsystems not initialized")
+
+        result = self._try_market_commands(incoming)
+        if result is not None:
+            return result
+
+        # 普通消息：复用 process_phase7
+        return self.process_phase7(incoming)
+
+    # === Phase 9 ===
+    def process_phase9(self, incoming) -> dict:
+        """Phase 9 入口：市场指令路由 + 复用 process_phase8。"""
+        from shared.errors import FeishuAgentError
+        if not hasattr(self, "planner"):
+            raise FeishuAgentError("Phase 9 subsystems not initialized")
+
+        result = self._try_market_commands(incoming)
+        if result is not None:
+            return result
+
+        # 普通消息：复用 process_phase8
+        return self.process_phase8(incoming)
+
+    def _try_market_commands(self, incoming: IncomingMessage) -> Optional[dict]:
+        """模板市场/评论闭环指令路由（Phase 5-9 全量 12 条）。
+
+        生产 process() 与 process_phase5-9 共用本路由器，保证指令行为单份维护。
+        命中指令则执行并返回结果 dict；非本批指令返回 None（调用方继续正常流程）。
+        各服务为可选注入（getattr None 检查）：未配置时回复提示而非抛错，
+        其中评论三件套依赖 FEISHU_API_BASE_URL/FEISHU_API_TOKEN 环境变量。
+        """
         text = incoming.text.strip()
-        # IM 指令路由
+
+        # --- 模板列表（Phase 5） ---
         if text == "/template-list":
             ts = getattr(self, "template_service", None)
             if ts is None:
@@ -439,17 +516,7 @@ class Orchestrator:
             self.im.reply(incoming.chat_id, f"您的模板: {', '.join(ids) or '(无)'}")
             return {"status": "template_listed", "templates": ids}
 
-        # 普通消息：复用 process_phase4
-        return self.process_phase4(incoming)
-
-    # === Phase 6 ===
-    def process_phase6(self, incoming) -> dict:
-        """Phase 6 入口：复用 process_phase5 + 模板版本/共享指令。"""
-        from shared.errors import FeishuAgentError
-        if not hasattr(self, "planner"):
-            raise FeishuAgentError("Phase 6 subsystems not initialized")
-
-        text = incoming.text.strip()
+        # --- 模板版本回滚 / 共享（Phase 6） ---
         if text.startswith("/template-rollback "):
             parts = text.split()
             if len(parts) < 3:
@@ -463,7 +530,7 @@ class Orchestrator:
                 return {"status": "rollback_failed"}
             try:
                 vs.rollback(template_id=tid, version_number=ver,
-                             caller_open_id=incoming.sender_open_id)
+                            caller_open_id=incoming.sender_open_id)
                 self.im.reply(incoming.chat_id,
                               f"[成功] 已回滚模板 {tid} 到版本 {ver}")
                 return {"status": "rolled_back", "template_id": tid,
@@ -483,7 +550,7 @@ class Orchestrator:
                 return {"status": "share_failed"}
             try:
                 ss.share_to_chat(template_id=tid, chat_id=incoming.chat_id,
-                                  caller_open_id=incoming.sender_open_id)
+                                 caller_open_id=incoming.sender_open_id)
                 self.im.reply(incoming.chat_id,
                               f"[成功] 模板 {tid} 已共享到本群")
                 return {"status": "shared", "template_id": tid}
@@ -494,17 +561,7 @@ class Orchestrator:
                 self.im.reply(incoming.chat_id, f"[错误] {e}")
                 return {"status": "share_failed", "reason": str(e)}
 
-        # 普通消息：复用 process_phase5
-        return self.process_phase5(incoming)
-
-    # === Phase 7 ===
-    def process_phase7(self, incoming) -> dict:
-        """Phase 7 入口：复用 process_phase6 + 评论/搜索/公共模板/fork 指令。"""
-        from shared.errors import FeishuAgentError
-        if not hasattr(self, "planner"):
-            raise FeishuAgentError("Phase 7 subsystems not initialized")
-
-        text = incoming.text.strip()
+        # --- 评论查看 / 公共模板 / fork（Phase 7） ---
         if text.startswith("/comments "):
             parts = text.split()
             if len(parts) < 2:
@@ -529,7 +586,7 @@ class Orchestrator:
                 return {"status": "submit_failed"}
             try:
                 ps.submit_for_review(template_id=tid,
-                                       actor_open_id=incoming.sender_open_id)
+                                     actor_open_id=incoming.sender_open_id)
                 self.im.reply(incoming.chat_id, f"[成功] 模板 {tid} 已提交公共审核")
                 return {"status": "submitted", "template_id": tid}
             except PermissionError:
@@ -561,18 +618,7 @@ class Orchestrator:
                 self.im.reply(incoming.chat_id, f"[错误] {e}")
                 return {"status": "fork_failed", "reason": str(e)}
 
-        # 普通消息：复用 process_phase6
-        return self.process_phase6(incoming)
-
-    # === Phase 8 ===
-    def process_phase8(self, incoming) -> dict:
-        """Phase 8 入口：复用 process_phase7 + 评论同步/动作/diff/标签/收藏指令。"""
-        from shared.errors import FeishuAgentError
-        if not hasattr(self, "planner"):
-            raise FeishuAgentError("Phase 8 subsystems not initialized")
-
-        text = incoming.text.strip()
-
+        # --- 评论同步 / 动作应用 / diff / 标签 / 收藏（Phase 8） ---
         if text.startswith("/comments-sync "):
             doc_id = text.split(maxsplit=1)[1].strip()
             ss = getattr(self, "comment_sync_service", None)
@@ -594,7 +640,7 @@ class Orchestrator:
                 self.im.reply(incoming.chat_id, "[错误] comment_action_service 未配置")
                 return {"status": "apply_failed"}
             out = ca.apply(doc_id=doc_id,
-                            caller_open_id=incoming.sender_open_id)
+                           caller_open_id=incoming.sender_open_id)
             self.im.reply(
                 incoming.chat_id,
                 f"[结果] 已应用 {out['applied']} 条，跳过 {out['skipped']} 条"
@@ -655,7 +701,7 @@ class Orchestrator:
                 return {"status": "favorite_failed"}
             try:
                 fs.favorite(template_id=tid,
-                             caller_open_id=incoming.sender_open_id)
+                            caller_open_id=incoming.sender_open_id)
                 self.im.reply(incoming.chat_id, f"[成功] 已收藏模板 {tid}")
                 return {"status": "favorited", "template_id": tid}
             except ValueError as e:
@@ -673,18 +719,7 @@ class Orchestrator:
                           f"我的收藏: {', '.join(ids) or '(无)'}")
             return {"status": "favorites_listed", "templates": ids}
 
-        # 普通消息：复用 process_phase7
-        return self.process_phase7(incoming)
-
-    # === Phase 9 ===
-    def process_phase9(self, incoming) -> dict:
-        """Phase 9 入口：复用 process_phase8 + 融合检索指令。"""
-        from shared.errors import FeishuAgentError
-        if not hasattr(self, "planner"):
-            raise FeishuAgentError("Phase 9 subsystems not initialized")
-
-        text = incoming.text.strip()
-
+        # --- 融合检索（Phase 9） ---
         if text.startswith("/template-find"):
             parts = text.split()
             if len(parts) < 2:
@@ -705,5 +740,5 @@ class Orchestrator:
             self.im.reply(incoming.chat_id, us.render(results))
             return {"status": "find_rendered", "count": len(results)}
 
-        # 普通消息：复用 process_phase8
-        return self.process_phase8(incoming)
+        # 非本批指令：交回调用方走正常流程
+        return None
