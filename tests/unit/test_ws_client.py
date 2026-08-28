@@ -238,17 +238,24 @@ def test_build_runtime_comment_dual_channel_handles(_runtime_env):
 
 
 def test_comment_event_to_payload_extracts_fields():
-    """CustomizedEvent(dict) → 归一化 payload。"""
+    """CustomizedEvent(dict) → 归一化 payload（真机结构：字段在 notice_meta 内）。"""
     from unittest.mock import MagicMock
 
     ev = MagicMock()
     ev.event = {
-        "notice_type": "add_comment", "file_token": "doccnX",
-        "file_type": "docx", "comment_id": "c1",
-        "operator_id": {"open_id": "ou_teacher"},
+        "comment_id": "c1", "reply_id": "c1_r1", "is_mentioned": False,
+        "notice_meta": {
+            "file_token": "doccnX", "file_type": "docx",
+            "notice_type": "add_reply",
+            "from_user_id": {"open_id": "ou_teacher",
+                             "union_id": "on_x", "user_id": None},
+            "from_user_type": "user",
+            "to_user_id": {"open_id": "ou_bot"},
+        },
+        "visibility": "public",
     }
     p = comment_event_to_payload(ev)
-    assert p == {"notice_type": "add_comment", "file_token": "doccnX",
+    assert p == {"notice_type": "add_reply", "file_token": "doccnX",
                  "comment_id": "c1",
                  "operator_open_id": "ou_teacher"}
 

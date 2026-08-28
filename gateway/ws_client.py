@@ -60,12 +60,17 @@ def start_renew_scanner(rt: Runtime) -> threading.Thread | None:
 
 
 def comment_event_to_payload(ev: CustomizedEvent) -> dict:
-    """评论事件原始 dict → 归一化 payload（file_token/operator/comment_id）。"""
+    """评论事件原始 dict → 归一化 payload。
+
+    真机结构（2026-08-29 验证）：file_token/notice_type/from_user_id
+    在 notice_meta 内；comment_id/reply_id 在顶层。
+    """
     e: dict = dict(ev.event or {})
-    operator = e.get("operator_id") or {}
+    meta: dict = e.get("notice_meta") or {}
+    operator = meta.get("from_user_id") or {}
     return {
-        "notice_type": e.get("notice_type", ""),
-        "file_token": e.get("file_token", ""),
+        "notice_type": meta.get("notice_type", ""),
+        "file_token": meta.get("file_token", ""),
         "comment_id": e.get("comment_id", ""),
         "operator_open_id": operator.get("open_id", ""),
     }
@@ -194,6 +199,7 @@ def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
         svc = getattr(rt, "comment_event_service", None)
         if svc is None:
             return
+        logger.info("ws raw comment event: %s", getattr(ev, "event", None))
         payload = comment_event_to_payload(ev)
         result = svc.handle(file_token=payload["file_token"],
                             operator_open_id=payload["operator_open_id"])
