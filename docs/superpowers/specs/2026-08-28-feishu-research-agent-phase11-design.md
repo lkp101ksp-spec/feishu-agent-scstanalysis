@@ -233,8 +233,10 @@ ADR-0015 方案 A 的「Agent 不能回复评论」条款由本板块修订为�
 - **element.type 为 `text_run` 而非 `text`**（commit `5b441b3`）：真机列表返回 `content.elements[].type=="text_run"`，旧解析致全量正文为空、通知不触发；修复后兼容两种 type
 - **POST replies 响应 reply 对象直接在 `data` 顶层**（无 `reply` 包裹），`reply_comment` 返回值适配
 - bot info 响应无 data 包裹（Task 4 期真机发现，已记入 bot_info 注释）
+- **事件字段嵌在 `notice_meta` 内**（commit `444e72b`，2026-08-29 真机验证）：真机事件 file_token/notice_type/from_user_id 在 `notice_meta` 里、comment_id/reply_id 在顶层；旧顶层假设致 file_token 为空 → `ignored_unbound`。`comment_event_to_payload` 重写映射并留原始事件 INFO 日志
+- **独立 session 无 commit 数据丢失**（commit `310cc5f`，2026-08-29 真机发现）：repo 只 flush、提交责任在主链路管线，而 event_session/poll_session 无人收尾——事件触发的同步数据滞留未提交事务丢失（现象：handled 但库里查不到）。修复：CommentEventService / CommentAutoSyncWorker 自行 commit/rollback，runtime 注入 session
 
-### 14.3 真机验证（2026-08-28 23:45）
+### 14.3 真机验证（2026-08-28 23:45 轮询通道 / 2026-08-29 00:23 事件通道）
 
 | 验证点 | 结果 |
 |---|---|
@@ -243,10 +245,12 @@ ADR-0015 方案 A 的「Agent 不能回复评论」条款由本板块修订为�
 | /comment-apply | ✅ applied 1 / skipped 4，模板 tpl_test 升至 v1 |
 | 回执写回（ADR-0034） | ✅ 文档评论区出现 bot 回复「已按此评论完成修改：模板 tpl_test 已更新至版本 1。」 |
 | 评论打标 | ✅ processed_at 置位 |
-| 事件通道（drive.notice.comment_add_v1） | ⏳ 待后台订阅配置后验证（轮询兜底已覆盖） |
+| 事件接收（后台订阅生效后） | ✅ 00:07:32 首个事件到达，字段映射修复后 500ms 处理完 |
+| 事件通道数据落库（commit 修复后） | ✅ 即时入库，bug 期间丢失的 3 条评论自动补齐 |
+| 事件通道秒级 IM 通知 | ✅ `/revise` 指令评论 ≤5s 私聊收到待处理通知 |
 
 ### 14.4 遗留与后续
 
-1. **事件订阅未配置**：后台「事件与回调 → 事件配置（长连接）」添加 `drive.notice.comment_add_v1` 并发布版本后，重启无需（dispatcher 已注册），发评论验证 ≤5s 通知
-2. **群消息权限**：机器人在群内默认只收 @消息；如需群聊使用，申请「获取群组中所有消息」权限（私聊全功能不受影响）
-3. 联调过程再现「双 ws_client 进程抢事件」坑（系统 Python 与 venv 同时起）：已按 §6 排障清理，惯例为清旧再单实例启动
+1. **群消息权限**：机器人在群内默认只收 @消息；如需群聊使用，申请「获取群组中所有消息」权限（私聊全功能不受影响）
+2. 联调过程再现「双 ws_client 进程抢事件」坑（系统 Python 与 venv 同时起）：已按 §6 排障清理，惯例为清旧再单实例启动
+3. 评论事件 `notify_new_pending` 只推含指令的评论（防噪音设计）；如需全量评论提醒可后续加开关
