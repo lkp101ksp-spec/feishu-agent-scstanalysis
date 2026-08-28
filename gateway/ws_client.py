@@ -22,6 +22,7 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
     P2CardActionTrigger,
     P2CardActionTriggerResponse,
 )
+from lark_oapi.event.custom import CustomizedEvent
 
 from gateway.app import process_card_payload, run_im_pipeline
 from gateway.normalizer import NormalizeError
@@ -55,6 +56,44 @@ def start_renew_scanner(rt: Runtime) -> threading.Thread | None:
     t.start()
     logger.info("renew card scanner started (interval=%ss, threshold=%ss)",
                 interval, getattr(svc, "renew_threshold_sec", "?"))
+    return t
+
+
+def comment_event_to_payload(ev: CustomizedEvent) -> dict:
+    """评论事件原始 dict → 归一化 payload（file_token/operator/comment_id）。"""
+    e: dict = dict(ev.event or {})
+    operator = e.get("operator_id") or {}
+    return {
+        "notice_type": e.get("notice_type", ""),
+        "file_token": e.get("file_token", ""),
+        "comment_id": e.get("comment_id", ""),
+        "operator_open_id": operator.get("open_id", ""),
+    }
+
+
+def run_auto_sync_tick(worker) -> dict:
+    """单轮评论轮询兜底（线程内无事件循环，同步直调 tick）。"""
+    return worker.tick()
+
+
+def start_auto_sync_scanner(worker, interval_sec: int = 300):
+    """启动评论轮询兜底守护线程（ws 模式下 FastAPI startup 钩子不触发）。"""
+    if worker is None:
+        return None
+    # interval_sec=0 允许（测试即时触发）；仅缺省时用 300s
+    interval = 300 if interval_sec is None else interval_sec
+
+    def loop() -> None:
+        while True:
+            time.sleep(interval)
+            try:
+                run_auto_sync_tick(worker)
+            except Exception:
+                logger.exception("auto comment sync tick failed")
+
+    t = threading.Thread(target=loop, daemon=True, name="comment-auto-sync")
+    t.start()
+    logger.info("auto comment sync scanner started (interval=%ss)", interval)
     return t
 
 
@@ -150,10 +189,22 @@ def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
             logger.exception("ws card unexpected error")
             return None
 
+    def on_doc_comment(ev: CustomizedEvent) -> None:
+        """文档评论事件：防死循环过滤 + 绑定校验 + sync/notify（ADR-0033）。"""
+        svc = getattr(rt, "comment_event_service", None)
+        if svc is None:
+            return
+        payload = comment_event_to_payload(ev)
+        result = svc.handle(file_token=payload["file_token"],
+                            operator_open_id=payload["operator_open_id"])
+        logger.info("ws comment event handled: %s", result)
+
     return (
         lark.EventDispatcherHandler.builder("", "")
         .register_p2_im_message_receive_v1(on_im)
         .register_p2_card_action_trigger(on_card)
+        .register_p2_customized_event("drive.notice.comment_add_v1",
+                                      on_doc_comment)
         .build()
     )
 
@@ -166,6 +217,10 @@ def main() -> None:
     )
     rt = build_runtime()
     start_renew_scanner(rt)
+    start_auto_sync_scanner(
+        rt.auto_sync_worker,
+        interval_sec=rt.settings.comment_sync_interval_sec,
+    )
     client = lark.ws.Client(
         rt.settings.feishu.app_id,
         rt.settings.feishu.app_secret,

@@ -18,8 +18,11 @@ from gateway.ws_client import (
     build_dispatcher,
     card_event_to_payload,
     card_result_to_response,
+    comment_event_to_payload,
     im_event_to_payload,
+    run_auto_sync_tick,
     run_renew_scan_once,
+    start_auto_sync_scanner,
     start_renew_scanner,
 )
 
@@ -229,3 +232,48 @@ def test_build_runtime_comment_dual_channel_handles(_runtime_env):
     assert rt.app.state.ctx.auto_sync_worker is not None
     assert rt.comment_event_service is not None
     assert rt.auto_sync_worker is not None
+
+
+# --- Phase 11：评论事件接线 + 轮询兜底守护线程（ADR-0033） ---
+
+
+def test_comment_event_to_payload_extracts_fields():
+    """CustomizedEvent(dict) → 归一化 payload。"""
+    from unittest.mock import MagicMock
+
+    ev = MagicMock()
+    ev.event = {
+        "notice_type": "add_comment", "file_token": "doccnX",
+        "file_type": "docx", "comment_id": "c1",
+        "operator_id": {"open_id": "ou_teacher"},
+    }
+    p = comment_event_to_payload(ev)
+    assert p == {"notice_type": "add_comment", "file_token": "doccnX",
+                 "comment_id": "c1",
+                 "operator_open_id": "ou_teacher"}
+
+
+def test_run_auto_sync_tick_once():
+    """tick_once 调 worker.tick 一次并返回结果。"""
+    from unittest.mock import MagicMock
+
+    worker = MagicMock()
+    worker.tick.return_value = {"synced": 1}
+    assert run_auto_sync_tick(worker) == {"synced": 1}
+    worker.tick.assert_called_once()
+
+
+def test_start_auto_sync_scanner_daemon_thread():
+    """扫描线程 daemon + 周期调用 tick；worker None 时 noop 返回 None。"""
+    import time as _t
+    from unittest.mock import MagicMock
+
+    worker = MagicMock()
+    calls = []
+    worker.tick.side_effect = lambda: (calls.append(1),
+                                       _t.sleep(0.05))[0]
+    t = start_auto_sync_scanner(worker, interval_sec=0)
+    assert t is not None and t.daemon is True
+    _t.sleep(0.2)
+    worker.tick.assert_called()
+    assert start_auto_sync_scanner(None) is None
