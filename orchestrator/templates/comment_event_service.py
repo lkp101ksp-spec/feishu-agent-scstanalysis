@@ -16,11 +16,13 @@ class CommentEventService:
     """处理 drive.notice.comment_add_v1 事件的业务链。"""
 
     def __init__(self, *, session_repo, sync_service, notify_service,
-                 bot_open_id: str | None) -> None:
+                 bot_open_id: str | None, session=None) -> None:
         self.session_repo = session_repo
         self.sync_service = sync_service
         self.notify_service = notify_service
         self.bot_open_id = bot_open_id
+        # 独立 event_session：业务完成后由本服务负责 commit（repo 只 flush）
+        self.session = session
 
     def handle(self, *, file_token: str, operator_open_id: str) -> dict:
         """处理一条评论事件；异常吃掉返回 error（保长连接）。"""
@@ -29,6 +31,11 @@ class CommentEventService:
                                 operator_open_id=operator_open_id)
         except Exception:
             logger.exception("comment event handling failed: %s", file_token)
+            if self.session is not None:
+                try:
+                    self.session.rollback()
+                except Exception:
+                    logger.warning("event session rollback failed")
             return {"status": "error", "file_token": file_token}
 
     def _handle(self, *, file_token: str, operator_open_id: str) -> dict:
@@ -62,4 +69,6 @@ class CommentEventService:
         out = self.notify_service.notify_new_pending(
             doc_id=file_token, owner_open_id=hit.owner_open_id,
             chat_id=hit.source_chat_id)
+        if self.session is not None:
+            self.session.commit()
         return {"status": "handled", "file_token": file_token, **out}

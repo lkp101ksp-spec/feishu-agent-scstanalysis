@@ -15,11 +15,13 @@ class CommentAutoSyncWorker:
     """扫描活跃绑定 doc → sync → 推送检查（单 doc 异常隔离）。"""
 
     def __init__(self, *, session_repo, sync_service, notify_service,
-                 interval_sec: int = 300) -> None:
+                 interval_sec: int = 300, session=None) -> None:
         self.session_repo = session_repo
         self.sync_service = sync_service
         self.notify_service = notify_service
         self.interval_sec = interval_sec
+        # 独立轮询 session：每轮成功后由本 worker 负责 commit（repo 只 flush）
+        self.session = session
         self._task: asyncio.Task | None = None
 
     def _now(self) -> datetime:
@@ -56,6 +58,16 @@ class CommentAutoSyncWorker:
                 notified_total += out.get("notified", 0)
             except Exception:
                 logger.exception("auto sync failed for doc %s", doc_id)
+        # 轮询 session 收尾：成功数据提交，失败回滚（repo 只 flush）
+        if self.session is not None:
+            try:
+                self.session.commit()
+            except Exception:
+                logger.exception("poll session commit failed")
+                try:
+                    self.session.rollback()
+                except Exception:
+                    logger.warning("poll session rollback failed")
         return {"synced": synced, "notified_total": notified_total}
 
     async def _run_loop(self) -> None:

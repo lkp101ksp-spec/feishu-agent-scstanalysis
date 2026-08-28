@@ -263,6 +263,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         notify_service=CommentNotifyService(
             CommentRepo(event_session), CommentNotifyRepo(event_session), im),
         bot_open_id=get_bot_open_id(sdk),
+        session=event_session,
     )
 
     # --- 轮询兜底 worker（独立 session：ws_client 守护线程隔离，ADR-0033） ---
@@ -278,6 +279,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         notify_service=CommentNotifyService(
             CommentRepo(poll_session), CommentNotifyRepo(poll_session), im),
         interval_sec=settings.comment_sync_interval_sec,
+        session=poll_session,
     )
     return Runtime(
         app=app, orchestrator=orch, settings=settings,

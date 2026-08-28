@@ -78,6 +78,23 @@ def test_handle_sync_exception_isolated():
     assert out["status"] == "error"
 
 
+def test_handle_commits_session_on_success_and_rolls_back_on_error():
+    """独立 event_session：成功后 commit，异常时 rollback（repo 只 flush）。"""
+    session = MagicMock()
+    svc, sync, notify = _svc()
+    svc.session = session
+    svc.handle(file_token="doccnX", operator_open_id="ou_t")
+    session.commit.assert_called_once()
+
+    session2 = MagicMock()
+    svc2, sync2, _ = _svc()
+    svc2.session = session2
+    sync2.sync.side_effect = RuntimeError("boom")
+    svc2.handle(file_token="doccnX", operator_open_id="ou_t")
+    session2.rollback.assert_called_once()
+    session2.commit.assert_not_called()
+
+
 # --- bot_info：原始请求模式获取 bot open_id（缓存 + 失败 None） ---
 
 
@@ -94,7 +111,7 @@ def test_get_bot_open_id_caches_and_falls_back(monkeypatch):
     bi._CACHE.clear()  # 隔离其他用例的缓存污染
     sdk = MagicMock()
     sdk.request.return_value = _fake_raw(
-        {"code": 0, "data": {"bot": {"open_id": "ou_bot_9"}}})
+        {"code": 0, "bot": {"open_id": "ou_bot_9"}})
     assert bi.get_bot_open_id(sdk) == "ou_bot_9"
     assert bi.get_bot_open_id(sdk) == "ou_bot_9"  # 缓存：只调一次 API
     sdk.request.assert_called_once()
