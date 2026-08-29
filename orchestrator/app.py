@@ -61,7 +61,8 @@ class Orchestrator:
         self.doc_write_service = doc_write_service
         self.im = im_adapter
 
-        # Phase 2 子系统（可选注入；None 时 process_phase2 不可用）
+        # Phase 2 子系统（可选注入；settings+doc_adapter 具备即初始化，
+        # base/drive 缺失时对应工具跳过注册——Phase 12 板块②）
         self.settings = settings
         self.doc_adapter = doc_adapter
         self.base_adapter = base_adapter
@@ -69,8 +70,7 @@ class Orchestrator:
         self.audit_repo = audit_repo
         self.artifact_repo = artifact_repo
 
-        if settings is not None and doc_adapter is not None and base_adapter is not None \
-                and drive_adapter is not None:
+        if settings is not None and doc_adapter is not None:
             self.registry = ToolRegistry()
             from orchestrator.tools.builtin.l0_read import register_l0_read
             from orchestrator.tools.builtin.l1_compute import register_l1_compute
@@ -148,6 +148,15 @@ class Orchestrator:
         market_result = self._try_market_commands(incoming)
         if market_result is not None:
             return market_result
+
+        # 1.65 /research 指令：研究任务后台执行（Phase 12 板块①⑤）
+        stripped = incoming.text.strip()
+        if stripped == "/research" or stripped.startswith("/research "):
+            runner = getattr(self, "research_runner", None)
+            if runner is None:
+                self.im.reply(incoming.chat_id, "[错误] 研究引擎未配置")
+                return {"status": "research_unavailable"}
+            return runner.handle(incoming)
 
         # 1.7 群聊门控：群聊只响应指令（/ 开头、#写到），闲聊静默忽略防刷屏；
         # 私聊（p2p）行为不变。指令此前已全部路由，走到这里的群消息即闲聊。
@@ -296,8 +305,12 @@ class Orchestrator:
             intent="phase2_plan",
         )
 
-        available_tools = [t.name for t in self.registry.list()]
-        tools_schema = self.registry.to_openai_functions(include_L2=False)
+        # 只暴露 Planner 可见工具（stub 隐藏，Phase 12 板块④）
+        visible = self.registry.list(planner_visible=True)
+        available_tools = [t.name for t in visible]
+        tools_schema = [
+            t.to_openai_function() for t in visible if t.risk_level != "L2_side_effect"
+        ]
         try:
             plan = self.planner.plan(
                 message=incoming.text,

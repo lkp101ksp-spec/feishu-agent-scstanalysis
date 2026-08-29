@@ -70,6 +70,9 @@ class Settings:
     # 全量评论提醒开关：False 只推含指令的评论（防噪音默认）；
     # True 时所有新评论都推 IM 通知
     comment_notify_all: bool = False
+    # === Phase 12: 研究任务执行 ===
+    # /research 后台执行整体 wall-clock 上限（秒）
+    research_task_timeout_sec: int = 300
 
 
 def _load_yaml(path: str) -> dict:
@@ -125,4 +128,9 @@ def load_settings() -> Settings:
         # 全量评论提醒开关：COMMENT_NOTIFY_ALL=1/true 开启（默认关）
         comment_notify_all=os.environ.get("COMMENT_NOTIFY_ALL", "0").lower()
         in ("1", "true", "yes"),
+        # Phase 12：研究任务执行配置
+        research_task_timeout_sec=int(
+            os.environ.get("RESEARCH_TASK_TIMEOUT_SEC", "300")),
+        max_concurrent_nodes=int(
+            os.environ.get("MAX_CONCURRENT_NODES", "4")),
     )

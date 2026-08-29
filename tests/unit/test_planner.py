@@ -40,6 +40,42 @@ def test_planner_plan_minimal():
     assert plan.entry_node_ids == ["n1"]
 
 
+def test_planner_prompt_inlines_tools_schema():
+    """Phase 12 板块③：schema 内联进 DAG prompt（tools 形参不进请求体）。"""
+    fake = FakeLLMRouter(
+        [
+            '{"intent": "summarize"}',
+            """{"nodes": [
+                {"node_id": "n1", "kind": "tool", "tool_name": "read_doc",
+                 "inputs": {"doc_id": "d"}, "depends_on": []}
+              ],
+              "entry_node_ids": ["n1"]
+            }""",
+        ]
+    )
+    schema = [{
+        "type": "function",
+        "function": {
+            "name": "read_doc",
+            "description": "读取飞书 doc 块树",
+            "parameters": {"type": "object",
+                           "properties": {"doc_id": {"type": "string"}}},
+        },
+    }]
+    Planner(llm_router=fake).plan(
+        message="读文档", session_id="s", task_id="t",
+        available_tools=["read_doc"], tools_schema=schema,
+    )
+    dag_call = next(c for c in fake.calls if c[0] == "dag_builder")
+    prompt = dag_call[1]
+    # schema 关键内容进 prompt
+    assert "read_doc" in prompt
+    assert "doc_id" in prompt
+    assert "parameters" in prompt
+    # 只输出 JSON 的约束
+    assert "只输出一个 JSON" in prompt
+
+
 def test_planner_plan_validates_dag():
     fake = FakeLLMRouter(
         [

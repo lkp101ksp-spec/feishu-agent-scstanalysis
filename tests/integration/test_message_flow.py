@@ -415,3 +415,62 @@ def test_process_p2p_chat_not_gated(orch):
 
     assert result["status"] == "success"
     orch.llm.chat.assert_called_once()
+
+
+def test_process_research_routes_to_runner(orch):
+    """Phase 12 板块①：/research 有参 → runner.handle 受理。"""
+    from unittest.mock import MagicMock
+
+    runner = MagicMock()
+    runner.handle.return_value = {"status": "research_accepted", "task_text": "x"}
+    orch.research_runner = runner
+
+    result = orch.process(IncomingMessage(
+        message_id="om_r1", chat_id="oc_1", sender_open_id="ou_1",
+        text="/research 总结文档要点",
+    ))
+    assert result["status"] == "research_accepted"
+    runner.handle.assert_called_once()
+    orch.llm.chat.assert_not_called()
+
+
+def test_process_research_no_args_usage(orch):
+    """Phase 12 板块①：无参 /research → runner 回用法提示。"""
+    from unittest.mock import MagicMock
+
+    runner = MagicMock()
+    runner.handle.return_value = {"status": "research_usage"}
+    orch.research_runner = runner
+
+    result = orch.process(IncomingMessage(
+        message_id="om_r2", chat_id="oc_1", sender_open_id="ou_1",
+        text="/research",
+    ))
+    assert result == {"status": "research_usage"}
+    runner.handle.assert_called_once()
+
+
+def test_process_research_without_runner_replies_error(orch):
+    """Runner 未注入：回错误提示而非抛错。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_r3", chat_id="oc_1", sender_open_id="ou_1",
+        text="/research 分析",
+    ))
+    assert result == {"status": "research_unavailable"}
+    assert "未配置" in orch.im.reply.call_args.args[1]
+
+
+def test_process_research_in_group_allowed(orch):
+    """群聊门控：/research 是指令，群内可用。"""
+    from unittest.mock import MagicMock
+
+    runner = MagicMock()
+    runner.handle.return_value = {"status": "research_accepted", "task_text": "x"}
+    orch.research_runner = runner
+
+    result = orch.process(IncomingMessage(
+        message_id="om_r4", chat_id="oc_group", sender_open_id="ou_1",
+        text="/research 群内研究任务", chat_type="group",
+    ))
+    assert result["status"] == "research_accepted"
+    runner.handle.assert_called_once()

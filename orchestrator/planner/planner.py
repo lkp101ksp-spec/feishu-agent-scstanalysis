@@ -54,7 +54,7 @@ class Planner:
         last_err = None
         for attempt in range(self.max_retries + 1):
             dag_resp = self.llm_router.call(
-                role=self.role_dag, prompt=prompt, tools=tools_schema
+                role=self.role_dag, prompt=prompt
             )
             try:
                 plan = self._build_plan(
@@ -83,17 +83,25 @@ class Planner:
         available_tools: list,
         tools_schema: list,
     ) -> str:
+        """构建 DAG 生成 prompt；工具 schema 全量内联（Phase 12 板块③）。
+
+        LLMRouter 的 tools 形参不进请求体，schema 必须内联进 prompt 才能到
+        模型侧——否则模型只看到工具名，inputs 字段只能靠猜。
+        """
         tool_names = ", ".join(available_tools)
         return (
             f"用户消息：{message}\n"
             f"intent：{intent}\n"
             f"可用工具：{tool_names}\n\n"
+            f"工具契约（inputs 键必须严格取自对应工具的 parameters.properties，"
+            f"不得发明字段）：\n{json.dumps(tools_schema, ensure_ascii=False)}\n\n"
             "你可以生成 tool/branch/while/for 节点。"
             "branch.condition_prompt 是自然语言条件；true_branch/false_branch 是嵌套 DAGNode 数组。"
             "while.while_condition_prompt 是循环条件；body 是嵌套 DAGNode 数组；max_iterations 默认10。"
             "for.iterate_over 是上游 outputs 字段（<node_id>.<field>）；body 嵌套；max_iterations 默认100。"
             "节点 inputs 用 '<upstream_node_id>.<field>' 引用上游输出。"
             "entry_node_ids 必须是 depends_on=[] 的节点。"
+            "只输出一个 JSON 对象（含 nodes 与 entry_node_ids），不要输出其他文字。"
         )
 
     def _build_plan(self, resp, *, task_id: str, session_id: str) -> DAGPlan:

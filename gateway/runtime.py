@@ -34,6 +34,7 @@ from orchestrator.approval_service import ApprovalService
 from orchestrator.bind_doc_service import BindDocService
 from orchestrator.doc_write_service import DocWriteService
 from orchestrator.llm_router import LLMRouter
+from orchestrator.research_runner import ResearchRunner
 from orchestrator.session_service import SessionService
 from orchestrator.task_service import TaskService
 from orchestrator.templates.auto_sync_worker import CommentAutoSyncWorker
@@ -283,6 +284,13 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
             notify_all=settings.comment_notify_all),
         interval_sec=settings.comment_sync_interval_sec,
         session=poll_session,
+    )
+    # --- ResearchRunner（Phase 12：/research 后台线程，独立 session 惰性新建） ---
+    research_session_factory = sessionmaker(
+        bind=get_engine(), expire_on_commit=False, autoflush=False,
+    )
+    orch.research_runner = ResearchRunner(
+        orchestrator=orch, session_factory=research_session_factory,
     )
     return Runtime(
         app=app, orchestrator=orch, settings=settings,

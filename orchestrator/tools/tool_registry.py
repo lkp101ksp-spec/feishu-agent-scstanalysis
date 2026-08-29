@@ -27,6 +27,9 @@ class ToolSpec(BaseModel):
     max_retries: int = 1
     tool_version: str = "1.0.0"
     approval_card_template: Optional[str] = None
+    # Planner 可见性：False 时不出现在 DAG 规划 schema（stub 工具防误用，
+    # Phase 12 板块④）；热加载/直调不受影响
+    visible_to_planner: bool = True
 
     class Config:
         arbitrary_types_allowed = True
@@ -55,14 +58,25 @@ class ToolRegistry:
             raise ToolNotFoundError(f"tool {name!r} not registered")
         return self._tools[name]
 
-    def list(self, risk_level: Optional[RiskLevel] = None) -> list[ToolSpec]:
+    def list(
+        self,
+        risk_level: Optional[RiskLevel] = None,
+        planner_visible: Optional[bool] = None,
+    ) -> list[ToolSpec]:
+        """列出工具；planner_visible 非 None 时按可见性过滤。"""
         items = list(self._tools.values())
         if risk_level is not None:
             items = [t for t in items if t.risk_level == risk_level]
+        if planner_visible is not None:
+            items = [t for t in items if t.visible_to_planner == planner_visible]
         return items
 
-    def to_openai_functions(self, include_L2: bool = True) -> list[dict]:
+    def to_openai_functions(
+        self, include_L2: bool = True, planner_visible: Optional[bool] = None
+    ) -> list[dict]:
         items = self._tools.values()
         if not include_L2:
             items = [t for t in items if t.risk_level != "L2_side_effect"]
+        if planner_visible is not None:
+            items = [t for t in items if t.visible_to_planner == planner_visible]
         return [t.to_openai_function() for t in items]
