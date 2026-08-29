@@ -67,6 +67,9 @@ class Settings:
     blast_max_hits_default: int = 5
     # === Phase 9: 评论自动同步 ===
     comment_sync_interval_sec: int = 300
+    # 全量评论提醒开关：False 只推含指令的评论（防噪音默认）；
+    # True 时所有新评论都推 IM 通知
+    comment_notify_all: bool = False
 
 
 def _load_yaml(path: str) -> dict:
@@ -119,4 +122,7 @@ def load_settings() -> Settings:
             os.environ.get("BIND_DOC_RENEW_THRESHOLD_SEC", "300")),
         bind_doc_renew_card_interval_sec=int(
             os.environ.get("BIND_DOC_RENEW_CARD_INTERVAL_SEC", "60")),
+        # 全量评论提醒开关：COMMENT_NOTIFY_ALL=1/true 开启（默认关）
+        comment_notify_all=os.environ.get("COMMENT_NOTIFY_ALL", "0").lower()
+        in ("1", "true", "yes"),
     )

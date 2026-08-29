@@ -198,6 +198,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     )
     notify = CommentNotifyService(
         comment_repo, CommentNotifyRepo(session), im,
+        notify_all=settings.comment_notify_all,
     )
     auto_sync_worker_startup = CommentAutoSyncWorker(
         session_repo=SessionRepo(session),
@@ -261,7 +262,8 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
                           rate_limiter=RateLimiter(rate=3.0, per_sec=1.0)),
             CommentRepo(event_session)),
         notify_service=CommentNotifyService(
-            CommentRepo(event_session), CommentNotifyRepo(event_session), im),
+            CommentRepo(event_session), CommentNotifyRepo(event_session), im,
+            notify_all=settings.comment_notify_all),
         bot_open_id=get_bot_open_id(sdk),
         session=event_session,
     )
@@ -277,7 +279,8 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
                           rate_limiter=RateLimiter(rate=3.0, per_sec=1.0)),
             CommentRepo(poll_session)),
         notify_service=CommentNotifyService(
-            CommentRepo(poll_session), CommentNotifyRepo(poll_session), im),
+            CommentRepo(poll_session), CommentNotifyRepo(poll_session), im,
+            notify_all=settings.comment_notify_all),
         interval_sec=settings.comment_sync_interval_sec,
         session=poll_session,
     )
