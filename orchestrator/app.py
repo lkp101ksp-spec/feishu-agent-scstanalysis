@@ -149,6 +149,14 @@ class Orchestrator:
         if market_result is not None:
             return market_result
 
+        # 1.7 群聊门控：群聊只响应指令（/ 开头、#写到），闲聊静默忽略防刷屏；
+        # 私聊（p2p）行为不变。指令此前已全部路由，走到这里的群消息即闲聊。
+        if getattr(incoming, "chat_type", "") == "group" and not (
+                incoming.is_bind_doc_cmd
+                or incoming.text.strip().startswith("/")
+                or incoming.write_anchor):
+            return {"status": "skipped", "reason": "group_non_command"}
+
         # 2. 普通消息：创建 session + task
         session_id = self.session_service.get_or_create(
             owner_open_id=incoming.sender_open_id,

@@ -9,7 +9,8 @@ from gateway.normalizer import (
 )
 
 
-def _payload(text: str, msg_type: str = "text", mentions: list | None = None) -> dict:
+def _payload(text: str, msg_type: str = "text", mentions: list | None = None,
+             chat_type: str | None = None) -> dict:
     """构造一个最小可用的 im.message.receive_v1 payload。"""
     content = '{"text": "%s"}' % text.replace('"', '\\"')
     msg: dict = {
@@ -20,6 +21,8 @@ def _payload(text: str, msg_type: str = "text", mentions: list | None = None) ->
     }
     if mentions is not None:
         msg["mentions"] = mentions
+    if chat_type is not None:
+        msg["chat_type"] = chat_type
     return {
         "event": {
             "sender": {"sender_id": {"open_id": "ou_xxx"}},
@@ -36,6 +39,13 @@ def test_normalize_minimal_text_message():
     assert msg.text == "hello"
     assert msg.is_bind_doc_cmd is False
     assert msg.bind_doc_id is None
+
+
+def test_normalize_extracts_chat_type():
+    """chat_type 透传：group/p2p 正常提取，缺失时为空串。"""
+    assert normalize_im_event(_payload("hi", chat_type="group")).chat_type == "group"
+    assert normalize_im_event(_payload("hi", chat_type="p2p")).chat_type == "p2p"
+    assert normalize_im_event(_payload("hi")).chat_type == ""
 
 
 def test_parse_bind_doc_cmd_valid():

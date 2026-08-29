@@ -11,6 +11,8 @@ class IncomingMessage(BaseModel):
     sender_open_id: str
     text: str
     app_id: Optional[str] = None
+    # 会话类型：p2p 私聊 / group 群聊（ws_client 与 webhook 均透传）
+    chat_type: str = ""
     is_bind_doc_cmd: bool = False
     bind_doc_id: Optional[str] = None
     bind_anchor: Optional[str] = None

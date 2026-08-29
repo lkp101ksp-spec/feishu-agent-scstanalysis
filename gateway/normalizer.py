@@ -125,6 +125,7 @@ def normalize_im_event(payload: dict) -> IncomingMessage:
         chat_id=chat_id,
         sender_open_id=sender_open_id,
         text=body,
+        chat_type=message.get("chat_type", "") or "",
         is_bind_doc_cmd=is_bind_cmd,
         bind_doc_id=doc_id,
         bind_anchor=anchor,

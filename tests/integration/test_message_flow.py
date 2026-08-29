@@ -367,3 +367,51 @@ def test_process_template_tag_routes(orch):
     tag_svc.attach.assert_called_once_with(
         template_id="tpl_a", tag="范文模板", caller_open_id="ou_1")
     orch.llm.chat.assert_not_called()
+
+
+def test_process_group_non_command_silently_skipped(orch):
+    """群聊门控：群内闲聊静默忽略——不建 task、不调 LLM、不回 IM。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_g1", chat_id="oc_group", sender_open_id="ou_1",
+        text="今天天气不错", chat_type="group",
+    ))
+
+    assert result == {"status": "skipped", "reason": "group_non_command"}
+    orch.llm.chat.assert_not_called()
+    orch.im.reply.assert_not_called()
+
+
+def test_process_group_command_still_handled(orch):
+    """群聊门控：群内指令（/ 开头）不受门控影响，照常处理。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_g2", chat_id="oc_group", sender_open_id="ou_1",
+        text="/bind-doc doccnABC123",
+        is_bind_doc_cmd=True, bind_doc_id="doccnABC123", chat_type="group",
+    ))
+
+    assert result["status"] == "bind_doc_success"
+    orch.im.reply.assert_called_once()
+
+
+def test_process_group_write_to_not_gated(orch):
+    """群聊门控：#写到 是指令性消息，不走门控，正常进 LLM + 回复。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_g3", chat_id="oc_group", sender_open_id="ou_1",
+        text="帮我记录今天的分析结论", write_anchor="1 测试",
+        chat_type="group",
+    ))
+
+    assert result["status"] == "success"
+    orch.llm.chat.assert_called_once()
+    orch.im.reply.assert_called_once()
+
+
+def test_process_p2p_chat_not_gated(orch):
+    """群聊门控：私聊（p2p）闲聊行为不变，照常走 LLM 回复。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_p2p", chat_id="oc_1", sender_open_id="ou_1",
+        text="随便聊聊", chat_type="p2p",
+    ))
+
+    assert result["status"] == "success"
+    orch.llm.chat.assert_called_once()
