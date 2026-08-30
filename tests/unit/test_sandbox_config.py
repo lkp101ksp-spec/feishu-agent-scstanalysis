@@ -48,3 +48,35 @@ def test_sandbox_docker_args_with_bridge():
     args = DockerSandbox._build_docker_args(cfg, container_name="c2")
     i = args.index("--network")
     assert args[i + 1] == "bridge"
+
+
+def test_sandbox_exec_input_text_passthrough():
+    """T2：input_text 经 stdin 透传且自动加 -i；无 input 不加 -i。"""
+    import subprocess
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return subprocess.CompletedProcess(
+            args=args, returncode=0, stdout="", stderr=""
+        )
+
+    cfg = DockerSandboxConfig(
+        image="x", cpu_limit=1.0, memory_limit="512m",
+        pids_limit=64, network_mode="none", workspace_path="/tmp/x",
+    )
+    sb = DockerSandbox(cfg, run_subprocess=fake_run)
+
+    sb.exec("c1", ["sh", "-c", "cat > /tmp/a.py"],
+            input_text="print(1)", timeout_sec=15)
+    args, kwargs = calls[0]
+    assert args[:3] == ["docker", "exec", "-i"]  # 有 stdin 才加 -i
+    assert kwargs["input"] == "print(1)"
+    assert kwargs["timeout"] == 15
+
+    sb.exec("c1", ["python", "/opt/run_user.py", "/tmp/a.py"], timeout_sec=60)
+    args, kwargs = calls[1]
+    assert args[:2] == ["docker", "exec"]
+    assert args[2] == "c1"  # 无 -i
+    assert kwargs["input"] is None

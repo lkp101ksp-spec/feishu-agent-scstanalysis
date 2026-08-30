@@ -55,6 +55,11 @@ class SandboxUnavailableError(FeishuAgentError):
     code = "SANDBOX_UNAVAILABLE"
 
 
+class SandboxTimeoutError(FeishuAgentError):
+    """沙箱内代码执行超时（exec 客户端超时，容器已重建）。"""
+    code = "SANDBOX_TIMEOUT"
+
+
 class FileTooLargeError(FeishuAgentError):
     """文件大小超过 500MB。"""
     code = "FILE_TOO_LARGE"

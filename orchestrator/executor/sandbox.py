@@ -78,11 +78,15 @@ class DockerSandbox:
                 ["docker", "rm", "-f", container_name], capture_output=True, timeout=timeout_sec
             )
 
-    def exec(self, container_name: str, cmd: list[str], *, timeout_sec: int = 60):
+    def exec(self, container_name: str, cmd: list[str], *, timeout_sec: int = 60,
+             input_text: str | None = None):
+        """docker exec；input_text 经 stdin 透传（T2：用户代码零转义写入）。"""
         return self._run(
-            ["docker", "exec", container_name] + cmd,
+            ["docker", "exec"] + (["-i"] if input_text is not None else [])
+            + [container_name] + cmd,
             capture_output=True,
             text=True,
+            input=input_text,
             timeout=timeout_sec,
         )
 

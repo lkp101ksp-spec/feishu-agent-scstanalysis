@@ -66,17 +66,51 @@ def test_l1_registers_four():
 
 
 def test_l1_planner_visibility_hides_stubs():
-    """Phase 12 板块④：stub 工具对 Planner 隐藏，真实现可见。"""
+    """Phase 13 T2：run_python 真沙箱已接入对 Planner 开放；run_blast 仍隐藏。"""
     reg = ToolRegistry()
     register_l1_compute(reg, llm_router=object(), kernel_manager=object())
     visible = {t.name for t in reg.list(planner_visible=True)}
-    assert visible == {"classify_intent", "summarize_text"}
+    assert visible == {"classify_intent", "run_python", "summarize_text"}
     schema_names = {
         f["function"]["name"]
         for f in reg.to_openai_functions(planner_visible=True)
     }
-    assert "run_python" not in schema_names
+    assert "run_python" in schema_names  # 描述声明输出字段（T2）
     assert "run_blast" not in schema_names
+
+
+def test_l1_run_python_real_sandbox():
+    """Phase 13 T2：run_python 走 KernelPool.exec_code 真执行。"""
+    from unittest.mock import MagicMock
+
+    pool = MagicMock()
+    pool.exec_code.return_value = {"stdout": "hi\n", "result": "42"}
+    reg = ToolRegistry()
+    register_l1_compute(reg, llm_router=object(), kernel_manager=pool)
+    out = reg.get("run_python").handler(code="print('hi')\n42")
+    pool.exec_code.assert_called_once_with("research", "print('hi')\n42", timeout_sec=60)
+    assert out == {"stdout": "hi\n", "result": "42"}
+
+
+def test_l1_run_python_timeout_maps_error_code():
+    from unittest.mock import MagicMock
+
+    from shared.errors import SandboxTimeoutError
+
+    pool = MagicMock()
+    pool.exec_code.side_effect = SandboxTimeoutError("exec exceeded 5s")
+    reg = ToolRegistry()
+    register_l1_compute(reg, llm_router=object(), kernel_manager=pool)
+    out = reg.get("run_python").handler(code="while True: pass")
+    assert out["error_code"] == "SANDBOX_TIMEOUT"
+
+
+def test_l1_run_python_unavailable_without_pool():
+    """kernel_pool 未注入（引擎未初始化）→ SANDBOX_UNAVAILABLE 不裸抛。"""
+    reg = ToolRegistry()
+    register_l1_compute(reg, llm_router=object(), kernel_manager=None)
+    out = reg.get("run_python").handler(code="print(1)")
+    assert out["error_code"] == "SANDBOX_UNAVAILABLE"
 
 
 def test_l1_summarize_real_llm():

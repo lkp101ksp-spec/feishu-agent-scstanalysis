@@ -1,8 +1,8 @@
 """L1 纯计算工具：summarize_text, classify_intent, run_python, run_blast。
 
-Phase 12 板块④：summarize_text/classify_intent 接真 LLM；
-run_python/run_blast 保持 stub 但 visible_to_planner=False（防 Planner 误选，
-真实沙箱执行属 T2/Phase 13）。
+Phase 12 板块④：summarize_text/classify_intent 接真 LLM。
+Phase 13 T2：run_python 接真沙箱（KernelPool.exec_code 容器内执行），
+对 Planner 开放；run_blast 维持 stub 隐藏（网络版 blast_search 已可用）。
 """
 from __future__ import annotations
 
@@ -21,7 +21,10 @@ _CLASSIFY_SYSTEM = (
 )
 
 
-def register_l1_compute(reg: ToolRegistry, *, llm_router, kernel_manager) -> None:
+def register_l1_compute(
+    reg: ToolRegistry, *, llm_router, kernel_manager,
+    exec_timeout_sec: int = 60,
+) -> None:
     reg.register(
         ToolSpec(
             name="summarize_text",
@@ -54,19 +57,27 @@ def register_l1_compute(reg: ToolRegistry, *, llm_router, kernel_manager) -> Non
     reg.register(
         ToolSpec(
             name="run_python",
-            description="在 Jupyter Kernel 中执行 Python 代码（尚未接入沙箱，暂不可规划）",
+            description=(
+                "在隔离沙箱执行 Python（numpy/pandas/matplotlib 可用，断网只读）。"
+                "输出 stdout=打印内容、result=末表达式值"
+                "（下游工具用 <node_id>.result 引用）"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string"},
+                    "code": {
+                        "type": "string",
+                        "description": "要执行的 Python 代码（顶层最后一个"
+                        "纯表达式的值会作为 result 返回）",
+                    },
                     "session_id": {"type": "string"},
                 },
                 "required": ["code"],
             },
             risk_level="L1_compute",
-            visible_to_planner=False,  # stub：真实执行属 T2/Phase 13
-            handler=lambda code, session_id: _run_python(
-                kernel_manager, code, session_id
+            visible_to_planner=True,  # T2 真实沙箱执行已接入
+            handler=_make_run_python_handler(
+                kernel_manager, exec_timeout_sec
             ),
         )
     )
@@ -137,8 +148,34 @@ def _make_classify_handler(llm_router):
     return handler
 
 
-def _run_python(kernel_manager, code, session_id):
-    return {"stdout": "", "result": None}
+def _make_run_python_handler(kernel_pool, exec_timeout_sec: int = 60):
+    """run_python handler 工厂：KernelPool.exec_code 容器内真实执行。
+
+    session_id 缺省 "research"——模型不规划 session_id，研究任务内
+    共享一个容器（池复用）。错误经 dict error_code 透传（ToolHandler
+    置节点 FAILED 并向下游传播 SKIPPED）。
+    """
+    from shared.errors import SandboxTimeoutError, SandboxUnavailableError
+
+    def handler(code, session_id=""):
+        if kernel_pool is None:
+            return {
+                "error_code": "SANDBOX_UNAVAILABLE",
+                "error_message": "kernel_pool 未注入（引擎未初始化）",
+            }
+        try:
+            return kernel_pool.exec_code(
+                session_id or "research", code,
+                timeout_sec=exec_timeout_sec,
+            )
+        except SandboxTimeoutError as e:
+            return {"error_code": "SANDBOX_TIMEOUT", "error_message": str(e)}
+        except SandboxUnavailableError as e:
+            return {
+                "error_code": "SANDBOX_UNAVAILABLE", "error_message": str(e),
+            }
+
+    return handler
 
 
 def _run_blast(sequence, program):

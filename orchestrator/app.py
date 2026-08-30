@@ -72,6 +72,13 @@ class Orchestrator:
 
         if settings is not None and doc_adapter is not None:
             self.registry = ToolRegistry()
+            # 沙箱先于工具注册创建（T2：run_python 注册时就要拿到 kernel_pool）
+            cfg = DockerSandboxConfig.from_settings(settings)
+            self.sandbox = DockerSandbox(cfg)
+            self.kernel_pool = KernelPool(
+                sandbox=self.sandbox,
+                idle_timeout_sec=settings.kernel_idle_timeout_sec,
+            )
             from orchestrator.tools.builtin.l0_read import register_l0_read
             from orchestrator.tools.builtin.l1_compute import register_l1_compute
             from orchestrator.tools.builtin.l2_side_effect import register_l2_side_effect
@@ -82,7 +89,9 @@ class Orchestrator:
                 drive_adapter=drive_adapter,
             )
             register_l1_compute(
-                self.registry, llm_router=llm_router, kernel_manager=None
+                self.registry, llm_router=llm_router,
+                kernel_manager=self.kernel_pool,  # T2：真沙箱注入
+                exec_timeout_sec=settings.kernel_exec_timeout_sec,
             )
             register_l2_side_effect(
                 self.registry,
@@ -99,12 +108,6 @@ class Orchestrator:
             )
             self.tool_handler = ToolHandler(
                 registry=self.registry, approval_service=self.approval
-            )
-            cfg = DockerSandboxConfig.from_settings(settings)
-            self.sandbox = DockerSandbox(cfg)
-            self.kernel_pool = KernelPool(
-                sandbox=self.sandbox,
-                idle_timeout_sec=settings.kernel_idle_timeout_sec,
             )
             self.executor = LocalExecutor(
                 kernel_pool=self.kernel_pool, tool_handler=self.tool_handler

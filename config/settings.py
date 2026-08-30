@@ -136,4 +136,15 @@ def load_settings() -> Settings:
         max_concurrent_nodes=int(
             os.environ.get("MAX_CONCURRENT_NODES", "4")),
         llm_timeout_sec=int(os.environ.get("LLM_TIMEOUT_SEC", "120")),
+        # Phase 13 T2：沙箱配置外化（DOCKER_*/KERNEL_*）
+        docker_image=os.environ.get(
+            "DOCKER_IMAGE", "feishu-research-agent/kernel:latest"),
+        docker_cpu_limit=float(os.environ.get("DOCKER_CPU_LIMIT", "1.0")),
+        docker_memory_limit=os.environ.get("DOCKER_MEMORY_LIMIT", "512m"),
+        docker_pids_limit=int(os.environ.get("DOCKER_PIDS_LIMIT", "64")),
+        docker_network_mode=os.environ.get("DOCKER_NETWORK_MODE", "none"),
+        kernel_idle_timeout_sec=int(
+            os.environ.get("KERNEL_IDLE_TIMEOUT_SEC", "1800")),
+        kernel_exec_timeout_sec=int(
+            os.environ.get("KERNEL_EXEC_TIMEOUT_SEC", "60")),
     )

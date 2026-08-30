@@ -1,17 +1,26 @@
-"""Jupyter Kernel 生命周期管理 + 按 session_id 复用。
+"""沙箱 Kernel 生命周期管理 + 按 session_id 复用 + 代码执行通道。
 
 - acquire(session_id) → 复用或新建 KernelHandle
 - release(session_id) → 显式销毁
 - idle_sweep() → 清理 idle 超时的 Kernel
+- exec_code(session_id, code) → 容器内真实执行 Python（Phase 13 T2）
 
-Phase 2：抽象沙箱接口（start/stop），真实 KernelManager 接入由 Phase 2.1 完成。
+T2 采用 docker exec 直执行（非 Jupyter TCP kernel，见 Phase 13 spec）：
+代码经 stdin 写入容器 tmpfs（零转义），镜像内固化 harness /opt/run_user.py
+解析出 stdout + 末表达式 repr。
 """
 from __future__ import annotations
 
+import subprocess
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
+
+from shared.errors import SandboxTimeoutError, SandboxUnavailableError
+
+# 与 sandbox/run_user.py 的 SENTINEL 保持一致
+_SENTINEL = "\n###RESULT###\n"
 
 
 @dataclass
@@ -67,3 +76,63 @@ class KernelPool:
 
     def get(self, session_id: str) -> Optional[KernelHandle]:
         return self._handles.get(session_id)
+
+    # === Phase 13 T2：容器内真实执行 ===
+
+    def exec_code(
+        self, session_id: str, code: str, timeout_sec: int = 60
+    ) -> dict:
+        """在 session 容器内执行 Python 代码。
+
+        返回 {"stdout", "result", "error_code"?, "error_message"?}：
+        - 基础设施故障抛 SandboxUnavailableError / SandboxTimeoutError
+        - 用户代码异常（退出码非 0）→ error_code=PY_RUNTIME_ERROR + stderr 尾部
+        - result 为末顶层表达式的 repr 字符串（无则为 "None"）
+        """
+        handle = self.acquire(session_id)
+        path = f"/tmp/r_{uuid.uuid4().hex}.py"
+        try:
+            write = self._sandbox.exec(
+                handle.container_name,
+                ["sh", "-c", f"cat > {path}"],
+                input_text=code, timeout_sec=15,
+            )
+            if write.returncode != 0:
+                raise SandboxUnavailableError(
+                    f"write code failed: rc={write.returncode} "
+                    f"stderr={(write.stderr or '')[:200]}"
+                )
+            proc = self._sandbox.exec(
+                handle.container_name,
+                ["python", "/opt/run_user.py", path],
+                timeout_sec=timeout_sec,
+            )
+        except subprocess.TimeoutExpired as e:
+            # 超时即重建容器，防容器内残留进程污染后续执行（spec §3.4）
+            self.release(session_id)
+            raise SandboxTimeoutError(
+                f"exec exceeded {timeout_sec}s: {e}"
+            ) from e
+        except SandboxUnavailableError:
+            self.release(session_id)
+            raise
+
+        stdout, result = self._split_sentinel(proc.stdout or "")
+        if proc.returncode != 0:
+            return {
+                "stdout": stdout,
+                "result": None,
+                "error_code": "PY_RUNTIME_ERROR",
+                "error_message": (proc.stderr or "")[-300:],
+            }
+        self.touch(session_id)
+        return {"stdout": stdout, "result": result}
+
+    @staticmethod
+    def _split_sentinel(stdout: str) -> tuple[str, str]:
+        """按 sentinel 切分 harness 输出：前段=用户 stdout，后段=result repr。"""
+        if _SENTINEL in stdout:
+            head, _, tail = stdout.partition(_SENTINEL)
+            return head, tail
+        # harness 未打 sentinel（异常退出等）——整段视为 stdout
+        return stdout, "None"
