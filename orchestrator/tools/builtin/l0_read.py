@@ -1,7 +1,35 @@
-"""L0 只读工具：read_doc, read_base, list_drive。"""
+"""L0 只读工具：read_doc, read_base, list_drive。
+
+Phase 12 真机修正（2026-08-30）：read_doc 原调 doc_adapter.read_blocks
+——该方法不存在（真实 API 是 get_block_tree），真机首节点必炸
+AttributeError。改为 get_block_tree 并附扁平化 text 输出（下游
+summarize_text 等 LLM 工具直接消费纯文本）。
+"""
 from __future__ import annotations
 
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
+
+
+def _flatten_blocks_text(blocks) -> str:
+    """递归提取块树里的全部文本 content（read_doc 的 text 输出）。
+
+    SDK/CLI 两种结构通吃：深度遍历 dict/list，收集字符串型 "content" 值。
+    """
+
+    def _walk(node, out: list) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "content" and isinstance(v, str) and v:
+                    out.append(v)
+                else:
+                    _walk(v, out)
+        elif isinstance(node, list):
+            for item in node:
+                _walk(item, out)
+
+    parts: list[str] = []
+    _walk(blocks, parts)
+    return "\n".join(parts)
 
 
 def register_l0_read(
@@ -12,14 +40,19 @@ def register_l0_read(
         reg.register(
             ToolSpec(
                 name="read_doc",
-                description="读取飞书 doc 块树",
+                description="读取飞书 doc 内容",
                 parameters={
                     "type": "object",
                     "properties": {"doc_id": {"type": "string"}},
                     "required": ["doc_id"],
                 },
                 risk_level="L0_read",
-                handler=lambda doc_id: {"blocks": doc_adapter.read_blocks(doc_id)},
+                handler=lambda doc_id: {
+                    "blocks": doc_adapter.get_block_tree(doc_id),
+                    "text": _flatten_blocks_text(
+                        doc_adapter.get_block_tree(doc_id)
+                    ),
+                },
             )
         )
     if base_adapter is not None:

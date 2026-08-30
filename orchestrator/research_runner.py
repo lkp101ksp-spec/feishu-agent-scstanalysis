@@ -112,6 +112,14 @@ class ResearchRunner:
         )
 
         # 1. 规划（planner/executor/template 无 DB 状态，可跨线程复用）
+        # 绑定文档等运行时上下文注入 prompt——模型无从得知 doc_id，
+        # 不注入则 read_doc 只能编占位符（真机 2026-08-30 发现）
+        bound_doc_pre = session_service.bound_doc_id(session_id)
+        session_context = (
+            f"当前会话已绑定文档 doc_id={bound_doc_pre}"
+            f"（read_doc 的 doc_id 直接用它）" if bound_doc_pre
+            else "当前会话未绑定文档（涉及文档读取时应在回复中提示用户先 /bind-doc）"
+        )
         visible = self.orch.registry.list(planner_visible=True)
         available_tools = [t.name for t in visible]
         tools_schema = [
@@ -125,6 +133,7 @@ class ResearchRunner:
                 task_id=task_id,
                 available_tools=available_tools,
                 tools_schema=tools_schema,
+                session_context=session_context,
             )
         except Exception as e:
             task_service.mark_failed(
@@ -168,25 +177,32 @@ class ResearchRunner:
             f"- {nid}: {state.value}" for nid, state in result.node_states.items()
         ]
         outputs_digest = self._outputs_digest(scheduler)
-        blocks = self.orch.template.render_plan_summary(
+        failure_lines = self._failure_digest(scheduler)
+        blocks = self.orch.template.render_plan_summary_blocks(
             status=result.status,
             node_states={k: v.value for k, v in result.node_states.items()},
             artifacts_count=0,
         )
 
         # 4. 绑定文档则写回（approval skip：bind-doc 前置授权语义）
+        # render_blocks 是 DocAdapter 真实 API（原 append_blocks 不存在，
+        # 真机 2026-08-30 发现 AttributeError）
         bound_doc = session_service.bound_doc_id(session_id)
         doc_written = False
         if bound_doc:
             try:
-                self.orch.doc_adapter.append_blocks(bound_doc, blocks)
+                self.orch.doc_adapter.render_blocks(bound_doc, blocks)
                 doc_written = True
             except Exception as e:
                 logger.warning("research doc write failed: %s", e)
 
-        # 5. IM 回复结果摘要
+        # 5. IM 回复结果摘要（失败节点附 error_code/message，便于排障）
         reply_lines = [f"[研究任务] 执行完成（{result.status}）"]
         reply_lines.extend(node_lines)
+        if failure_lines:
+            reply_lines.append("")
+            reply_lines.append("失败详情：")
+            reply_lines.extend(failure_lines)
         if outputs_digest:
             reply_lines.append("")
             reply_lines.append("关键输出：")
@@ -208,6 +224,19 @@ class ResearchRunner:
             "node_states": {k: v.value for k, v in result.node_states.items()},
             "doc_written": doc_written,
         }
+
+    @staticmethod
+    def _failure_digest(scheduler: Scheduler, max_chars: int = 300) -> list[str]:
+        """失败节点的错误摘要（IM 回复用），单条截断防刷屏。"""
+        lines: list[str] = []
+        for node_id, handle in scheduler._handles.items():
+            if handle.state != ExecutionState.FAILED:
+                continue
+            err = f"{handle.error_code or 'UNKNOWN'}: {handle.error_message or ''}"
+            if len(err) > max_chars:
+                err = err[:max_chars] + "…"
+            lines.append(f"- {node_id} {err}")
+        return lines[:5]
 
     @staticmethod
     def _outputs_digest(scheduler: Scheduler, max_chars: int = 800) -> list[str]:

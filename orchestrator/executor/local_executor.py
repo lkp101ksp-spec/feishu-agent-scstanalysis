@@ -58,6 +58,12 @@ class LocalExecutor(ExecutorClient):
                 handle.state = ExecutionState.FAILED
                 handle.error_code = result.error_code
                 handle.error_message = result.error_message
+                # 失败必须留痕（真机 2026-08-30：n1 失败无任何日志，排障全靠猜）
+                logger.warning(
+                    "node %s tool %s failed: %s %s",
+                    task.node_id, task.tool_name,
+                    result.error_code, result.error_message,
+                )
             else:
                 handle.state = ExecutionState.SUCCESS
                 handle.outputs = result.outputs
@@ -66,6 +72,10 @@ class LocalExecutor(ExecutorClient):
             handle.state = ExecutionState.FAILED
             handle.error_code = "EXECUTOR_INTERNAL"
             handle.error_message = f"{e}\n{traceback.format_exc()}"
+            logger.warning(
+                "node %s tool %s internal error: %s",
+                task.node_id, task.tool_name, e,
+            )
         finally:
             handle.finished_at = datetime.utcnow()
 

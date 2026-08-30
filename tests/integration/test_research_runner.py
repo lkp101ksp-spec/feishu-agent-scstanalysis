@@ -154,8 +154,8 @@ def test_accepted_and_background_result(db):
     assert "结果已写入绑定文档 doccnR1" in final
     # 假执行器收到 Planner 计划的工具调用
     assert orch.executor.calls == ["summarize_text"]
-    # 文档写回
-    orch.doc_adapter.append_blocks.assert_called_once()
+    # 文档写回（真实 API 是 render_blocks）
+    orch.doc_adapter.render_blocks.assert_called_once()
 
 
 def test_plan_failed_replies_error(db):

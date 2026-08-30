@@ -340,7 +340,9 @@ class Orchestrator:
         finally:
             loop.close()
 
-        blocks = self.template.render_plan_summary(
+        # render_plan_summary_blocks + render_blocks 是真实链路
+        # （原 append_blocks 不存在，真机 2026-08-30 发现）
+        blocks = self.template.render_plan_summary_blocks(
             status=result.status,
             node_states={k: v.value for k, v in result.node_states.items()},
             artifacts_count=0,
@@ -364,7 +366,7 @@ class Orchestrator:
             {"doc_id": getattr(sess, "bound_doc_id", None) or ""},
             sess,
         ) and getattr(sess, "bound_doc_id", None):
-            self.doc_adapter.append_blocks(sess.bound_doc_id, blocks)
+            self.doc_adapter.render_blocks(sess.bound_doc_id, blocks)
 
         self.task_service.mark_success(
             task_id=task_id, reply_text=f"Plan {result.status}"

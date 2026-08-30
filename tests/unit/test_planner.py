@@ -76,6 +76,29 @@ def test_planner_prompt_inlines_tools_schema():
     assert "只输出一个 JSON" in prompt
 
 
+def test_planner_prompt_injects_session_context():
+    """Phase 12 真机修正：绑定文档等运行时上下文注入 DAG prompt。"""
+    fake = FakeLLMRouter(
+        [
+            '{"intent": "summarize"}',
+            """{"nodes": [
+                {"node_id": "n1", "kind": "tool", "tool_name": "read_doc",
+                 "inputs": {"doc_id": "d"}, "depends_on": []}
+              ],
+              "entry_node_ids": ["n1"]
+            }""",
+        ]
+    )
+    Planner(llm_router=fake).plan(
+        message="读文档", session_id="s", task_id="t",
+        available_tools=["read_doc"], tools_schema=[],
+        session_context="当前会话已绑定文档 doc_id=doccnABC",
+    )
+    dag_call = next(c for c in fake.calls if c[0] == "dag_builder")
+    assert "doccnABC" in dag_call[1]
+    assert "会话上下文" in dag_call[1]
+
+
 def test_extract_json_object_tolerates_fences():
     """Phase 12 真机修正：容忍 markdown 围栏与夹带说明文字。"""
     from orchestrator.planner.planner import _extract_json_object

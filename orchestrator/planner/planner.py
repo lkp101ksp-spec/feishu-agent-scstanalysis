@@ -43,6 +43,7 @@ class Planner:
         task_id: str,
         available_tools: list,
         tools_schema: list,
+        session_context: str = "",
     ) -> DAGPlan:
         intent_resp = self.llm_router.call(
             role=self.role_intent, prompt=f"intent:\n{message}"
@@ -54,6 +55,7 @@ class Planner:
             intent=intent,
             available_tools=available_tools,
             tools_schema=tools_schema,
+            session_context=session_context,
         )
 
         base_prompt = prompt
@@ -93,16 +95,24 @@ class Planner:
         intent: str,
         available_tools: list,
         tools_schema: list,
+        session_context: str = "",
     ) -> str:
         """构建 DAG 生成 prompt；工具 schema 全量内联（Phase 12 板块③）。
 
         LLMRouter 的 tools 形参不进请求体，schema 必须内联进 prompt 才能到
         模型侧——否则模型只看到工具名，inputs 字段只能靠猜。
+        session_context（Phase 12 真机 2026-08-30）：注入绑定文档等运行时
+        上下文——模型无从得知 doc_id 等会话状态，不注入则只能编占位符。
         """
         tool_names = ", ".join(available_tools)
+        context_block = (
+            f"会话上下文（引用其中 id 时必须原样使用，不得编造）：\n"
+            f"{session_context}\n\n" if session_context else ""
+        )
         return (
             f"用户消息：{message}\n"
             f"intent：{intent}\n"
+            f"{context_block}"
             f"可用工具：{tool_names}\n\n"
             f"工具契约（inputs 键必须严格取自对应工具的 parameters.properties，"
             f"不得发明字段）：\n{json.dumps(tools_schema, ensure_ascii=False)}\n\n"
