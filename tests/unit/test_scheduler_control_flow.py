@@ -270,3 +270,34 @@ async def test_while_body_dependency_inherits_upstream():
     result = await _run(sch)
     assert result.status == "success"
     assert sch._handles["w1"].outputs == {"rounds": 0}
+
+
+async def test_branch_nested_while_control_fields_preserved():
+    """branch 分支内嵌 while：副本须带控制流字段（否则缺条件 prompt 判定失败）。
+
+    真机 2026-08-30：b1_fw1 副本丢 while_condition_prompt → LLM_FAILED。
+    """
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="run_python",
+                 inputs={"code": "0.5"}, depends_on=[])
+    w1 = DAGNode(
+        node_id="w1", kind="while",
+        while_condition_prompt="上轮随机数是否小于 0.99",
+        depends_on=["n1"], max_iterations=3,
+        body=[DAGNode(node_id="c1", kind="tool", tool_name="run_python",
+                      inputs={"code": "import random\nrandom.random()"},
+                      depends_on=["w1"])],
+    )
+    b1 = DAGNode(node_id="b1", kind="branch",
+                 condition_prompt="n1.result 是否大于等于 0.99",
+                 depends_on=["n1"], true_branch=[], false_branch=[w1])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, b1], entry_node_ids=["n1"])
+    # 判定序列：b1 → false（进 while 分支）；w1 副本首轮 → false（即退出）
+    llm = FakeLLM(seq=["false", "false"])
+    ex = AutoFinishExecutor()
+    sch = Scheduler(plan=plan, executor=ex, condition_llm=llm)
+    result = await _run(sch)
+    # 嵌套 while 副本正常判定（SUCCESS rounds=0），而非 LLM_FAILED
+    assert sch._handles["b1_fw1"].state == ExecutionState.SUCCESS
+    assert sch._handles["b1_fw1"].outputs == {"rounds": 0}
+    assert result.status == "success"

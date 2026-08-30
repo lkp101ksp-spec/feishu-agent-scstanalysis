@@ -399,7 +399,11 @@ class Scheduler:
 
         依赖重写：指向父控制流节点 → 继承其 depends_on；子树内互链 → 加前缀；
         其他外部依赖原样保留（validate_dag 已保证存在）。
-        嵌套 while/for 已被 validate_dag 禁止，副本 kind 只会是 tool/llm/branch。
+        控制流字段（condition_prompt/body 等）必须随副本传递——branch 分支
+        内可嵌 while/for（validate_dag 只禁循环体互嵌），真机 2026-08-30：
+        b1_fw1 副本丢 while_condition_prompt → 判定 LLM_FAILED。
+        嵌套子数组引用原对象共享：其展开发生在该副本自身被解释时（再加
+        自己的前缀），无需在此轮递归复制。
         """
         id_map = {n.node_id: prefix + n.node_id for n in nodes}
         subst = None
@@ -425,6 +429,13 @@ class Scheduler:
                 inputs=inputs, depends_on=deps, config=n.config,
                 condition=n.condition, join_strategy=n.join_strategy,
                 on_node_fail=n.on_node_fail,
+                condition_prompt=n.condition_prompt,
+                true_branch=n.true_branch, false_branch=n.false_branch,
+                while_condition_prompt=n.while_condition_prompt,
+                body=n.body, max_iterations=n.max_iterations,
+                iterate_over=n.iterate_over, iteration_var=n.iteration_var,
+                subplan_template_id=n.subplan_template_id,
+                subplan_params=n.subplan_params,
             ))
         return out
 
