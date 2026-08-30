@@ -7,7 +7,11 @@ import asyncio
 import datetime as dt
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan
-from orchestrator.planner.scheduler import Scheduler, _ask_bool
+from orchestrator.planner.scheduler import (
+    _CONTEXT_MAX_CHARS,
+    Scheduler,
+    _ask_bool,
+)
 from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle
 
 
@@ -132,6 +136,29 @@ def test_ask_bool_wording_tolerance():
     assert _ask_bool(llm, "c", "x") is False
     llm2 = FakeLLM(seq=["无法判断"])
     assert _ask_bool(llm2, "c", "x") is None
+
+
+def test_upstream_context_big_field_does_not_drown_text():
+    """巨大字段（block_tree）不淹没 text：分字段格式化 + 长度元数据。
+
+    真机 2026-08-30：整体 JSON 截断后判定「文档是否超 500 字」时
+    text 根本不在上下文里，LLM 只能瞎猜走了 false_branch。
+    """
+    plan, _ = _branch_plan()
+    ex = AutoFinishExecutor()
+    sch = Scheduler(plan=plan, executor=ex, condition_llm=FakeLLM())
+    big_tree = [{"block_id": f"blk{i:03d}"} for i in range(200)]  # 远超 2000 字符
+    long_text = "字" * 1234
+    sch._handles["n1"] = TaskHandle(
+        execution_id="e0", task_id="t", node_id="n1",
+        state=ExecutionState.SUCCESS,
+        started_at=dt.datetime.utcnow(), finished_at=dt.datetime.utcnow(),
+        outputs={"block_tree": big_tree, "text": long_text},
+    )
+    ctx = sch._upstream_context(sch._node_map["b1"])
+    # text 字段可见且带总长度元数据（判定长度条件的依据）
+    assert "text<共1234字符>" in ctx
+    assert ctx.index("text<共1234字符>") < _CONTEXT_MAX_CHARS
 
 
 def _for_plan(max_iterations=100, items=None):

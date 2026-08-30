@@ -434,14 +434,29 @@ class Scheduler:
             return None
 
     def _upstream_context(self, node: DAGNode) -> str:
-        """直接上游 outputs 的 JSON 摘要（控制流判定上下文）。"""
+        """直接上游 outputs 摘要（控制流判定上下文）。
+
+        按字段分别格式化并带长度元数据——整体 JSON 截断会让 block_tree
+        等巨大字段淹没 text，判定「是否超 500 字」时 text 根本不在
+        上下文里（真机 2026-08-30）。
+        """
         parts: list[str] = []
         for dep in node.depends_on:
             h = self._handles.get(dep)
             if h is not None and h.outputs:
-                out = {k: v for k, v in h.outputs.items() if k != "ast_notices"}
-                parts.append(f"{dep}: {json.dumps(out, ensure_ascii=False, default=str)}")
+                fields = [self._format_field(k, v)
+                          for k, v in h.outputs.items() if k != "ast_notices"]
+                parts.append(f"{dep}: " + "\n".join(fields))
         return "\n".join(parts)[:_CONTEXT_MAX_CHARS]
+
+    @staticmethod
+    def _format_field(key: str, val, max_chars: int = 800) -> str:
+        """字段摘要：带总长度元数据 + 截断预览（长度类条件判定依据）。"""
+        sval = val if isinstance(val, str) else json.dumps(
+            val, ensure_ascii=False, default=str)
+        if len(sval) > max_chars:
+            return f"{key}<共{len(sval)}字符>: {sval[:max_chars]}…"
+        return f"{key}: {sval}"
 
     def _body_context(self, body_ids: list[str]) -> str:
         """while 上一轮 body 输出摘要（失败节点附错误信息，判定可见）。"""
@@ -453,8 +468,9 @@ class Scheduler:
             if h.state == ExecutionState.FAILED:
                 parts.append(f"{bid}: FAILED {h.error_code}: {h.error_message}")
             elif h.outputs:
-                out = {k: v for k, v in h.outputs.items() if k != "ast_notices"}
-                parts.append(f"{bid}: {json.dumps(out, ensure_ascii=False, default=str)}")
+                fields = [self._format_field(k, v)
+                          for k, v in h.outputs.items() if k != "ast_notices"]
+                parts.append(f"{bid}: " + "\n".join(fields))
         return "\n".join(parts)[:_CONTEXT_MAX_CHARS]
 
     def _body_all_terminal(self, body_ids: list[str]) -> bool:
