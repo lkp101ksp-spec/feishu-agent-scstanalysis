@@ -73,6 +73,8 @@ class Settings:
     # === Phase 12: 研究任务执行 ===
     # /research 后台执行整体 wall-clock 上限（秒）
     research_task_timeout_sec: int = 300
+    # LLM 单次调用超时（秒）：DAG 规划 prompt 大、推理重，30s 真机会 ReadTimeout
+    llm_timeout_sec: int = 120
 
 
 def _load_yaml(path: str) -> dict:
@@ -133,4 +135,5 @@ def load_settings() -> Settings:
             os.environ.get("RESEARCH_TASK_TIMEOUT_SEC", "300")),
         max_concurrent_nodes=int(
             os.environ.get("MAX_CONCURRENT_NODES", "4")),
+        llm_timeout_sec=int(os.environ.get("LLM_TIMEOUT_SEC", "120")),
     )

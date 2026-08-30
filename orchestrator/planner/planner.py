@@ -6,14 +6,19 @@
 返回前调用 validate_dag()；失败抛 DAGValidationError。
 
 Phase 3 升级：DAGNode 支持 branch/while/for 嵌套子树，递归构造。
+Phase 12 修正：模型常把 JSON 包进 markdown 代码围栏或夹带说明文字，
+_build_plan 前先剥围栏并截取最外层 {...}（真机 2026-08-29 发现）。
 """
 from __future__ import annotations
 
 import json
+import re
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan, validate_dag
 from shared.errors import DAGValidationError
 from shared.ulid_ import new_ulid
+
+_CODE_FENCE_RE = re.compile(r"^```[\w-]*\s*|\s*```$")
 
 
 class Planner:
@@ -51,6 +56,7 @@ class Planner:
             tools_schema=tools_schema,
         )
 
+        base_prompt = prompt
         last_err = None
         for attempt in range(self.max_retries + 1):
             dag_resp = self.llm_router.call(
@@ -64,6 +70,11 @@ class Planner:
                 return plan
             except (DAGValidationError, json.JSONDecodeError, KeyError) as e:
                 last_err = e
+                # 重试附错误反馈，引导模型修正格式（Phase 12 真机改进）
+                prompt = (
+                    f"{base_prompt}\n\n【上一次输出无效：{e}】"
+                    "请重新输出，只输出一个合法 JSON 对象。"
+                )
                 continue
         raise DAGValidationError(f"planner failed after retries: {last_err}")
 
@@ -105,10 +116,7 @@ class Planner:
         )
 
     def _build_plan(self, resp, *, task_id: str, session_id: str) -> DAGPlan:
-        if isinstance(resp, dict):
-            payload = resp
-        else:
-            payload = json.loads(resp)
+        payload = _extract_json_object(resp)
         nodes = [_build_node(n) for n in payload["nodes"]]
         return DAGPlan(
             plan_id=new_ulid(),
@@ -117,6 +125,26 @@ class Planner:
             nodes=nodes,
             entry_node_ids=payload["entry_node_ids"],
         )
+
+
+def _extract_json_object(resp) -> dict:
+    """从 LLM 响应提取 JSON 对象：容忍 dict 直传、markdown 围栏、夹带说明文字。
+
+    失败抛 json.JSONDecodeError（由 plan() 的重试循环捕获）。
+    """
+    if isinstance(resp, dict):
+        return resp
+    text = str(resp).strip()
+    # 剥 ```json ... ``` 围栏
+    if text.startswith("```"):
+        text = _CODE_FENCE_RE.sub("", text).strip()
+    # 夹带说明文字时截取最外层 {...}
+    if not text.startswith("{"):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            text = text[start:end + 1]
+    return json.loads(text)
 
 
 def _build_node(payload: dict) -> DAGNode:

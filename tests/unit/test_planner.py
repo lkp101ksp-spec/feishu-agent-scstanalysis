@@ -76,6 +76,39 @@ def test_planner_prompt_inlines_tools_schema():
     assert "只输出一个 JSON" in prompt
 
 
+def test_extract_json_object_tolerates_fences():
+    """Phase 12 真机修正：容忍 markdown 围栏与夹带说明文字。"""
+    from orchestrator.planner.planner import _extract_json_object
+
+    ok = '{"nodes": [], "entry_node_ids": []}'
+    assert _extract_json_object({"a": 1}) == {"a": 1}
+    assert _extract_json_object(ok) == {"nodes": [], "entry_node_ids": []}
+    assert _extract_json_object(f"```json\n{ok}\n```") == {
+        "nodes": [], "entry_node_ids": []}
+    assert _extract_json_object(f"好的，这是结果：\n{ok}\n以上。") == {
+        "nodes": [], "entry_node_ids": []}
+
+
+def test_planner_retry_feeds_error_back():
+    """重试 prompt 附带上次解析错误反馈。"""
+    bad = "这不是 JSON"
+    good = """{"nodes": [
+        {"node_id": "n1", "kind": "tool", "tool_name": "a",
+         "inputs": {}, "depends_on": []}
+      ],
+      "entry_node_ids": ["n1"]
+    }"""
+    fake = FakeLLMRouter(['{"intent": "x"}', bad, good])
+    Planner(llm_router=fake, max_retries=1).plan(
+        message="m", session_id="s", task_id="t",
+        available_tools=["a"], tools_schema=[],
+    )
+    # 第 2 次 dag 调用的 prompt 含错误反馈
+    dag_prompts = [c[1] for c in fake.calls if c[0] == "dag_builder"]
+    assert len(dag_prompts) == 2
+    assert "上一次输出无效" in dag_prompts[1]
+
+
 def test_planner_plan_validates_dag():
     fake = FakeLLMRouter(
         [

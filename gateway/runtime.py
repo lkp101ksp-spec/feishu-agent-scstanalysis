@@ -124,13 +124,13 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
             "base_url": settings.llm.primary_base_url,
             "api_key": settings.llm.primary_api_key,
             "model": settings.llm.primary_model,
-            "timeout_sec": 30,
+            "timeout_sec": settings.llm_timeout_sec,
         },
         fallback={
             "base_url": settings.llm.fallback_base_url,
             "api_key": settings.llm.fallback_api_key,
             "model": settings.llm.fallback_model,
-            "timeout_sec": 30,
+            "timeout_sec": settings.llm_timeout_sec,
         },
         max_retries=settings.llm.max_retries,
     )
