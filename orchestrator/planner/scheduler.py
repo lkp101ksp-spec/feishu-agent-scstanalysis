@@ -365,17 +365,31 @@ class Scheduler:
     def _expand_while(self, node: DAGNode) -> None:
         """重入式 while：每轮 body 终态后重新 LLM 判定。
 
-        首轮上下文=直接上游摘要；后续轮=上一轮 body 输出摘要（含失败信息）。
-        判定 prompt 里的 body 原始节点 id 引用重写为当前轮副本 id——模型
-        写「n_step.result < 0.99」而上下文里是 w1_r0_s1.result，名字错位
-        LLM 对不上引用（真机 2026-08-30：19 轮全 true 直到 max_iter）。
+        - 首轮有上游上下文 → 标准 while-do：先判定再执行；
+        - 首轮无上游数据（条件只能依赖循环体输出）→ do-while 语义：
+          先无条件执行一轮，第 2 轮起判定（真机 2026-08-30：「直到…
+          为止」类任务天然先做一轮，无数据可判致 0 轮退出）。
+        - 第 2 轮起判定 prompt 里的 body 原始节点 id 引用重写为当前轮
+          副本 id——模型写「n1.result < 0.99」而上下文是 w1_r0_n1.result，
+          名字错位 LLM 对不上引用（真机：19 轮全 true 直到 max_iter）。
         判定 false → SUCCESS；true 且已达 max_iterations → FAILED。
         """
         ws = self._while_state.get(
             node.node_id, {"round": 0, "body_ids": [], "ref_map": {}})
         if ws["round"] == 0:
             context = self._upstream_context(node)
-            prompt = node.while_condition_prompt or ""
+            if context:
+                cond = self._eval_condition(
+                    node, node.while_condition_prompt or "", context)
+                if cond is None:
+                    self._fail_control(node, "LLM_FAILED",
+                                       "while 条件判定失败（round=0）")
+                    return
+                if not cond:
+                    self._while_state.pop(node.node_id, None)
+                    self._succeed_control(node, {"rounds": 0})
+                    return
+            # 上下文为空（无上游数据）→ do-while：跳过判定直接执行首轮
         else:
             context = self._body_context(ws["body_ids"])
             prompt = _REF_TOKEN_RE.sub(
@@ -383,15 +397,15 @@ class Scheduler:
                            f".{m.group(2)}"),
                 node.while_condition_prompt or "",
             )
-        cond = self._eval_condition(node, prompt, context)
-        if cond is None:
-            self._fail_control(node, "LLM_FAILED",
-                               f"while 条件判定失败（round={ws['round']}）")
-            return
-        if not cond:
-            self._while_state.pop(node.node_id, None)
-            self._succeed_control(node, {"rounds": ws["round"]})
-            return
+            cond = self._eval_condition(node, prompt, context)
+            if cond is None:
+                self._fail_control(node, "LLM_FAILED",
+                                   f"while 条件判定失败（round={ws['round']}）")
+                return
+            if not cond:
+                self._while_state.pop(node.node_id, None)
+                self._succeed_control(node, {"rounds": ws["round"]})
+                return
         if ws["round"] >= node.max_iterations:
             self._fail_control(node, "LOOP_MAX_ITER",
                                f"while 超 max_iterations={node.max_iterations}")

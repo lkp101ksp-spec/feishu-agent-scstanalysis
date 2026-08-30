@@ -272,10 +272,34 @@ async def test_while_body_dependency_inherits_upstream():
     assert sch._handles["w1"].outputs == {"rounds": 0}
 
 
+async def test_while_no_upstream_runs_first_round_without_judging():
+    """无上游数据 → do-while：首轮免判定直接执行（「直到…为止」类任务）。
+
+    真机 2026-08-30：w1 depends_on=[] 且条件引用 body 输出，首轮上下文
+    为空 → LLM 无据判 false → 0 轮退出。
+    """
+    body = [DAGNode(node_id="n1", kind="tool", tool_name="run_python",
+                    inputs={"code": "import random\nrandom.random()"},
+                    depends_on=[])]
+    w1 = DAGNode(node_id="w1", kind="while",
+                 while_condition_prompt="n1.result 是否小于 0.99",
+                 depends_on=[], body=body, max_iterations=20)
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[w1], entry_node_ids=["w1"])
+    llm = FakeLLM(seq=["false"])  # 仅第 2 轮判定（首轮免判定）
+    ex = AutoFinishExecutor(outputs_for={"run_python": {"result": "0.997"}})
+    sch = Scheduler(plan=plan, executor=ex, condition_llm=llm)
+    result = await _run(sch)
+    assert result.status == "success"
+    assert sch._handles["w1"].outputs == {"rounds": 1}
+    assert result.node_states["w1_r0_n1"] == ExecutionState.SUCCESS
+    assert len(llm.calls) == 1  # 首轮未调 LLM
+
+
 async def test_while_condition_prompt_refs_rewritten_to_round_copies():
     """判定 prompt 引用 body 原始 id → 重写为当前轮副本 id（名字对齐上下文）。
 
-    真机 2026-08-30：模型写「n_step.result < 0.99」而上下文是
+    真机 2026-08-30：模型判据写 n_step.result 而上下文是
     w1_r0_s1.result，错位致 LLM 判定失据。
     """
     plan, _ = _while_plan()
