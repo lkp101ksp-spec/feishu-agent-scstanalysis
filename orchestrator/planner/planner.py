@@ -160,15 +160,17 @@ def _extract_json_object(resp) -> dict:
 def _build_node(payload: dict) -> DAGNode:
     """递归构造嵌套 DAGNode（Phase 3）。
 
-    容错（Phase 12 真机 2026-08-30）：kind 缺省/写成 type 视为 tool；
-    纯 tool 节点模型常省略 kind 字段。
+    容错（Phase 12 真机 2026-08-30）：
+    - kind 缺省/写成 type 视为 tool（纯 tool 节点模型常省略 kind）
+    - inputs 值统一 str() 强转——DAGNode.inputs 契约为 dict[str,str]，
+      模型常把 max_words 等数值输出成 int
     """
     kind = payload.get("kind") or payload.get("type") or "tool"
     kwargs = dict(
         node_id=payload["node_id"],
         kind=kind,
         tool_name=payload.get("tool_name"),
-        inputs=payload.get("inputs", {}),
+        inputs={k: str(v) for k, v in payload.get("inputs", {}).items()},
         depends_on=payload.get("depends_on", []),
         config=payload.get("config", {}),
         condition=payload.get("condition"),

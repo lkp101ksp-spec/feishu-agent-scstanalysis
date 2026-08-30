@@ -108,6 +108,23 @@ def test_planner_tolerates_missing_kind_and_entry():
     assert plan.entry_node_ids == ["n1"]
 
 
+def test_planner_coerces_int_inputs_to_str():
+    """Phase 12 真机（2026-08-30）：模型输出 max_words=300（int）不再炸校验。"""
+    fake = FakeLLMRouter([
+        '{"intent": "x"}',
+        """{"nodes": [
+            {"node_id": "n1", "kind": "tool", "tool_name": "summarize_text",
+             "inputs": {"text": "内容", "max_words": 300}, "depends_on": []}
+          ],
+          "entry_node_ids": ["n1"]}""",
+    ])
+    plan = Planner(llm_router=fake).plan(
+        message="m", session_id="s", task_id="t",
+        available_tools=["summarize_text"], tools_schema=[],
+    )
+    assert plan.nodes[0].inputs == {"text": "内容", "max_words": "300"}
+
+
 def test_planner_retry_feeds_error_back():
     """重试 prompt 附带上次解析错误反馈。"""
     bad = "这不是 JSON"

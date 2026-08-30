@@ -118,10 +118,10 @@ class Scheduler:
         )
 
     def _resolve_inputs(self, node: DAGNode) -> dict:
-        """从上游 outputs 解析 <node>.field 形式的引用。"""
+        """从上游 outputs 解析 <node>.field 形式的引用（值非 str 时原样透传）。"""
         resolved: dict = {}
         for k, v in node.inputs.items():
-            if "." in v:
+            if isinstance(v, str) and "." in v:
                 upstream_id, field_name = v.split(".", 1)
                 up_handle = self._handles.get(upstream_id)
                 if up_handle and up_handle.outputs:
