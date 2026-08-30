@@ -366,12 +366,24 @@ class Scheduler:
         """重入式 while：每轮 body 终态后重新 LLM 判定。
 
         首轮上下文=直接上游摘要；后续轮=上一轮 body 输出摘要（含失败信息）。
+        判定 prompt 里的 body 原始节点 id 引用重写为当前轮副本 id——模型
+        写「n_step.result < 0.99」而上下文里是 w1_r0_s1.result，名字错位
+        LLM 对不上引用（真机 2026-08-30：19 轮全 true 直到 max_iter）。
         判定 false → SUCCESS；true 且已达 max_iterations → FAILED。
         """
-        ws = self._while_state.get(node.node_id, {"round": 0, "body_ids": []})
-        context = (self._upstream_context(node) if ws["round"] == 0
-                   else self._body_context(ws["body_ids"]))
-        cond = self._eval_condition(node, node.while_condition_prompt or "", context)
+        ws = self._while_state.get(
+            node.node_id, {"round": 0, "body_ids": [], "ref_map": {}})
+        if ws["round"] == 0:
+            context = self._upstream_context(node)
+            prompt = node.while_condition_prompt or ""
+        else:
+            context = self._body_context(ws["body_ids"])
+            prompt = _REF_TOKEN_RE.sub(
+                lambda m: (f"{ws['ref_map'].get(m.group(1), m.group(1))}"
+                           f".{m.group(2)}"),
+                node.while_condition_prompt or "",
+            )
+        cond = self._eval_condition(node, prompt, context)
         if cond is None:
             self._fail_control(node, "LLM_FAILED",
                                f"while 条件判定失败（round={ws['round']}）")
@@ -390,6 +402,9 @@ class Scheduler:
         self._while_state[node.node_id] = {
             "round": ws["round"] + 1,
             "body_ids": [c.node_id for c in copies],
+            # body 原始 id → 本轮副本 id（下一轮判定 prompt 引用重写用）
+            "ref_map": {n.node_id: c.node_id
+                        for n, c in zip(node.body, copies)},
         }
 
     def _copy_subtree(self, nodes: list[DAGNode], *, prefix: str,
@@ -470,10 +485,16 @@ class Scheduler:
             logger.warning("node %s 控制流节点缺条件 prompt", node.node_id)
             return None
         try:
-            return _ask_bool(self._condition_llm, prompt, context)
+            result = _ask_bool(self._condition_llm, prompt, context)
         except Exception as e:
             logger.warning("node %s LLM 判定异常: %s", node.node_id, e)
             return None
+        # 留痕：真机排障需要看到每次判定的条件与依据（2026-08-30）
+        logger.info(
+            "control node %s judge: cond=%r result=%s context_head=%r",
+            node.node_id, prompt[:120], result, context[:120],
+        )
+        return result
 
     def _upstream_context(self, node: DAGNode) -> str:
         """直接上游 outputs 摘要（控制流判定上下文）。

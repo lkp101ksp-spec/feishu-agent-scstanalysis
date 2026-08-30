@@ -225,7 +225,7 @@ def _while_plan(max_iterations=10, body_fail=False):
                     inputs={"code": "import random\nrandom.random()"},
                     depends_on=["w1"])]
     w1 = DAGNode(node_id="w1", kind="while",
-                 while_condition_prompt="上轮随机数是否小于 0.99",
+                 while_condition_prompt="c1.result 是否小于 0.99",
                  depends_on=["n1"], body=body, max_iterations=max_iterations)
     plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
                    nodes=[n1, w1], entry_node_ids=["n1"])
@@ -270,6 +270,25 @@ async def test_while_body_dependency_inherits_upstream():
     result = await _run(sch)
     assert result.status == "success"
     assert sch._handles["w1"].outputs == {"rounds": 0}
+
+
+async def test_while_condition_prompt_refs_rewritten_to_round_copies():
+    """判定 prompt 引用 body 原始 id → 重写为当前轮副本 id（名字对齐上下文）。
+
+    真机 2026-08-30：模型写「n_step.result < 0.99」而上下文是
+    w1_r0_s1.result，错位致 LLM 判定失据。
+    """
+    plan, _ = _while_plan()
+    llm = FakeLLM(seq=["true", "false"])
+    ex = AutoFinishExecutor(outputs_for={"run_python": {"result": "0.5"}})
+    sch = Scheduler(plan=plan, executor=ex, condition_llm=llm)
+    result = await _run(sch)
+    assert result.status == "success"
+    assert sch._handles["w1"].outputs == {"rounds": 1}
+    # 第二次判定（round 1）的 prompt 里 n_step 应已被重写为 w1_r0_c1
+    second_call = llm.calls[1][1].content  # [1] 为 user 消息
+    assert "w1_r0_c1.result" in second_call
+    assert "n_step.result" not in second_call
 
 
 async def test_branch_nested_while_control_fields_preserved():
