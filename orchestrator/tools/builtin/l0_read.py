@@ -40,15 +40,20 @@ def register_l0_read(
         reg.register(
             ToolSpec(
                 name="read_doc",
-                description="读取飞书 doc 内容",
+                description=(
+                    "读取飞书 doc 内容；输出 text=纯文本正文"
+                    "（下游工具用 <node_id>.text 引用）"
+                ),
                 parameters={
                     "type": "object",
                     "properties": {"doc_id": {"type": "string"}},
                     "required": ["doc_id"],
                 },
                 risk_level="L0_read",
+                # 输出键不能用 blocks——ToolHandler 把 blocks 当 Phase 5
+                # 富文本块解析，原始 docx 树会被误解析炸掉（真机 2026-08-30）
                 handler=lambda doc_id: {
-                    "blocks": doc_adapter.get_block_tree(doc_id),
+                    "block_tree": doc_adapter.get_block_tree(doc_id),
                     "text": _flatten_blocks_text(
                         doc_adapter.get_block_tree(doc_id)
                     ),

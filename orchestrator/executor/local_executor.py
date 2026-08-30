@@ -23,6 +23,9 @@ class LocalExecutor(ExecutorClient):
         self._kernel_pool = kernel_pool
         self._tool_handler = tool_handler
         self._handles: dict[str, TaskHandle] = {}
+        # T1 无沙箱：首次 acquire 失败后置 False，后续 L1 节点跳过探测
+        # （否则每个 L1 节点白等 30s docker 超时，真机 2026-08-30）
+        self._kernel_available = True
 
     def submit(self, task: ExecutionTask) -> TaskHandle:
         handle = TaskHandle(
@@ -34,13 +37,23 @@ class LocalExecutor(ExecutorClient):
         )
         self._handles[handle.execution_id] = handle
         session_id = task.inputs.get("session_id") or task.task_id
-        if task.risk_level == "L1_compute":
+        # risk_level 以注册表为准：ExecutionTask.risk_level 默认 L1_compute
+        # 且 Scheduler 不传——L0 节点曾因此白等 30s docker 超时（真机 2026-08-30）
+        risk = task.risk_level
+        try:
+            spec = self._tool_handler.registry.get(task.tool_name)
+            if spec is not None:
+                risk = spec.risk_level
+        except Exception:
+            pass
+        if risk == "L1_compute" and self._kernel_available:
             # T1 无沙箱：acquire 失败（如 kernel 镜像未构建）仅告警不阻断——
             # 当前代码执行不经容器，容器只是生命周期句柄（Phase 13/T2 再强制）
             try:
                 self._kernel_pool.acquire(session_id)
             except Exception as e:  # pragma: no cover - 依赖环境
                 logger.warning("kernel acquire failed (no sandbox mode): %s", e)
+                self._kernel_available = False
         t = threading.Thread(
             target=self._run, args=(handle, task), daemon=True
         )

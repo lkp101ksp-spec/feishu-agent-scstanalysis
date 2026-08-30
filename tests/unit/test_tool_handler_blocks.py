@@ -33,3 +33,22 @@ def test_tool_handler_blocks_none_when_not_provided():
     result = handler.execute("x", {}, actor_open_id="ou_1", session_id="s1")
     assert result.outputs == {"data": "y"}
     assert result.blocks is None
+
+
+def test_tool_handler_blocks_parse_failure_degrades():
+    """blocks 解析失败降级告警，不炸工具（真机 2026-08-30 read_doc 撞名事故）。"""
+    reg = MagicMock()
+    reg.get.return_value = ToolSpec(
+        name="x", description="d", parameters={"type": "object"},
+        risk_level="L0_read",
+        # 原始 docx 块树：无 type 键，富文本解析必炸
+        handler=lambda: {
+            "data": "y",
+            "blocks": [{"block_type": 2, "text": {"elements": []}}],
+        },
+    )
+    handler = ToolHandler(registry=reg)
+    result = handler.execute("x", {}, actor_open_id="ou_1", session_id="s1")
+    assert result.error_code is None  # 工具本体不失败
+    assert result.outputs == {"data": "y"}
+    assert result.blocks is None

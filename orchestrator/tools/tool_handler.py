@@ -4,11 +4,14 @@
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from orchestrator.tools.ast_guard import ASTGuard
 from orchestrator.tools.tool_registry import ToolRegistry
 from shared.errors import ToolBlockedError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -83,13 +86,21 @@ class ToolHandler:
             tool_err = out.pop("error_code", None)
             tool_err_msg = out.pop("error_message", None)
             # Phase 5：handler 返回 blocks → 提取为 AnyBlock 列表
+            # 解析失败仅降级告警，不炸工具本身（真机 2026-08-30：
+            # read_doc 曾因 blocks 键撞名被误解析导致整节点失败）
             blocks_raw = out.pop("blocks", None)
             blocks = None
             if blocks_raw:
                 import json
 
                 from orchestrator.blocks.serializer import json_to_blocks
-                blocks = json_to_blocks(json.dumps(blocks_raw))
+                try:
+                    blocks = json_to_blocks(json.dumps(blocks_raw))
+                except Exception:
+                    logger.warning(
+                        "tool %s blocks 输出解析失败，忽略富文本块", tool_name
+                    )
+                    blocks = None
             return ToolResult(
                 outputs=out,
                 artifacts_ids=[],

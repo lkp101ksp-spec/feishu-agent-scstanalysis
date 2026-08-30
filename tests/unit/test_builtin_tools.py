@@ -32,7 +32,11 @@ def test_l2_none_adapters_skip_tools():
 
 
 def test_l0_read_doc_calls_get_block_tree_and_flattens():
-    """Phase 12 真机修正：read_doc 走真实 API get_block_tree，附扁平 text。"""
+    """Phase 12 真机修正：read_doc 走真实 API get_block_tree，附扁平 text。
+
+    输出键用 block_tree 而非 blocks——blocks 是 ToolHandler 的富文本
+    保留键，撞名会被误解析炸掉。
+    """
     from unittest.mock import MagicMock
 
     doc = MagicMock()
@@ -48,7 +52,7 @@ def test_l0_read_doc_calls_get_block_tree_and_flattens():
     register_l0_read(reg, doc_adapter=doc, base_adapter=None, drive_adapter=None)
     out = reg.get("read_doc").handler(doc_id="doccnX")
     doc.get_block_tree.assert_called_with("doccnX")
-    assert out["blocks"] == doc.get_block_tree.return_value
+    assert out["block_tree"] == doc.get_block_tree.return_value
     assert out["text"] == "标题内容\nprint(1)"
 
 
