@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -41,6 +42,9 @@ _JUDGE_SYSTEM = (
 
 # 判定上下文/输出摘要截断（防 prompt 膨胀）
 _CONTEXT_MAX_CHARS = 2000
+
+# 内嵌引用 token：<node_id>.<field>（id 须是合法标识符）
+_REF_TOKEN_RE = re.compile(r"\b([A-Za-z_]\w*)\.([A-Za-z_]\w*)\b")
 
 _TERMINAL_STATES = (
     ExecutionState.SUCCESS,
@@ -184,10 +188,15 @@ class Scheduler:
     def _resolve_inputs(self, node: DAGNode) -> dict:
         """从上游 outputs 解析 <node>.field 形式的引用（值非 str 时原样透传）。
 
+        两级语义：
+        1. 整值引用（"n1.text"）→ 替换为上游原始值（下游工具拿纯数据）；
+        2. 字符串内嵌引用（code 里 len('n1.text')）→ 替换为 repr(值)
+           （合法 Python 字面量）——模型自然期望引用在代码内生效
+           （真机 2026-08-30：len('n1.text') 算了字面量长度 7）。
         仅当 `.` 前部分是计划内已知 node_id 时才视为引用——否则 code 等
-        含 `.` 的普通字符串（如 f"{x:.6e}"）会被误拆成引用置 None
+        含 `.` 的普通字符串（如 f"{x:.6e}"、np.arange）原样保留
         （真机 2026-08-30：run_python 的 code 含点→None→空文件假 success）。
-        字段缺失时按别名兜底（records/text/results/summary）——
+        整值引用字段缺失时按别名兜底（records/text/results/summary）——
         模型猜错字段名不应导致下游拿到 None（真机 2026-08-30）。
         """
         resolved: dict = {}
@@ -195,8 +204,8 @@ class Scheduler:
             if isinstance(v, str) and "." in v:
                 upstream_id, field_name = v.split(".", 1)
                 if upstream_id not in self._node_map:
-                    # 非已知节点前缀 → 字面值（不是引用）
-                    resolved[k] = v
+                    # 非整值引用 → 尝试内嵌引用替换（code 内插）
+                    resolved[k] = self._inline_substitute(v)
                     continue
                 up_handle = self._handles.get(upstream_id)
                 if up_handle and up_handle.outputs:
@@ -223,6 +232,28 @@ class Scheduler:
             else:
                 resolved[k] = v
         return resolved
+
+    def _inline_substitute(self, text: str) -> str:
+        """字符串内嵌的 <node>.<field> 替换为 Python 字面量。
+
+        严格限定：id 是计划内节点、上游有输出、字段存在——普通代码
+        （np.arange / e.g. / self.x）不受影响。
+        引用已被引号包裹（'n1.text'）时只替换内核（外层引号保留），
+        否则整段 repr——否则 ''xxx'' 双层引号是语法错误。
+        """
+        def _sub(m: "re.Match") -> str:
+            up_id, field = m.group(1), m.group(2)
+            h = self._handles.get(up_id)
+            if h is None or not h.outputs or field not in h.outputs:
+                return m.group(0)
+            r = repr(h.outputs[field])
+            prev = text[m.start() - 1] if m.start() > 0 else ""
+            nxt = text[m.end()] if m.end() < len(text) else ""
+            if prev in ("'", '"') and nxt in ("'", '"'):
+                return r[1:-1]
+            return r
+
+        return _REF_TOKEN_RE.sub(_sub, text)
 
     def _refresh_running_handles(self) -> None:
         for h in list(self._handles.values()):

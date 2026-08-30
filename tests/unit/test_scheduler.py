@@ -163,3 +163,41 @@ def test_resolve_inputs_dot_literal_not_reference():
         outputs={"result": "1267...5376"},
     )
     assert sch._resolve_inputs(n2)["x"] == "1267...5376"
+
+
+def test_resolve_inputs_inline_reference_in_code():
+    """code 内嵌的 <node>.<field> 替换为 repr(值)（Python 字面量）。
+
+    真机 2026-08-30：模型写 len('n1.text') 期望引用在代码内生效，
+    整值替换语义覆盖不到 → 算了字面量 'n1.text' 的长度 7。
+    """
+    doc = "单细胞分析结果\n1 测试"
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="read_doc",
+                 inputs={}, depends_on=[])
+    n2 = DAGNode(node_id="n2", kind="tool", tool_name="run_python",
+                 inputs={"code": "result = len('n1.text') > 500"}, depends_on=["n1"])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, n2], entry_node_ids=["n1"])
+    sch = Scheduler(plan=plan, executor=FakeExecutor())
+    sch._handles["n1"] = TaskHandle(
+        execution_id="e0", task_id="t", node_id="n1",
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
+        finished_at=dt.datetime.utcnow(),
+        outputs={"text": doc, "records": [1, 2]},
+    )
+    resolved = sch._resolve_inputs(n2)
+    # 引号内形态：保留外层引号、替换内核（repr 的转义内容）
+    assert resolved["code"] == f"result = len('{repr(doc)[1:-1]}') > 500"
+    # 无引号形态：整段 repr
+    n2b = DAGNode(node_id="n2b", kind="tool", tool_name="run_python",
+                  inputs={"code": "len(n1.text)"}, depends_on=["n1"])
+    plan.nodes.append(n2b)
+    assert sch._resolve_inputs(n2b)["code"] == f"len({doc!r})"
+    # 非节点前缀（np.arange）/字段不存在（n1.nofield）不受影响
+    n3 = DAGNode(node_id="n3", kind="tool", tool_name="run_python",
+                 inputs={"code": "import numpy as np\nnp.arange(n1.nofield).max()"},
+                 depends_on=["n1"])
+    plan.nodes.append(n3)
+    code3 = sch._resolve_inputs(n3)["code"]
+    assert "np.arange" in code3
+    assert "n1.nofield" in code3  # 字段不存在 → 保留原文（执行时显式报错）

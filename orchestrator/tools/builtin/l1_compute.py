@@ -60,7 +60,9 @@ def register_l1_compute(
             description=(
                 "在隔离沙箱执行 Python（numpy/pandas/matplotlib 可用，断网只读）。"
                 "输出 stdout=打印内容、result=末表达式值"
-                "（下游工具用 <node_id>.result 引用）"
+                "（下游工具用 <node_id>.result 引用）。"
+                "code 中内嵌的 <node_id>.<field> 会被替换为上游输出值的"
+                " Python 字面量（如 len(n1.text) 直接算上游文本长度）"
             ),
             parameters={
                 "type": "object",
