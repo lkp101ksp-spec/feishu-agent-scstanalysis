@@ -59,7 +59,23 @@ def test_handle_returns_ids_and_records(blast):
     assert out["records"][0]["title"] == "BRCA1"
     assert out["total_count"] == 2
     assert out["query"] == "BRCA1"
-    assert out["database"] == "nr"
+    # BLAST 库名 nr 映射为 Entrez 库 protein（真机 2026-08-30：
+    # db=nr esearch 静默 0 命中）
+    assert out["database"] == "protein"
+
+
+@respx.mock
+def test_handle_maps_blast_db_names_to_entrez(blast):
+    """nr→protein、nt→nucleotide；真实 Entrez 库名原样透传。"""
+    route = respx.post(
+        "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+    ).mock(return_value=httpx.Response(200, json=_esearch_json([], 0)))
+    blast.handle(query="BRCA1", database="nt", max_hits=5)
+    assert route.calls.last.request.content == (
+        b"db=nucleotide&term=BRCA1&retmax=5&retmode=json"
+    )
+    out = blast.handle(query="BRCA1", database="pubmed", max_hits=5)
+    assert out["database"] == "pubmed"  # 非别名原样透传
 
 
 @respx.mock

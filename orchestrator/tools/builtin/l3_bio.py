@@ -27,8 +27,11 @@ def register_l3_bio(registry: ToolRegistry) -> None:
                 },
                 "database": {
                     "type": "string",
-                    "default": "nr",
-                    "description": "NCBI 数据库名（如 nr, protein, nucleotide）",
+                    "default": "protein",
+                    "description": (
+                        "NCBI Entrez 数据库名（protein/nucleotide/gene/pubmed，"
+                        "默认 protein）"
+                    ),
                 },
                 "max_hits": {
                     "type": "integer",

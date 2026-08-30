@@ -11,6 +11,14 @@ import httpx
 
 from orchestrator.tools.bio.rate_limiter import RateLimiter
 
+# BLAST 习惯库名 → Entrez esearch/efetch 真实库名
+_ENTREZ_DB_ALIAS = {
+    "nr": "protein",
+    "nt": "nucleotide",
+    "refseq_protein": "protein",
+    "refseq_rna": "nucleotide",
+}
+
 
 class BlastNCBITool:
     def __init__(
@@ -24,13 +32,16 @@ class BlastNCBITool:
         self.timeout_sec = timeout_sec
         self.base_url = base_url.rstrip("/")
 
-    def handle(self, *, query: str, database: str = "nr",
+    def handle(self, *, query: str, database: str = "protein",
                max_hits: int = 5) -> dict:
         if not query or not query.strip():
             return {
                 "error_code": "BLAST_INVALID_QUERY",
                 "error_message": "query is empty",
             }
+        # BLAST 库名 → Entrez 检索库名映射（真机 2026-08-30：db=nr
+        # esearch 静默返回 0 命中——nr 是 BLAST 库不是 Entrez 库）
+        database = _ENTREZ_DB_ALIAS.get(database, database)
         try:
             ids, total_count = self._esearch(
                 query=query, database=database, max_hits=max_hits
