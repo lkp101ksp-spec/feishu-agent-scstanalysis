@@ -15,7 +15,8 @@ def register_l3_bio(registry: ToolRegistry) -> None:
         name="blast_search",
         description=(
             "BLAST 搜索 NCBI 数据库。"
-            "输入：query, database, max_hits。返回 hits IDs 与摘要。"
+            "输出 records=命中记录列表（title/summary/length，"
+            "下游工具用 <node_id>.records 引用）、ids、total_count。"
         ),
         parameters={
             "type": "object",

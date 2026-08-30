@@ -94,10 +94,15 @@ def _make_summarize_handler(llm_router):
 
     ToolHandler 会把 dict 内的 error_code/error_message 透传到 ToolResult，
     Scheduler 置节点 FAILED 并向下游传播 SKIPPED（不崩整个计划）。
+    text 非 str（如上游 records 列表）时 JSON 序列化——真机 2026-08-30。
     """
+    import json
+
     from shared.schemas import ChatMessage
 
     def handler(text, max_words=200):
+        if not isinstance(text, str):
+            text = json.dumps(text, ensure_ascii=False)
         try:
             out = llm_router.chat([
                 ChatMessage(role="system", content=_SUMMARY_SYSTEM),

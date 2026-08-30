@@ -13,11 +13,18 @@ Phase 2 实现：
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan
 from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle
+
+logger = logging.getLogger(__name__)
+
+# 引用字段缺失时的兜底别名（按优先级）——模型猜输出字段名不可能全对
+# （真机 2026-08-30：blast 输出 records 被模型猜成 summary）
+_FIELD_ALIASES = ("records", "text", "results", "summary")
 
 
 @dataclass
@@ -118,14 +125,35 @@ class Scheduler:
         )
 
     def _resolve_inputs(self, node: DAGNode) -> dict:
-        """从上游 outputs 解析 <node>.field 形式的引用（值非 str 时原样透传）。"""
+        """从上游 outputs 解析 <node>.field 形式的引用（值非 str 时原样透传）。
+
+        字段缺失时按别名兜底（records/text/results/summary）——
+        模型猜错字段名不应导致下游拿到 None（真机 2026-08-30）。
+        """
         resolved: dict = {}
         for k, v in node.inputs.items():
             if isinstance(v, str) and "." in v:
                 upstream_id, field_name = v.split(".", 1)
                 up_handle = self._handles.get(upstream_id)
                 if up_handle and up_handle.outputs:
-                    resolved[k] = up_handle.outputs.get(field_name)
+                    if field_name in up_handle.outputs:
+                        resolved[k] = up_handle.outputs[field_name]
+                        continue
+                    for alias in _FIELD_ALIASES:
+                        if alias in up_handle.outputs:
+                            logger.warning(
+                                "node %s 引用 %s.%s 不存在，回退 %s.%s",
+                                node.node_id, upstream_id, field_name,
+                                upstream_id, alias,
+                            )
+                            resolved[k] = up_handle.outputs[alias]
+                            break
+                    else:
+                        logger.warning(
+                            "node %s 引用 %s.%s 不存在且无别名可回退",
+                            node.node_id, upstream_id, field_name,
+                        )
+                        resolved[k] = None
                 else:
                     resolved[k] = None
             else:

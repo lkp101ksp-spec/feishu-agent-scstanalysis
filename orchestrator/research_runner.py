@@ -247,14 +247,22 @@ class ResearchRunner:
 
     @staticmethod
     def _outputs_digest(scheduler: Scheduler, max_chars: int = 800) -> list[str]:
-        """成功 tool 节点的输出摘要（IM 回复用），单节点截断防刷屏。"""
+        """成功 tool 节点的输出摘要（IM 回复用），单节点截断防刷屏。
+
+        list/dict 输出（如 blast 的 records）JSON 序列化展示——
+        否则关键结果根本不出现在回复里（真机 2026-08-30）。
+        """
+        import json
+
         lines: list[str] = []
         for node_id, handle in scheduler._handles.items():
             if handle.state != ExecutionState.SUCCESS or not handle.outputs:
                 continue
             for key, val in handle.outputs.items():
-                if key in ("ast_notices",) or not isinstance(val, str) or not val:
+                if key in ("ast_notices",) or val in (None, "", [], {}):
                     continue
+                if not isinstance(val, str):
+                    val = json.dumps(val, ensure_ascii=False)
                 text = val if len(val) <= max_chars else val[:max_chars] + "…"
                 lines.append(f"[{node_id}.{key}] {text}")
         return lines[:10]

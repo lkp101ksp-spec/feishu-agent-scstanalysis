@@ -99,3 +99,38 @@ def test_scheduler_init_stores_plan():
     sch = Scheduler(plan=plan, executor=ex)
     assert sch.plan.plan_id == "p"
     assert sch.max_concurrent == 4
+
+
+def test_resolve_inputs_alias_fallback():
+    """引用字段缺失时按别名回退（records/text/results/summary）。
+
+    真机 2026-08-30：模型把 blast 输出 records 猜成 summary，
+    下游拿到 None 导致摘要空转。
+    """
+    plan = make_plan()
+    ex = FakeExecutor()
+    sch = Scheduler(plan=plan, executor=ex)
+    # 上游输出只有 records（无 result/summary）
+    sch._handles["n1"] = TaskHandle(
+        execution_id="e0", task_id="t", node_id="n1",
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
+        finished_at=dt.datetime.utcnow(),
+        outputs={"records": [{"title": "BRCA1"}]},
+    )
+    resolved = sch._resolve_inputs(plan.nodes[1])
+    assert resolved["x"] == [{"title": "BRCA1"}]  # n1.result → 回退 n1.records
+
+
+def test_resolve_inputs_missing_without_alias_is_none():
+    """无别名可回退时保持 None（不抛错）。"""
+    plan = make_plan()
+    ex = FakeExecutor()
+    sch = Scheduler(plan=plan, executor=ex)
+    sch._handles["n1"] = TaskHandle(
+        execution_id="e0", task_id="t", node_id="n1",
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
+        finished_at=dt.datetime.utcnow(),
+        outputs={"answer": 42},
+    )
+    resolved = sch._resolve_inputs(plan.nodes[1])
+    assert resolved["x"] is None
