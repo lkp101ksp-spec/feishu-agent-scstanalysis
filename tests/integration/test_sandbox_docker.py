@@ -8,7 +8,6 @@ import subprocess
 
 import pytest
 
-from config.settings import Settings
 from orchestrator.executor.kernel_manager import KernelPool
 from orchestrator.executor.sandbox import DockerSandbox, DockerSandboxConfig
 
