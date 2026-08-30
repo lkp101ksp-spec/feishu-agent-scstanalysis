@@ -1,6 +1,6 @@
 # Phase 13 · T2 沙箱执行（run_python 容器内真实执行）设计
 
-日期：2026-08-30 ｜ 状态：已批准并实施（自动化验收通过，真机验证待做） ｜ 前置：Phase 12 T1 已全绿
+日期：2026-08-30 ｜ 状态：已完成（自动化 + 真机验收均通过） ｜ 前置：Phase 12 T1 已全绿
 
 ## 1. 范围与目标
 
@@ -127,9 +127,26 @@ proc = self._sandbox.exec([... "python /opt/run_user.py {path}" ...], timeout_se
 | ③ run_python | 真实现替换 stub，app 装配顺序调整（sandbox 先于工具注册），Planner 可见 + 描述声明输出 |
 | ④ 配置外化 | `DOCKER_*`/`KERNEL_*` 环境变量入 settings；.env.example + 联调指南 6d 冒烟行 |
 
-**验收**：全量 **633 passed + ruff clean**（含 4 个真容器集成测试真跑：roundtrip / numpy / PY_RUNTIME_ERROR / 超时重建复用，13.67s）。真机 `/research` 验证待用户执行（联调指南 6d）。
+**验收**：全量 **635 passed + ruff clean**（含 4 个真容器集成测试真跑：roundtrip / numpy / PY_RUNTIME_ERROR / 超时重建复用，13.67s）。
 
-### 关键发现：Windows subprocess 超时管道挂死（集成测试卡死根因）
+### 真机验收 ✅（2026-08-30，两轮）
+
+`/research 用 python 计算 2 的 100 次方并说明位数`：
+
+| 轮 | 结果 | 说明 |
+|---|---|---|
+| 1 | ❌ result=None 假 success | 暴露 scheduler 引用误判 bug（见下），修复 `4858d12` |
+| 2 | ✅ stdout 完整输出 `2^100 = 1267650600228229401496703205376`，位数 31（len/log10 双验证） | run_python 真实沙箱执行打通 |
+
+注：轮 2 `[n1.result] None` 为协议正常语义——模型该轮代码全用 print（末行无表达式），result 承载于 stdout；轮 1 模型末行有 dict 表达式则 result 有值。两种风格均为 success。
+
+### 关键发现②：含点字符串被误判为节点引用（真机 result=None 根因）
+
+**链条**：code 含 `.`（如 `{float(v):.6e}`）→ Scheduler `_resolve_inputs` 把整段 code 拆成 `<node>.<field>` 引用 → `.` 前非已知 node_id → code 置 None → `exec_code` 的 `input_text=None` → docker exec 不带 `-i`、stdin 空 → 容器 0 字节文件执行 rc=0 → **假 success**（现场证据：容器 `/tmp/r_xxx.py` 大小 0）。
+
+**修复**（`4858d12`）：① 引用判定要求 `.` 前是计划内 node_id，否则字面值透传；② `exec_code` 空/None code 直接返回 `INVALID_INPUT`（不再碰沙箱，同类问题显式失败）；③ `sandbox.stop` kill 后必 rm（容器不再残留）。诊断中证伪了 GBK 编码、`_run_subprocess` stdin、ASTGuard 改写三个假设。
+
+### 关键发现①：Windows subprocess 超时管道挂死（集成测试卡死根因）
 
 **现象**：真容器集成测试卡死 8 分钟（容器 Up 但 pytest 无进展）；手动 PowerShell 管道与 `subprocess.run(input=)` 写码通道均正常——唯独 `while True` 超时用例必挂。
 
