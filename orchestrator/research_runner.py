@@ -120,12 +120,15 @@ class ResearchRunner:
             f"（read_doc 的 doc_id 直接用它）" if bound_doc_pre
             else "当前会话未绑定文档（涉及文档读取时应在回复中提示用户先 /bind-doc）"
         )
-        visible = self.orch.registry.list(planner_visible=True)
-        available_tools = [t.name for t in visible]
-        tools_schema = [
-            t.to_openai_function()
-            for t in visible if t.risk_level != "L2_side_effect"
+        # L2 副作用工具整体不可规划（名字与 schema 都不给模型）：
+        # 研究结果由本 Runner 自动写回绑定文档，模型规划 write_doc 只会
+        # 被 approval 拒掉（真机 2026-08-30 n3 TOOL_DENIED）
+        visible = [
+            t for t in self.orch.registry.list(planner_visible=True)
+            if t.risk_level != "L2_side_effect"
         ]
+        available_tools = [t.name for t in visible]
+        tools_schema = [t.to_openai_function() for t in visible]
         try:
             plan = self.orch.planner.plan(
                 message=task_text,
@@ -145,6 +148,10 @@ class ResearchRunner:
                 "可尝试把任务描述写得更明确后重试。",
             )
             return {"status": "plan_failed", "task_id": task_id, "error": str(e)}
+
+        # plan 落日志：真机排障需要看到模型到底规划了什么（输出字段引用
+        # 是否正确只能靠它判断，2026-08-30）
+        logger.info("research plan: %s", plan.model_dump_json())
 
         # 2. 执行（整体 wall-clock 超时保护）
         scheduler = Scheduler(

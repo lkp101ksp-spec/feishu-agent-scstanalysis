@@ -74,6 +74,8 @@ def test_planner_prompt_inlines_tools_schema():
     assert "parameters" in prompt
     # 只输出 JSON 的约束
     assert "只输出一个 JSON" in prompt
+    # 完整链式引用示例（真机 2026-08-30：模型字段引用错导致摘要输入为空）
+    assert '"text": "n1.text"' in prompt
 
 
 def test_planner_prompt_injects_session_context():

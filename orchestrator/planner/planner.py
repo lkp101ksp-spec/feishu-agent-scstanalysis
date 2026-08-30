@@ -120,6 +120,13 @@ class Planner:
             '{"nodes": [{"node_id": "n1", "kind": "tool", '
             '"tool_name": "<工具名>", "inputs": {…}, "depends_on": []}, …],\n'
             ' "entry_node_ids": ["n1"]}\n'
+            "完整示例（读文档再摘要——注意下游 inputs 用 <上游id>.<输出字段> "
+            "引用，字段名必须来自工具描述声明的输出）：\n"
+            '{"nodes": [{"node_id": "n1", "kind": "tool", "tool_name": "read_doc",'
+            ' "inputs": {"doc_id": "doccnX"}, "depends_on": []},'
+            ' {"node_id": "n2", "kind": "tool", "tool_name": "summarize_text",'
+            ' "inputs": {"text": "n1.text", "max_words": 300},'
+            ' "depends_on": ["n1"]}], "entry_node_ids": ["n1"]}\n'
             "每个节点必须含 node_id、kind（只能取 tool/branch/while/for）、"
             "tool_name（kind=tool 时必填）。\n"
             "branch.condition_prompt 是自然语言条件；true_branch/false_branch 是嵌套节点数组。"

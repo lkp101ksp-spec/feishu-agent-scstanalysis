@@ -171,6 +171,26 @@ def test_plan_failed_replies_error(db):
     assert "规划失败" in final
 
 
+def test_l2_tools_excluded_from_planner(db):
+    """L2 副作用工具不给 Planner（名字也不给）——模型规划 write_doc 只会被
+    approval 拒掉（真机 2026-08-30 n3 TOOL_DENIED）。"""
+    from orchestrator.tools.builtin.l2_side_effect import register_l2_side_effect
+
+    orch = _orch(db)
+    register_l2_side_effect(
+        orch.registry, doc_adapter=object(), base_adapter=object(),
+        im_adapter=object(), drive_adapter=object(),
+    )
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+    assert _wait_reply_count(orch.im, 2)
+    kwargs = orch.planner.plan.call_args.kwargs
+    assert "write_doc" not in kwargs["available_tools"]
+    assert "send_card" not in kwargs["available_tools"]
+    schema_names = {f["function"]["name"] for f in kwargs["tools_schema"]}
+    assert "write_doc" not in schema_names
+
+
 def test_task_row_created_with_research_intent(db):
     """后台执行后 tasks 表落 intent=research 记录（按 message_id 查）。"""
     from persistence.repositories.task_repo import TaskRepo
