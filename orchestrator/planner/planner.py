@@ -131,7 +131,21 @@ class Planner:
             "tool_name（kind=tool 时必填）。\n"
             "branch.condition_prompt 是自然语言条件；true_branch/false_branch 是嵌套节点数组。"
             "while.while_condition_prompt 是循环条件；body 是嵌套节点数组；max_iterations 默认10。"
-            "for.iterate_over 是上游 outputs 字段（<node_id>.<field>）；body 嵌套；max_iterations 默认100。"
+            "for.iterate_over 是上游 outputs 字段（<node_id>.<field>，须为列表）；"
+            "body 嵌套；max_iterations 默认100。\n"
+            "控制流用法（简单任务用平铺 tool 节点即可，仅当需要条件分支/批量遍历/"
+            "迭代收敛时使用；嵌套子节点 depends_on 可写控制流节点 id，表示依赖其上游）：\n"
+            'branch：{"node_id": "b1", "kind": "branch", '
+            '"condition_prompt": "n1.text 是否超过 500 字", '
+            '"depends_on": ["n1"], "true_branch": [嵌套节点], "false_branch": [嵌套节点]}\n'
+            'for（body 内字面 "{item}" 每轮替换为当前项）：'
+            '{"node_id": "f1", "kind": "for", "iterate_over": "n1.records", '
+            '"iteration_var": "item", "depends_on": ["n1"], "body": ['
+            '{"node_id": "s1", "kind": "tool", "tool_name": "summarize_text", '
+            '"inputs": {"text": "{item}"}}]}\n'
+            'while：{"node_id": "w1", "kind": "while", '
+            '"while_condition_prompt": "上一轮 n1.result 是否小于 0.99", '
+            '"depends_on": [], "body": [嵌套节点], "max_iterations": 10}\n'
             "节点 inputs 用 '<upstream_node_id>.<field>' 引用上游输出。"
             "entry_node_ids 必须是 depends_on=[] 的节点。"
         )

@@ -154,9 +154,11 @@ class ResearchRunner:
         logger.info("research plan: %s", plan.model_dump_json())
 
         # 2. 执行（整体 wall-clock 超时保护）
+        # T3：condition_llm 注入——branch/while 条件判定器（orch.llm 即 LLMRouter）
         scheduler = Scheduler(
             plan=plan, executor=self.orch.executor,
             max_concurrent=self.orch.settings.max_concurrent_nodes,
+            condition_llm=getattr(self.orch, "llm", None),
         )
         loop = asyncio.new_event_loop()
         try:
