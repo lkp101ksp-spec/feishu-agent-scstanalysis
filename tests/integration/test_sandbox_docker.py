@@ -57,7 +57,8 @@ def test_real_container_numpy_available(pool):
         "itest", "import numpy as np\nnp.arange(5).sum()", timeout_sec=60
     )
     assert out.get("error_code") is None
-    assert out["result"] == "10"
+    # numpy>=2.0 标量 repr 为 "np.int64(10)"，1.x 为 "10"
+    assert out["result"] in ("10", "np.int64(10)")
 
 
 def test_real_container_user_error(pool):

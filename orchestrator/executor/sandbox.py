@@ -7,10 +7,48 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 
 from shared.errors import SandboxUnavailableError
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """杀整棵进程树：Windows 用 taskkill /F /T，POSIX 杀本体即可。"""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True, timeout=10,
+        )
+    else:
+        proc.kill()
+
+
+def _run_subprocess(args, *, capture_output=True, text=True,
+                    input=None, timeout=None) -> subprocess.CompletedProcess:
+    """subprocess.run 的进程树安全版。
+
+    Windows 下 docker.exe 会派生子进程持有 stdio 管道句柄；subprocess.run 超时
+    只杀 docker.exe 本体，管道 EOF 永不到达 → communicate() 挂死（T2 集成测试
+    卡死根因）。超时后先 taskkill 杀整棵进程树，再回收输出并重抛 TimeoutExpired。
+    """
+    proc = subprocess.Popen(
+        args,
+        stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
+        text=text,
+    )
+    try:
+        stdout, stderr = proc.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        stdout, stderr = proc.communicate()
+        raise subprocess.TimeoutExpired(
+            args, timeout, output=stdout, stderr=stderr,
+        ) from None
+    return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
 
 
 @dataclass
@@ -37,7 +75,7 @@ class DockerSandboxConfig:
 
 
 class DockerSandbox:
-    def __init__(self, config: DockerSandboxConfig, *, run_subprocess=subprocess.run) -> None:
+    def __init__(self, config: DockerSandboxConfig, *, run_subprocess=_run_subprocess) -> None:
         self.config = config
         self._run = run_subprocess
 
