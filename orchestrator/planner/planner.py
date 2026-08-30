@@ -12,6 +12,7 @@ _build_plan 前先剥围栏并截取最外层 {...}（真机 2026-08-29 发现�
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan, validate_dag
@@ -19,6 +20,7 @@ from shared.errors import DAGValidationError
 from shared.ulid_ import new_ulid
 
 _CODE_FENCE_RE = re.compile(r"^```[\w-]*\s*|\s*```$")
+logger = logging.getLogger(__name__)
 
 
 class Planner:
@@ -28,7 +30,7 @@ class Planner:
         *,
         role_intent: str = "intent_parser",
         role_dag: str = "dag_builder",
-        max_retries: int = 1,
+        max_retries: int = 2,
     ) -> None:
         self.llm_router = llm_router
         self.role_intent = role_intent
@@ -72,6 +74,12 @@ class Planner:
                 return plan
             except (DAGValidationError, json.JSONDecodeError, KeyError) as e:
                 last_err = e
+                # 失败留痕：原始响应头部落日志（真机 2026-08-30 排障只能看到
+                # json 错位，看不到模型到底输出了什么）
+                logger.warning(
+                    "planner attempt %d invalid: %s; raw head: %r",
+                    attempt + 1, e, str(dag_resp)[:400],
+                )
                 # 重试附错误反馈，引导模型修正格式（Phase 12 真机改进）
                 prompt = (
                     f"{base_prompt}\n\n【上一次输出无效：{e}】"
