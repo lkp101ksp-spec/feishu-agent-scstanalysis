@@ -134,3 +134,32 @@ def test_resolve_inputs_missing_without_alias_is_none():
     )
     resolved = sch._resolve_inputs(plan.nodes[1])
     assert resolved["x"] is None
+
+
+def test_resolve_inputs_dot_literal_not_reference():
+    """含 `.` 的普通字符串是字面值，不是引用——`.` 前必须是已知 node_id。
+
+    真机 2026-08-30：run_python 的 code 含 `{float(v):.6e}`，整段被误拆成
+    引用置 None → 容器空文件假 success → result=None。
+    """
+    code = (
+        'value = 2 ** 100\n'
+        'print(f"科学计数法 ≈ {float(value):.6e}")\n'
+        '{"value": value, "digits": len(str(value))}\n'
+    )
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="run_python",
+                 inputs={"code": code}, depends_on=[])
+    n2 = DAGNode(node_id="n2", kind="tool", tool_name="summarize_text",
+                 inputs={"x": "n1.result"}, depends_on=["n1"])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, n2], entry_node_ids=["n1"])
+    sch = Scheduler(plan=plan, executor=FakeExecutor())
+    assert sch._resolve_inputs(n1)["code"] == code  # 原样透传
+    # 真引用（已知 node_id 前缀）行为不变
+    sch._handles["n1"] = TaskHandle(
+        execution_id="e0", task_id="t", node_id="n1",
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
+        finished_at=dt.datetime.utcnow(),
+        outputs={"result": "1267...5376"},
+    )
+    assert sch._resolve_inputs(n2)["x"] == "1267...5376"

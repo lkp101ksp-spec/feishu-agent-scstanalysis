@@ -109,12 +109,17 @@ class DockerSandbox:
         return container_name
 
     def stop(self, container_name: str, *, timeout_sec: int = 5) -> None:
+        """kill 后必 rm——只 kill 容器会永久残留为 Exited（真机 2026-08-30）。"""
         try:
-            self._run(["docker", "kill", container_name], capture_output=True, timeout=timeout_sec)
+            self._run(["docker", "kill", container_name], capture_output=True,
+                      timeout=timeout_sec)
         except Exception:
-            self._run(
-                ["docker", "rm", "-f", container_name], capture_output=True, timeout=timeout_sec
-            )
+            pass  # 已退出/不存在时 kill 报错无所谓，rm -f 兜底清理
+        try:
+            self._run(["docker", "rm", "-f", container_name], capture_output=True,
+                      timeout=timeout_sec)
+        except Exception:
+            pass
 
     def exec(self, container_name: str, cmd: list[str], *, timeout_sec: int = 60,
              input_text: str | None = None):

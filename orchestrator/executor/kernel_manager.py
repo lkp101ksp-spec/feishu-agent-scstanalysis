@@ -89,6 +89,14 @@ class KernelPool:
         - 用户代码异常（退出码非 0）→ error_code=PY_RUNTIME_ERROR + stderr 尾部
         - result 为末顶层表达式的 repr 字符串（无则为 "None"）
         """
+        # 空 code 防御：空文件执行 rc=0 会伪装成 success（真机 2026-08-30）
+        if not isinstance(code, str) or not code.strip():
+            return {
+                "stdout": "",
+                "result": None,
+                "error_code": "INVALID_INPUT",
+                "error_message": "code 为空——引用解析失败或模型未生成代码",
+            }
         handle = self.acquire(session_id)
         path = f"/tmp/r_{uuid.uuid4().hex}.py"
         try:

@@ -120,6 +120,18 @@ def test_exec_code_user_error_returns_py_runtime_error():
     assert sandbox.stopped == []
 
 
+def test_exec_code_empty_code_rejected_without_sandbox():
+    """空/None code 直接拒绝——空文件执行 rc=0 会伪装 success（真机 2026-08-30）。"""
+    sandbox = ExecFakeSandbox(exec_results=[_completed(), _completed()])
+    pool = KernelPool(sandbox=sandbox)
+    for bad in (None, "", "   \n"):
+        out = pool.exec_code("s1", bad)
+        assert out["error_code"] == "INVALID_INPUT"
+    # 不碰沙箱（不 start、不 exec）
+    assert sandbox.started == []
+    assert sandbox.exec_calls == []
+
+
 def test_exec_code_timeout_releases_container():
     """exec 超时 → SandboxTimeoutError 且容器重建（防残留进程污染）。"""
 

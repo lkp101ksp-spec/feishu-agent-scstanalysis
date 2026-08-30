@@ -127,6 +127,9 @@ class Scheduler:
     def _resolve_inputs(self, node: DAGNode) -> dict:
         """从上游 outputs 解析 <node>.field 形式的引用（值非 str 时原样透传）。
 
+        仅当 `.` 前部分是计划内已知 node_id 时才视为引用——否则 code 等
+        含 `.` 的普通字符串（如 f"{x:.6e}"）会被误拆成引用置 None
+        （真机 2026-08-30：run_python 的 code 含点→None→空文件假 success）。
         字段缺失时按别名兜底（records/text/results/summary）——
         模型猜错字段名不应导致下游拿到 None（真机 2026-08-30）。
         """
@@ -134,6 +137,10 @@ class Scheduler:
         for k, v in node.inputs.items():
             if isinstance(v, str) and "." in v:
                 upstream_id, field_name = v.split(".", 1)
+                if upstream_id not in self._node_map:
+                    # 非已知节点前缀 → 字面值（不是引用）
+                    resolved[k] = v
+                    continue
                 up_handle = self._handles.get(upstream_id)
                 if up_handle and up_handle.outputs:
                     if field_name in up_handle.outputs:
