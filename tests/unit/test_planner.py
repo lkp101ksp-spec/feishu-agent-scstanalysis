@@ -89,6 +89,25 @@ def test_extract_json_object_tolerates_fences():
         "nodes": [], "entry_node_ids": []}
 
 
+def test_planner_tolerates_missing_kind_and_entry():
+    """Phase 12 真机（2026-08-30）：节点缺 kind 默认 tool；entry 缺失自动推导。"""
+    fake = FakeLLMRouter([
+        '{"intent": "x"}',
+        """{"nodes": [
+            {"node_id": "n1", "tool_name": "read_doc",
+             "inputs": {"doc_id": "d"}, "depends_on": []},
+            {"node_id": "n2", "type": "tool", "tool_name": "summarize_text",
+             "inputs": {"text": "n1.blocks"}, "depends_on": ["n1"]}
+          ]}""",
+    ])
+    plan = Planner(llm_router=fake).plan(
+        message="m", session_id="s", task_id="t",
+        available_tools=["read_doc", "summarize_text"], tools_schema=[],
+    )
+    assert all(n.kind == "tool" for n in plan.nodes)
+    assert plan.entry_node_ids == ["n1"]
+
+
 def test_planner_retry_feeds_error_back():
     """重试 prompt 附带上次解析错误反馈。"""
     bad = "这不是 JSON"

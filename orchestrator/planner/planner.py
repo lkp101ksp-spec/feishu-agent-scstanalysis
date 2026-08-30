@@ -106,24 +106,34 @@ class Planner:
             f"可用工具：{tool_names}\n\n"
             f"工具契约（inputs 键必须严格取自对应工具的 parameters.properties，"
             f"不得发明字段）：\n{json.dumps(tools_schema, ensure_ascii=False)}\n\n"
-            "你可以生成 tool/branch/while/for 节点。"
-            "branch.condition_prompt 是自然语言条件；true_branch/false_branch 是嵌套 DAGNode 数组。"
-            "while.while_condition_prompt 是循环条件；body 是嵌套 DAGNode 数组；max_iterations 默认10。"
+            "输出格式（严格遵循，只输出一个 JSON 对象，不要 markdown 围栏）：\n"
+            '{"nodes": [{"node_id": "n1", "kind": "tool", '
+            '"tool_name": "<工具名>", "inputs": {…}, "depends_on": []}, …],\n'
+            ' "entry_node_ids": ["n1"]}\n'
+            "每个节点必须含 node_id、kind（只能取 tool/branch/while/for）、"
+            "tool_name（kind=tool 时必填）。\n"
+            "branch.condition_prompt 是自然语言条件；true_branch/false_branch 是嵌套节点数组。"
+            "while.while_condition_prompt 是循环条件；body 是嵌套节点数组；max_iterations 默认10。"
             "for.iterate_over 是上游 outputs 字段（<node_id>.<field>）；body 嵌套；max_iterations 默认100。"
             "节点 inputs 用 '<upstream_node_id>.<field>' 引用上游输出。"
             "entry_node_ids 必须是 depends_on=[] 的节点。"
-            "只输出一个 JSON 对象（含 nodes 与 entry_node_ids），不要输出其他文字。"
         )
 
     def _build_plan(self, resp, *, task_id: str, session_id: str) -> DAGPlan:
         payload = _extract_json_object(resp)
         nodes = [_build_node(n) for n in payload["nodes"]]
+        # entry 缺失时自动推导：depends_on 为空的节点即入口（容错，真机 2026-08-30）
+        entry = payload.get("entry_node_ids") or [
+            n.node_id for n in nodes if not n.depends_on
+        ]
+        if not entry:
+            raise KeyError("entry_node_ids")
         return DAGPlan(
             plan_id=new_ulid(),
             task_id=task_id,
             session_id=session_id,
             nodes=nodes,
-            entry_node_ids=payload["entry_node_ids"],
+            entry_node_ids=entry,
         )
 
 
@@ -148,10 +158,15 @@ def _extract_json_object(resp) -> dict:
 
 
 def _build_node(payload: dict) -> DAGNode:
-    """递归构造嵌套 DAGNode（Phase 3）。"""
+    """递归构造嵌套 DAGNode（Phase 3）。
+
+    容错（Phase 12 真机 2026-08-30）：kind 缺省/写成 type 视为 tool；
+    纯 tool 节点模型常省略 kind 字段。
+    """
+    kind = payload.get("kind") or payload.get("type") or "tool"
     kwargs = dict(
         node_id=payload["node_id"],
-        kind=payload["kind"],
+        kind=kind,
         tool_name=payload.get("tool_name"),
         inputs=payload.get("inputs", {}),
         depends_on=payload.get("depends_on", []),
@@ -160,15 +175,15 @@ def _build_node(payload: dict) -> DAGNode:
         join_strategy=payload.get("join_strategy"),
         on_node_fail=payload.get("on_node_fail", "continue"),
     )
-    if payload["kind"] == "branch":
+    if kind == "branch":
         kwargs["condition_prompt"] = payload.get("condition_prompt")
         kwargs["true_branch"] = [_build_node(n) for n in payload.get("true_branch", [])]
         kwargs["false_branch"] = [_build_node(n) for n in payload.get("false_branch", [])]
-    elif payload["kind"] == "while":
+    elif kind == "while":
         kwargs["while_condition_prompt"] = payload.get("while_condition_prompt")
         kwargs["body"] = [_build_node(n) for n in payload.get("body", [])]
         kwargs["max_iterations"] = payload.get("max_iterations", 10)
-    elif payload["kind"] == "for":
+    elif kind == "for":
         kwargs["iterate_over"] = payload.get("iterate_over")
         kwargs["iteration_var"] = payload.get("iteration_var", "item")
         kwargs["body"] = [_build_node(n) for n in payload.get("body", [])]
