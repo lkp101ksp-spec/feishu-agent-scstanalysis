@@ -1,6 +1,6 @@
 # Phase 13 · T3 控制流执行（branch/while/for Scheduler 解释器）设计
 
-日期：2026-08-30 ｜ 状态：待批准 ｜ 前置：Phase 13 T2 已全绿（run_python 真沙箱）
+日期：2026-08-30 ｜ 状态：已完成（自动化 + 真机三场景验收均通过） ｜ 前置：Phase 13 T2 已全绿（run_python 真沙箱）
 
 ## 1. 背景与现状
 
@@ -97,3 +97,40 @@
 | while 判定摇摆不收敛 | max_iterations 硬顶 + 研究任务整体 timeout 兜底 |
 | 展开副本 node_id 冲突 | 前缀含序号；控制流节点展开后即置 SUCCESS（有 handle 不再 ready）/ while 轮门控 |
 | LLM 判定拖慢调度循环 | 同步调用可接受（runner 独立线程 + 整体 timeout 兜底） |
+
+## 7. 实施结果（2026-08-30）
+
+四板块全部落地（commits `efa229a`/`2df63af`/`af6acbd`/`767cccf`/`20aa859`/`bb18638`/`b55f69c`）：
+
+| 项 | 结果 |
+|---|---|
+| Scheduler 控制流解释器 | branch（LLM 判定→展开选中分支）/ for（iterate_over→N 份 body 副本+`{item}` 替换）/ while（重入式逐轮判定+max_iter 硬顶）；副本 id 前缀+依赖重写+控制流字段传递 |
+| LLM 判定器 | `_ask_bool`（中英文措辞容错，负向词优先）；成功路径 INFO 留痕 |
+| Planner prompt | branch/for/while 完整示例 + `{item}` 用法 |
+| 装配 | research_runner 注入 condition_llm（orch.llm） |
+
+**验收**：全量 **651 passed + ruff clean**（Phase 13 T2 结束 635，+16 控制流单测）。
+
+### 真机验收 ✅（三场景，六轮迭代修复）
+
+| 场景 | 结果 |
+|---|---|
+| for：BRCA1 蛋白记录逐条摘要 | ✅ n1 blast 5 条 → `[f1.iterations] 5` → 5 个副本各自摘要（`{item}` 注入生效） |
+| branch：绑定文档 >500 字则摘要 | ✅ `[b1.chosen] true_branch` + true 分支副本摘要执行、写回文档 |
+| while：逐步生成随机数直到 ≥0.99 | ✅ do-while 首轮免判定 + 11 轮逐轮判定收敛停止 |
+
+注：for/while 首版任务（固定三项计算、单脚本自循环）被模型合理地用单 run_python 平铺完成——任务本身在 Python 内可闭环，非引擎问题；换成「项数运行时可知」「逐步执行」措辞后模型即生成控制流节点。
+
+### 真机六轮迭代修复（本轮核心价值）
+
+1. **planner 失败无原始响应**：JSON 坏输出只看到错位不看到内容 → 失败留痕 raw head 日志 + 重试 1→2（`2df63af`）
+2. **判定上下文整体截断**：block_tree 巨大字段淹没 text，长度类条件失据 → 分字段格式化 + `text<共N字符>` 长度元数据（`af6acbd`）
+3. **code 内嵌引用不生效**：模型写 `len('n1.text')` 算了字面量长度 7 → `_inline_substitute`（整值引用保持原语义；引号内形态只换内核防双层引号语法错）（`767cccf`）
+4. **branch 分支内嵌 while 副本丢控制流字段**：validate_dag 只禁循环体互嵌，branch 内嵌 while 合法 → 副本完整传递 condition_prompt/body 等（`20aa859`）
+5. **while 判定引用名字错位**：判据写 `n_step.result` 而上下文是 `w1_r0_s1.result` → 展开轮记录 id 映射、判定 prompt 引用重写对齐（`bb18638`）
+6. **while-do vs do-while 语义**：「直到…为止」类任务 w1 无上游、首轮上下文空 → LLM 无据判 false 0 轮退出 → 首轮无上游数据时免判定先执行一轮（`b55f69c`）
+
+### 已知局限
+
+- 嵌套控制流的跨子树引用（branch 内 while body 引用 branch 的另一兄弟节点）在副本 id 重写后失配——边缘场景，模型少见生成，遇失败可见
+- while 每轮一次 LLM 判定（~2s），20 轮上限下任务整体 timeout 兜底
