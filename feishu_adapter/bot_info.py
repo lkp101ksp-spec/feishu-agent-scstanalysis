@@ -28,7 +28,8 @@ def get_bot_open_id(sdk_client) -> str | None:
         resp = sdk_client.request(req)
         payload = json.loads(resp.raw.content)
         if payload.get("code") == 0:
-            bot = (payload.get("data") or {}).get("bot") or {}
+            # 注意：本接口 bot 直接在顶层，无 data 包裹层（真机验证 2026-08-28）
+            bot = payload.get("bot") or {}
             _CACHE["v"] = bot.get("open_id")
             return _CACHE["v"]
         logger.warning("bot info api failed: code=%s msg=%s",
