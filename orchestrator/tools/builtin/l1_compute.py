@@ -1,8 +1,8 @@
-"""L1 纯计算工具：summarize_text, classify_intent, run_python, run_blast。
+"""L1 纯计算工具：summarize_text, classify_intent, run_python。
 
 Phase 12 板块④：summarize_text/classify_intent 接真 LLM。
-Phase 13 T2：run_python 接真沙箱（KernelPool.exec_code 容器内执行），
-对 Planner 开放；run_blast 维持 stub 隐藏（网络版 blast_search 已可用）。
+Phase 13 T2：run_python 接真沙箱（KernelPool.exec_code 容器内执行）。
+run_blast stub 已删除（2026-08-31）：真实检索走 L3 blast_search（NCBI eutils）。
 """
 from __future__ import annotations
 
@@ -83,23 +83,6 @@ def register_l1_compute(
             ),
         )
     )
-    reg.register(
-        ToolSpec(
-            name="run_blast",
-            description="BLAST 序列比对（尚未接入沙箱，暂不可规划；请用 blast_search）",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "sequence": {"type": "string"},
-                    "program": {"type": "string"},
-                },
-                "required": ["sequence"],
-            },
-            risk_level="L1_compute",
-            visible_to_planner=False,  # stub：已有真实 blast_search 替代
-            handler=lambda sequence, program="blastn": _run_blast(sequence, program),
-        )
-    )
 
 
 def _make_summarize_handler(llm_router):
@@ -178,7 +161,3 @@ def _make_run_python_handler(kernel_pool, exec_timeout_sec: int = 60):
             }
 
     return handler
-
-
-def _run_blast(sequence, program):
-    return {"hits": []}

@@ -56,17 +56,18 @@ def test_l0_read_doc_calls_get_block_tree_and_flattens():
     assert out["text"] == "标题内容\nprint(1)"
 
 
-def test_l1_registers_four():
+def test_l1_registers_three():
+    """run_blast stub 已删除（2026-08-31）：真实检索走 L3 blast_search。"""
     reg = ToolRegistry()
     register_l1_compute(reg, llm_router=object(), kernel_manager=object())
     names = sorted(t.name for t in reg.list())
-    assert names == ["classify_intent", "run_blast", "run_python", "summarize_text"]
+    assert names == ["classify_intent", "run_python", "summarize_text"]
     run_py = reg.get("run_python")
     assert run_py.risk_level == "L1_compute"
 
 
-def test_l1_planner_visibility_hides_stubs():
-    """Phase 13 T2：run_python 真沙箱已接入对 Planner 开放；run_blast 仍隐藏。"""
+def test_l1_planner_visibility_all_real():
+    """Phase 13 T2：run_python 真沙箱接入对 Planner 开放；stub 清理后全部可见。"""
     reg = ToolRegistry()
     register_l1_compute(reg, llm_router=object(), kernel_manager=object())
     visible = {t.name for t in reg.list(planner_visible=True)}
@@ -75,8 +76,8 @@ def test_l1_planner_visibility_hides_stubs():
         f["function"]["name"]
         for f in reg.to_openai_functions(planner_visible=True)
     }
+    assert schema_names == visible
     assert "run_python" in schema_names  # 描述声明输出字段（T2）
-    assert "run_blast" not in schema_names
 
 
 def test_l1_run_python_real_sandbox():
