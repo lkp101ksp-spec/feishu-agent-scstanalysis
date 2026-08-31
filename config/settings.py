@@ -80,6 +80,8 @@ class Settings:
     research_writeback_approval: str = "card_confirm"
     # 审批卡片等待时长（秒），超时按拒绝处理
     research_approval_timeout_sec: int = 600
+    # run_python 代码级失败（运行时异常/语法被拦）LLM 自愈重试上限（0 关闭）
+    node_repair_max_retries: int = 1
 
 
 def _load_yaml(path: str) -> dict:
@@ -146,6 +148,8 @@ def load_settings() -> Settings:
             "RESEARCH_WRITEBACK_APPROVAL", "card_confirm"),
         research_approval_timeout_sec=int(
             os.environ.get("RESEARCH_APPROVAL_TIMEOUT_SEC", "600")),
+        node_repair_max_retries=int(
+            os.environ.get("NODE_REPAIR_MAX_RETRIES", "1")),
         # Phase 13 T2：沙箱配置外化（DOCKER_*/KERNEL_*）
         docker_image=os.environ.get(
             "DOCKER_IMAGE", "feishu-research-agent/kernel:latest"),

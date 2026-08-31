@@ -80,13 +80,68 @@ def _ask_bool(llm, condition: str, context: str) -> Optional[bool]:
 
 # 规则短路（Phase 14 后续优化）：形如 "c1.result 是否小于 0.99" 的单一
 # 纯数值比较不走 LLM（省 ~2s/轮）；多条件/非数值/上下文无值 → None 落回 LLM
+# 综合演练轮升级：支持三段引用（n2.result.retrieved）——前缀行取容器值再走子字段
 _RULE_CMP_RE = re.compile(
-    r"([A-Za-z_]\w*\.[A-Za-z_]\w*)\s*(?:(?:是否|是不是|已|还)\s*)?"
+    r"([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\s*(?:(?:是否|是不是|已|还)\s*)?"
     r"(>=|<=|==|!=|>|<|大于等于|小于等于|大于|小于|不等于|等于)\s*"
     r"(-?\d+(?:\.\d+)?)"
 )
 _CN_OPS = {"大于等于": ">=", "小于等于": "<=", "大于": ">", "小于": "<",
            "不等于": "!=", "等于": "=="}
+
+
+def _parse_literal(raw: str):
+    """上下文值文本 → dict/list/数字/bool/None（JSON 优先，repr 兜底）。
+
+    截断值（… 结尾）解析失败返回原字符串——调用方走不动子字段即回退 LLM。
+    """
+    raw = raw.strip().rstrip("…,，").strip()
+    import json as _json
+    try:
+        return _json.loads(raw)
+    except (ValueError, SyntaxError):
+        pass
+    import ast as _ast
+    try:
+        v = _ast.literal_eval(raw)
+        if isinstance(v, (dict, list, str, int, float, bool, type(None))):
+            return v
+    except (ValueError, SyntaxError):
+        pass
+    return raw
+
+
+def _lookup_numeric(ref: str, context: str) -> Optional[float]:
+    """按引用从上下文行取数值：两段直取；三段+由长到短试前缀行再走子字段。
+
+    上下文行格式 "ref: value" / "ref<共N字符>: 前800…"；子字段支持
+    dict 键与 list 数字下标（a.b.0）。取不到/不可数值化返回 None。
+    """
+    parts = ref.split(".")
+    # 由长到短试前缀：先试完整 ref（两段直取），再逐级缩短
+    # （n2.result.retrieved → 行 "n2.result: {...}" 取 ["retrieved"]）
+    for i in range(len(parts), 0, -1):
+        prefix = ".".join(parts[:i])
+        line_re = re.compile(
+            rf"^{re.escape(prefix)}\s*(?:<[^>]*>)?\s*[：:]\s*(.+)$", re.M)
+        lm = line_re.search(context)
+        if not lm:
+            continue
+        obj: object = _parse_literal(lm.group(1))
+        for key in parts[i:]:
+            if isinstance(obj, dict):
+                obj = obj.get(key)
+            elif isinstance(obj, list) and key.isdigit() and int(key) < len(obj):
+                obj = obj[int(key)]
+            else:
+                return None
+            if obj is None:
+                return None
+        try:
+            return float(obj)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def _rule_evaluate(prompt: str, context: str) -> Optional[bool]:
@@ -97,15 +152,8 @@ def _rule_evaluate(prompt: str, context: str) -> Optional[bool]:
     ref, op, num_str = matches[0]
     op = _CN_OPS.get(op, op)
     threshold = float(num_str)
-    # 上下文行格式 "ref: value" 或 "ref<共N字符>: 前800…"
-    line_re = re.compile(
-        rf"^{re.escape(ref)}\s*(?:<[^>]*>)?\s*[：:]\s*(\S+)", re.M)
-    lm = line_re.search(context)
-    if not lm:
-        return None
-    try:
-        val = float(lm.group(1).rstrip("…,，"))
-    except ValueError:
+    val = _lookup_numeric(ref, context)
+    if val is None:
         return None
     return {
         ">": val > threshold, "<": val < threshold,
@@ -125,14 +173,19 @@ class PlanResult:
 
 class Scheduler:
     def __init__(self, plan: DAGPlan, executor, max_concurrent: int = 4,
-                 runtime=None, condition_llm=None) -> None:
+                 runtime=None, condition_llm=None, code_repair_llm=None,
+                 node_repair_max_retries: int = 1) -> None:
         self.plan = plan
         self.executor = executor
         self.max_concurrent = max_concurrent
         self.runtime = runtime  # Phase 3：可选注入；None 时走 Phase 2 路径
         # T3：branch/while 条件判定器（llm_router）；None 时控制流节点 FAILED
         self._condition_llm = condition_llm
-        # T3：while 重入状态 node_id -> {"round": 已展开轮数, "body_ids": [...]}}
+        # 节点自愈（综合演练轮）：run_python 代码级失败 → LLM 修 code 重跑
+        self._code_repair_llm = code_repair_llm
+        self._node_repair_max_retries = max(0, int(node_repair_max_retries))
+        self._repair_counts: dict[str, int] = {}
+        # T3：while 重入状态 node_id -> {"round": 已展开轮数, "body_ids": [...]}
         self._while_state: dict[str, dict] = {}
         self._handles: dict[str, TaskHandle] = {}
         self._node_map: dict[str, DAGNode] = {n.node_id: n for n in plan.nodes}
@@ -334,7 +387,78 @@ class Scheduler:
                 self._handles[node.node_id] = handle
             await asyncio.sleep(0.01)
             self._refresh_running_handles()
+            # 节点自愈：run_python 代码级失败在下游 SKIPPED 前抢修重入队
+            self._try_repair_failed()
         return self._collect_result()
+
+    # === 节点自愈（综合演练轮）：代码级失败 LLM 修复重试 ===
+
+    # 可修复错误码：失败原因在代码本身，修复后可期望成功
+    _REPAIRABLE_ERRORS = {"PY_RUNTIME_ERROR", "TOOL_BLOCKED", "INVALID_INPUT"}
+
+    def _try_repair_failed(self) -> None:
+        """run_python 代码级失败 → LLM 修复 code 后重新入队（节点自愈）。
+
+        - 只修含 code 参数的 tool 节点（当前即 run_python）；修复的是
+          原始 code（注入前），重试时注入重新发生；
+        - 修复失败/无变化/超上限/LLM 缺失 → 保持 FAILED（下游照常 SKIPPED，
+          on_node_fail 语义不变）；
+        - 在 _refresh_running_handles 之后、下一轮 _ready_nodes 之前调用：
+          抢在下游看到 FAILED 置 SKIPPED 前弹回 PENDING。
+        """
+        if self._code_repair_llm is None or self._node_repair_max_retries <= 0:
+            return
+        for node_id, h in list(self._handles.items()):
+            if (h.state != ExecutionState.FAILED
+                    or h.error_code not in self._REPAIRABLE_ERRORS):
+                continue
+            node = self._node_map.get(node_id)
+            if (node is None or node.kind != "tool"
+                    or not isinstance(node.inputs.get("code"), str)):
+                continue
+            done = self._repair_counts.get(node_id, 0)
+            if done >= self._node_repair_max_retries:
+                continue
+            self._repair_counts[node_id] = done + 1
+            fixed = self._repair_code(
+                node.inputs["code"], h.error_code or "", h.error_message or "")
+            if not fixed or fixed == node.inputs["code"]:
+                continue
+            logger.info(
+                "node %s 自愈重试 %s/%s（%s）",
+                node_id, done + 1, self._node_repair_max_retries, h.error_code,
+            )
+            node.inputs["code"] = fixed
+            self._handles.pop(node_id, None)  # 弹回 PENDING → 重新调度
+
+    def _repair_code(self, code: str, error_code: str,
+                     error_message: str) -> Optional[str]:
+        """LLM 修复失败代码：返回修正后完整 code，失败返回 None。"""
+        from shared.schemas import ChatMessage
+
+        system = (
+            "你是 Python 代码修复器。给定失败代码与错误信息，输出修正后的"
+            "完整代码。只输出代码本身，不要解释、不要 markdown 围栏。"
+            "上游引用 <node_id>.<field> 会在执行前被替换为实际值，"
+            "保持原样引用即可，不要试图定义它们。"
+        )
+        user = (f"错误：{error_code}: {error_message[:500]}\n\n"
+                f"失败代码：\n{code}")
+        try:
+            resp = self._code_repair_llm.chat([
+                ChatMessage(role="system", content=system),
+                ChatMessage(role="user", content=user),
+            ])
+        except Exception as e:
+            logger.warning("code repair llm failed: %s", e)
+            return None
+        text = str(resp).strip()
+        # 剥可能的 markdown 围栏（模型偶尔不听话）
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1] if "\n" in text else text
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[:-3]
+        return text.strip() or None
 
     def _collect_result(self) -> PlanResult:
         node_states = {n.node_id: self._node_state(n.node_id) for n in self.plan.nodes}

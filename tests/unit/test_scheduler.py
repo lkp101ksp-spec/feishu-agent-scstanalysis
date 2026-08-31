@@ -2,7 +2,7 @@ import asyncio
 import datetime as dt
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan
-from orchestrator.planner.scheduler import Scheduler
+from orchestrator.planner.scheduler import PlanResult, Scheduler
 from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle
 
 
@@ -255,3 +255,105 @@ def test_resolve_inputs_dict_result_injects_dict_literal():
     assert isinstance(inner.value, _ast.Subscript)  # ({...})["percentage"]
     # 求值闭环：取出的字段值正确
     assert eval(compile(_ast.Expression(inner.value), "<t>", "eval")) == 0.01
+
+
+# === 节点自愈（综合演练轮）：代码级失败 LLM 修复重试 ===
+
+class FlakyExecutor(FakeExecutor):
+    """前 N 次 submit 直接 FAILED（可修复错误码），其余交由驱动置 SUCCESS。"""
+
+    def __init__(self, fail_first: int, error_code: str = "PY_RUNTIME_ERROR"):
+        super().__init__()
+        self._fail_left = fail_first
+        self._error_code = error_code
+
+    def submit(self, task: ExecutionTask) -> TaskHandle:
+        h = super().submit(task)
+        if self._fail_left > 0:
+            self._fail_left -= 1
+            h.state = ExecutionState.FAILED
+            h.error_code = self._error_code
+            h.error_message = "TypeError: string indices must be integers"
+            h.finished_at = dt.datetime.utcnow()
+        return h
+
+
+def _repair_llm(fixed: str):
+    """假修复 LLM：记录调用，恒返 fixed（剥围栏路径用真围栏也测一次）。"""
+    from unittest.mock import MagicMock
+
+    llm = MagicMock()
+    llm.chat.return_value = f"```python\n{fixed}\n```"
+    return llm
+
+
+async def _run_with_drive(sch: Scheduler) -> PlanResult:
+    """后台协程把 RUNNING 句柄翻成 SUCCESS，主协程等计划终态。"""
+    async def drive():
+        for _ in range(500):
+            await asyncio.sleep(0.005)
+            for h in ex.handles.values():
+                if h.state == ExecutionState.RUNNING and h.finished_at is None:
+                    h.state = ExecutionState.SUCCESS
+                    h.finished_at = dt.datetime.utcnow()
+            if sch._all_terminal():
+                return
+
+    ex = sch.executor
+    asyncio.create_task(drive())
+    return await asyncio.wait_for(sch.run_until_done(), timeout=3.0)
+
+
+async def test_node_repair_recovers_run_python_failure():
+    """自愈：run_python 代码级失败 → LLM 修 code（剥围栏）→ 重跑 SUCCESS。"""
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="run_python",
+                 inputs={"code": "data = n1.result\ndata['k']"}, depends_on=[])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1], entry_node_ids=["n1"])
+    ex = FlakyExecutor(fail_first=1)
+    llm = _repair_llm("data = {'k': 1}\ndata['k']")
+    sch = Scheduler(plan=plan, executor=ex, code_repair_llm=llm)
+    result = await _run_with_drive(sch)
+    assert result.node_states["n1"] == ExecutionState.SUCCESS
+    assert result.status == "success"
+    assert n1.inputs["code"] == "data = {'k': 1}\ndata['k']"  # 围栏已剥
+    assert len(ex.submitted) == 2  # 失败 1 次 + 自愈重跑 1 次
+    assert llm.chat.call_count == 1
+
+
+async def test_node_repair_limit_and_error_filter():
+    """超上限不修 / 非可修复错误码不修 / LLM 缺失不修——保持 FAILED。"""
+    # ① 上限 0（关闭自愈）
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="run_python",
+                 inputs={"code": "1/0"}, depends_on=[])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1], entry_node_ids=["n1"])
+    ex = FlakyExecutor(fail_first=1)
+    llm = _repair_llm("42")
+    sch = Scheduler(plan=plan, executor=ex, code_repair_llm=llm,
+                    node_repair_max_retries=0)
+    result = await _run_with_drive(sch)
+    assert result.node_states["n1"] == ExecutionState.FAILED
+    assert llm.chat.call_count == 0
+
+    # ② SANDBOX_TIMEOUT 非代码错误（重跑也会再超时）——不自愈
+    n2 = DAGNode(node_id="n1", kind="tool", tool_name="run_python",
+                 inputs={"code": "while True: pass"}, depends_on=[])
+    plan2 = DAGPlan(plan_id="p2", task_id="t", session_id="s",
+                    nodes=[n2], entry_node_ids=["n1"])
+    ex2 = FlakyExecutor(fail_first=1, error_code="SANDBOX_TIMEOUT")
+    sch2 = Scheduler(plan=plan2, executor=ex2, code_repair_llm=_repair_llm("42"))
+    result2 = await _run_with_drive(sch2)
+    assert result2.node_states["n1"] == ExecutionState.FAILED
+
+    # ③ code_repair_llm 缺失（引擎未注入 LLM）——不自愈
+    ex3 = FlakyExecutor(fail_first=1)
+    sch3 = Scheduler(plan=DAGPlan(plan_id="p3", task_id="t", session_id="s",
+                                  nodes=[DAGNode(
+                                      node_id="n1", kind="tool",
+                                      tool_name="run_python",
+                                      inputs={"code": "x ="})],
+                                  entry_node_ids=["n1"]),
+                     executor=ex3)
+    result3 = await _run_with_drive(sch3)
+    assert result3.node_states["n1"] == ExecutionState.FAILED

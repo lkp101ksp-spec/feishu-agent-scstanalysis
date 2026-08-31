@@ -358,6 +358,17 @@ def test_rule_evaluate_direct():
     assert _rule_evaluate("c1.result 是否大于 3", "c1.result: 5") is True
     # 长度元数据行（"ref<共N字符>: 前缀…"）也能取值
     assert _rule_evaluate("c1.result >= 1.5", "c1.result<共20字符>: 1.5") is True
+    # 三段引用（综合演练轮）：前缀行容器值取子字段，JSON/repr 双格式
+    assert _rule_evaluate(
+        "n2.result.retrieved >= 5",
+        'n2.result: {"retrieved": 5, "total": 67407}') is True
+    assert _rule_evaluate(
+        "n2.result.percentage > 0.05",
+        "n2.result: {'retrieved': 5, 'percentage': 0.01}") is False
+    assert _rule_evaluate(
+        "n2.result.retrieved >= 5", "n2.result: abc") is None  # 值非容器
+    assert _rule_evaluate(
+        "n2.result.retrieved >= 5", "n2.other: 1") is None  # 前缀行不存在
     # 以下均不可短路 → None（回退 LLM 判定）
     assert _rule_evaluate("a.x < 1 且 b.y > 2", "a.x: 0") is None  # 多条件
     assert _rule_evaluate("c1.result < 0.99", "c1.result: abc") is None  # 值非数值

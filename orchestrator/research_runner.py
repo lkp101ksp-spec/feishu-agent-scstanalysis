@@ -184,10 +184,14 @@ class ResearchRunner:
 
         # 2. 执行（整体 wall-clock 超时保护）
         # T3：condition_llm 注入——branch/while 条件判定器（orch.llm 即 LLMRouter）
+        # 自愈轮：code_repair_llm 注入——run_python 代码级失败 LLM 修复重跑
         scheduler = Scheduler(
             plan=plan, executor=self.orch.executor,
             max_concurrent=self.orch.settings.max_concurrent_nodes,
             condition_llm=getattr(self.orch, "llm", None),
+            code_repair_llm=getattr(self.orch, "llm", None),
+            node_repair_max_retries=getattr(
+                self.orch.settings, "node_repair_max_retries", 1),
         )
         loop = asyncio.new_event_loop()
         try:
@@ -381,6 +385,8 @@ class ResearchRunner:
 
         list/dict 输出（如 blast 的 records）JSON 序列化展示——
         否则关键结果根本不出现在回复里（真机 2026-08-30）。
+        多项 list 只展示「N 项 + 首条摘要」：5 条 GenBank 记录即近
+        800 字，全量展示反而淹没真正的关键输出（真机 2026-08-31）。
         """
         import json
 
@@ -391,8 +397,11 @@ class ResearchRunner:
             for key, val in handle.outputs.items():
                 if key in ("ast_notices",) or val in (None, "", [], {}):
                     continue
-                if not isinstance(val, str):
-                    val = json.dumps(val, ensure_ascii=False)
+                if isinstance(val, list) and len(val) > 2:
+                    head = json.dumps(val[0], ensure_ascii=False, default=str)
+                    val = f"共 {len(val)} 项（防刷屏略）；首条: {head[:200]}"
+                elif not isinstance(val, str):
+                    val = json.dumps(val, ensure_ascii=False, default=str)
                 text = val if len(val) <= max_chars else val[:max_chars] + "…"
                 lines.append(f"[{node_id}.{key}] {text}")
         return lines[:10]

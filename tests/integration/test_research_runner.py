@@ -209,6 +209,26 @@ def test_task_row_created_with_research_intent(db):
     s.close()
 
 
+def test_outputs_digest_list_anti_spam():
+    """多项 list 只展示「N 项 + 首条摘要」（真机 2026-08-31 防刷屏）。"""
+    records = [{"id": str(i), "title": f"记录 {i}"} for i in range(5)]
+    sch = SimpleNamespace(_handles={
+        "n1": TaskHandle(
+            execution_id="e1", task_id="t", node_id="n1",
+            state=ExecutionState.SUCCESS,
+            started_at=datetime.utcnow(), finished_at=datetime.utcnow(),
+            outputs={"records": records, "total_count": 67407},
+        ),
+    })
+    lines = ResearchRunner._outputs_digest(sch)
+    joined = "\n".join(lines)
+    assert "[n1.total_count] 67407" in joined  # 标量照常全量
+    rec_line = next(l for l in lines if l.startswith("[n1.records]"))
+    assert "共 5 项" in rec_line and "首条" in rec_line
+    assert "记录 4" not in rec_line  # 其余项不再展开
+    assert "记录 0" in rec_line  # 首条可见
+
+
 # === Phase 14：card_confirm 卡片确认写回 ===
 
 def _wait_card_sent(im, timeout: float = 10.0) -> dict:

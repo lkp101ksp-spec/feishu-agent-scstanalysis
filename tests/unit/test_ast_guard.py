@@ -39,5 +39,17 @@ def test_blocks_nested_subprocess_popen():
         guard.check("from subprocess import Popen\nPopen(['ls'])")
 
 
+def test_syntax_error_message_carries_position_and_code_head():
+    """语法错误附位置 + code 头部（真机 2026-08-31 b1_tt1 排障可读性）。"""
+    bad = "print(f\"比例：{{'a': 1}['k']}%\")"  # f-string 花括号转义错乱
+    with pytest.raises(ToolBlockedError) as ei:
+        guard.check(bad)
+    msg = str(ei.value)
+    assert "syntax error" in msg
+    assert "行" in msg  # 行号/列位置
+    assert "code 头部" in msg
+    assert "print(f" in msg  # 原文头部可见
+
+
 def test_empty_code_safe():
     guard.check("")

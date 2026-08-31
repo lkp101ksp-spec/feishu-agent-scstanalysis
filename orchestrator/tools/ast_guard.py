@@ -58,8 +58,14 @@ class ASTGuard:
             return report
         try:
             tree = ast.parse(code)
-        except SyntaxError:
-            raise ToolBlockedError("code has syntax error; cannot validate safety")
+        except SyntaxError as e:
+            # 附错误位置 + 注入后 code 头部：上游引用注入产生的语法错误
+            # 若只有一句报错，用户/模型无从定位（真机 2026-08-31 b1_tt1）
+            raise ToolBlockedError(
+                f"code has syntax error; cannot validate safety"
+                f"（行{e.lineno}:{e.offset} {e.msg}）"
+                f"；code 头部: {code[:160]!r}"
+            )
         # 1) 收集 from X import Y 别名（防绕过）
         from_imports: dict[str, str] = {}
         for node in ast.walk(tree):

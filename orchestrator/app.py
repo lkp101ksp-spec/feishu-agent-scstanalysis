@@ -336,6 +336,10 @@ class Orchestrator:
         scheduler = Scheduler(
             plan=plan, executor=self.executor,
             max_concurrent=self.settings.max_concurrent_nodes,
+            condition_llm=getattr(self, "llm", None),
+            code_repair_llm=getattr(self, "llm", None),
+            node_repair_max_retries=getattr(
+                self.settings, "node_repair_max_retries", 1),
         )
         try:
             loop = asyncio.new_event_loop()
