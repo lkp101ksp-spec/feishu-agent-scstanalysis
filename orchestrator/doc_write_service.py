@@ -10,16 +10,22 @@
 - 无有效 bind：抛 DocWriteError，不创建 doc_writes
 - 适配层异常：mark_failed 后抛 DocWriteError
 """
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
-from feishu_adapter.doc_adapter import DocAdapter
 from persistence.models import DocWriteRow
 from persistence.repositories.doc_write_repo import DocWriteRepo
 from persistence.repositories.session_repo import SessionRepo
 from shared.errors import DocWriteError
 from shared.ulid_ import new_ulid
+
+# DocAdapter 仅作类型标注：真实导入会拖进 lark SDK（protobuf 冷导入
+# 实测 ~10s，真机卡片测试踩 10s 轮询超时线上），TYPE_CHECKING 斩断依赖链
+if TYPE_CHECKING:
+    from feishu_adapter.doc_adapter import DocAdapter
 
 logger = logging.getLogger(__name__)
 
