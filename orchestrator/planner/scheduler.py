@@ -78,6 +78,42 @@ def _ask_bool(llm, condition: str, context: str) -> Optional[bool]:
     return None
 
 
+# 规则短路（Phase 14 后续优化）：形如 "c1.result 是否小于 0.99" 的单一
+# 纯数值比较不走 LLM（省 ~2s/轮）；多条件/非数值/上下文无值 → None 落回 LLM
+_RULE_CMP_RE = re.compile(
+    r"([A-Za-z_]\w*\.[A-Za-z_]\w*)\s*(?:(?:是否|是不是|已|还)\s*)?"
+    r"(>=|<=|==|!=|>|<|大于等于|小于等于|大于|小于|不等于|等于)\s*"
+    r"(-?\d+(?:\.\d+)?)"
+)
+_CN_OPS = {"大于等于": ">=", "小于等于": "<=", "大于": ">", "小于": "<",
+           "不等于": "!=", "等于": "=="}
+
+
+def _rule_evaluate(prompt: str, context: str) -> Optional[bool]:
+    """纯数值比较规则短路：从上下文取引用值做 Python 比较，不可短路返回 None。"""
+    matches = _RULE_CMP_RE.findall(prompt)
+    if len(matches) != 1:  # 多条件/无条件：语义不明，交回 LLM
+        return None
+    ref, op, num_str = matches[0]
+    op = _CN_OPS.get(op, op)
+    threshold = float(num_str)
+    # 上下文行格式 "ref: value" 或 "ref<共N字符>: 前800…"
+    line_re = re.compile(
+        rf"^{re.escape(ref)}\s*(?:<[^>]*>)?\s*[：:]\s*(\S+)", re.M)
+    lm = line_re.search(context)
+    if not lm:
+        return None
+    try:
+        val = float(lm.group(1).rstrip("…,，"))
+    except ValueError:
+        return None
+    return {
+        ">": val > threshold, "<": val < threshold,
+        ">=": val >= threshold, "<=": val <= threshold,
+        "==": val == threshold, "!=": val != threshold,
+    }[op]
+
+
 @dataclass
 class PlanResult:
     plan_id: str
@@ -490,7 +526,7 @@ class Scheduler:
 
     def _eval_condition(self, node: DAGNode, prompt: str,
                         context: str) -> Optional[bool]:
-        """LLM 条件判定；None = 不可判定（判定器未注入/异常/输出无法解析）。"""
+        """条件判定：纯数值比较先规则短路，否则 LLM；None = 不可判定。"""
         if self._condition_llm is None:
             logger.warning("node %s 控制流判定器未注入（condition_llm=None）",
                            node.node_id)
@@ -498,6 +534,12 @@ class Scheduler:
         if not prompt:
             logger.warning("node %s 控制流节点缺条件 prompt", node.node_id)
             return None
+        # 规则短路：单一 "ref op number" 且上下文值可数值化 → 不调 LLM
+        rule = _rule_evaluate(prompt, context)
+        if rule is not None:
+            logger.info("control node %s rule-judge: cond=%r result=%s",
+                        node.node_id, prompt[:120], rule)
+            return rule
         try:
             result = _ask_bool(self._condition_llm, prompt, context)
         except Exception as e:
@@ -536,7 +578,11 @@ class Scheduler:
         return f"{key}: {sval}"
 
     def _body_context(self, body_ids: list[str]) -> str:
-        """while 上一轮 body 输出摘要（失败节点附错误信息，判定可见）。"""
+        """while 上一轮 body 输出摘要（失败节点附错误信息，判定可见）。
+
+        字段行名用 "{bid}.{field}"——与判定 prompt 引用（已重写为副本 id）
+        完全对齐，规则短路与 LLM 判定都能直接按名取值。
+        """
         parts: list[str] = []
         for bid in body_ids:
             h = self._handles.get(bid)
@@ -545,9 +591,9 @@ class Scheduler:
             if h.state == ExecutionState.FAILED:
                 parts.append(f"{bid}: FAILED {h.error_code}: {h.error_message}")
             elif h.outputs:
-                fields = [self._format_field(k, v)
+                fields = [self._format_field(f"{bid}.{k}", v)
                           for k, v in h.outputs.items() if k != "ast_notices"]
-                parts.append(f"{bid}: " + "\n".join(fields))
+                parts.append("\n".join(fields))
         return "\n".join(parts)[:_CONTEXT_MAX_CHARS]
 
     def _body_all_terminal(self, body_ids: list[str]) -> bool:

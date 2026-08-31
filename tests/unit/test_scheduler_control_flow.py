@@ -224,8 +224,9 @@ def _while_plan(max_iterations=10, body_fail=False):
     body = [DAGNode(node_id="c1", kind="tool", tool_name="run_python",
                     inputs={"code": "import random\nrandom.random()"},
                     depends_on=["w1"])]
+    # 注意：这里刻意用非数值表述走 LLM 判定路径（规则短路另有专门用例）
     w1 = DAGNode(node_id="w1", kind="while",
-                 while_condition_prompt="c1.result 是否小于 0.99",
+                 while_condition_prompt="c1.result 是否已达到目标",
                  depends_on=["n1"], body=body, max_iterations=max_iterations)
     plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
                    nodes=[n1, w1], entry_node_ids=["n1"])
@@ -277,6 +278,7 @@ async def test_while_no_upstream_runs_first_round_without_judging():
 
     真机 2026-08-30：w1 depends_on=[] 且条件引用 body 输出，首轮上下文
     为空 → LLM 无据判 false → 0 轮退出。
+    第 2 轮判定（0.997 < 0.99 = False）被规则短路，全程不调 LLM。
     """
     body = [DAGNode(node_id="n1", kind="tool", tool_name="run_python",
                     inputs={"code": "import random\nrandom.random()"},
@@ -286,14 +288,14 @@ async def test_while_no_upstream_runs_first_round_without_judging():
                  depends_on=[], body=body, max_iterations=20)
     plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
                    nodes=[w1], entry_node_ids=["w1"])
-    llm = FakeLLM(seq=["false"])  # 仅第 2 轮判定（首轮免判定）
+    llm = FakeLLM(seq=["false"])  # 若误走 LLM 首轮即消耗并改变轮数
     ex = AutoFinishExecutor(outputs_for={"run_python": {"result": "0.997"}})
     sch = Scheduler(plan=plan, executor=ex, condition_llm=llm)
     result = await _run(sch)
     assert result.status == "success"
     assert sch._handles["w1"].outputs == {"rounds": 1}
     assert result.node_states["w1_r0_n1"] == ExecutionState.SUCCESS
-    assert len(llm.calls) == 1  # 首轮未调 LLM
+    assert len(llm.calls) == 0  # 首轮免判定 + 第 2 轮规则短路
 
 
 async def test_while_condition_prompt_refs_rewritten_to_round_copies():
@@ -344,3 +346,40 @@ async def test_branch_nested_while_control_fields_preserved():
     assert sch._handles["b1_fw1"].state == ExecutionState.SUCCESS
     assert sch._handles["b1_fw1"].outputs == {"rounds": 0}
     assert result.status == "success"
+
+
+# === Phase 14 后续优化：判定规则短路（纯数值比较不走 LLM） ===
+
+def test_rule_evaluate_direct():
+    """可短路：单一 ref op number 且上下文值可数值化；否则 None 回退 LLM。"""
+    from orchestrator.planner.scheduler import _rule_evaluate
+    assert _rule_evaluate("c1.result < 0.99", "c1.result: 0.5") is True
+    assert _rule_evaluate("c1.result < 0.99", "c1.result: 0.995") is False
+    assert _rule_evaluate("c1.result 是否大于 3", "c1.result: 5") is True
+    # 长度元数据行（"ref<共N字符>: 前缀…"）也能取值
+    assert _rule_evaluate("c1.result >= 1.5", "c1.result<共20字符>: 1.5") is True
+    # 以下均不可短路 → None（回退 LLM 判定）
+    assert _rule_evaluate("a.x < 1 且 b.y > 2", "a.x: 0") is None  # 多条件
+    assert _rule_evaluate("c1.result < 0.99", "c1.result: abc") is None  # 值非数值
+    assert _rule_evaluate("c1.result < 0.99", "other: 1") is None  # 上下文无该引用
+    assert _rule_evaluate("文档是否超过 500 字", "") is None  # 无 ref.field
+    assert _rule_evaluate("c1.result 是否已达到目标", "c1.result: 0.5") is None
+
+
+async def test_while_rule_shortcut_skips_llm():
+    """规则可判的 while 全程不调 LLM：首轮 do-while 执行 + 第 2 轮规则判定停。"""
+    body = [DAGNode(node_id="c1", kind="tool", tool_name="run_python",
+                    inputs={"code": "0.995"}, depends_on=[])]
+    w1 = DAGNode(node_id="w1", kind="while",
+                 while_condition_prompt="c1.result < 0.99",
+                 depends_on=[], body=body, max_iterations=5)
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[w1], entry_node_ids=["w1"])
+    llm = FakeLLM(seq=["true"])  # 若误走 LLM 会改变轮数，断言即失败
+    ex = AutoFinishExecutor(outputs_for={"run_python": {"result": "0.995"}})
+    sch = Scheduler(plan=plan, executor=ex, condition_llm=llm)
+    result = await _run(sch)
+    # 首轮执行后规则判定 0.995 < 0.99 为 False → 收敛停止，全程 0 次 LLM
+    assert result.status == "success"
+    assert sch._handles["w1"].outputs == {"rounds": 1}
+    assert len(llm.calls) == 0

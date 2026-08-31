@@ -214,28 +214,37 @@ class DocAdapter:
         return [{"block_type": 2, "text": {
             "elements": [{"text_run": {"content": f"[{t}] {fallback}"}}]}}]
 
-    def _sdk_render_blocks(self, doc_id: str, blocks) -> None:
-        """SDK 路径：把 list[Block] 逐块展开后批量追加到文档末尾。"""
+    def _sdk_render_blocks(self, doc_id: str, blocks) -> "str | None":
+        """SDK 路径：逐块展开批量追加到文档末尾；返回最后写入块的 id。
+
+        返回值供锚点续写跟随定位（Phase 14 后续：anchor_block_id 补齐）。
+        """
+        last_block_id = None
         batch: list[dict] = []
         for block in blocks:
             self._rate_limiter.wait()
             batch.extend(self._to_sdk_blocks(block))
             if len(batch) >= 50:  # children 单批上限 50
-                self._sdk_create_children(doc_id, batch)
+                created = self._sdk_create_children(doc_id, batch)
+                if created:
+                    last_block_id = created[-1].get("block_id")
                 batch = []
         if batch:
-            self._sdk_create_children(doc_id, batch)
+            created = self._sdk_create_children(doc_id, batch)
+            if created:
+                last_block_id = created[-1].get("block_id")
+        return last_block_id
 
     # === Phase 5 ===
-    def render_blocks(self, doc_id: str, blocks) -> None:
-        """Phase 5: 把 list[Block] 渲染到飞书 doc。"""
+    def render_blocks(self, doc_id: str, blocks) -> "str | None":
+        """Phase 5: 渲染块到飞书 doc；SDK 路径返回最后写入块 id（CLI 路径 None）。"""
         if self.sdk_client is not None:
-            self._sdk_render_blocks(doc_id, blocks)
-            return
+            return self._sdk_render_blocks(doc_id, blocks)
         for block in blocks:
             self._rate_limiter.wait()
             payload = self._to_feishu_payload(block)
             self._post_block(doc_id, payload)
+        return None
 
     def _to_feishu_payload(self, block) -> dict:
         """Phase 5: 6 类 Block → 飞书 doc API payload。"""

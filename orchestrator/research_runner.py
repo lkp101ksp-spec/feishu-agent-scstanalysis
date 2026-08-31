@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
+from datetime import datetime
 
 from orchestrator.planner.scheduler import Scheduler
 from shared.executor_types import ExecutionState
@@ -122,11 +123,32 @@ class ResearchRunner:
         # 绑定文档等运行时上下文注入 prompt——模型无从得知 doc_id，
         # 不注入则 read_doc 只能编占位符（真机 2026-08-30 发现）
         bound_doc_pre = session_service.bound_doc_id(session_id)
-        session_context = (
-            f"当前会话已绑定文档 doc_id={bound_doc_pre}"
-            f"（read_doc 的 doc_id 直接用它）" if bound_doc_pre
-            else "当前会话未绑定文档（涉及文档读取时应在回复中提示用户先 /bind-doc）"
-        )
+        if bound_doc_pre:
+            session_context = (
+                f"当前会话已绑定文档 doc_id={bound_doc_pre}"
+                f"（read_doc 的 doc_id 直接用它）"
+            )
+        else:
+            # 区分「从未绑定」与「绑定过期」：过期时模型只看到"未绑定"
+            # 会尝试编造占位符（真机 2026-08-30 docx invalid param）
+            stale = session_repo.get(session_id)
+            if stale is not None and stale.bound_doc_id:
+                session_context = (
+                    f"当前会话的文档绑定已过期（原文档 doc_id="
+                    f"{stale.bound_doc_id}）。read_doc 等文档工具调用会被"
+                    "拒绝；严禁编造 doc_id，应在回复中提示用户先执行 "
+                    "/bind-doc 重新绑定。"
+                )
+                self.im.reply(
+                    incoming.chat_id,
+                    "[提示] 文档绑定已过期，本次涉文档的读取/写回将受限；"
+                    "可先 /bind-doc 重新绑定后重试。",
+                )
+            else:
+                session_context = (
+                    "当前会话未绑定文档（涉及文档读取时应在回复中提示"
+                    "用户先 /bind-doc）"
+                )
         # L2 副作用工具整体不可规划（名字与 schema 都不给模型）：
         # 研究结果由本 Runner 自动写回绑定文档，模型规划 write_doc 只会
         # 被 approval 拒掉（真机 2026-08-30 n3 TOOL_DENIED）
@@ -194,11 +216,17 @@ class ResearchRunner:
         ]
         outputs_digest = self._outputs_digest(scheduler)
         failure_lines = self._failure_digest(scheduler)
+        # 任务标识（描述摘要+时间戳）：多任务写同文档时用户可区分哪次写入
+        task_label = "{} · {:%m-%d %H:%M}".format(
+            task_text[:30] + ("…" if len(task_text) > 30 else ""),
+            datetime.now(),
+        )
         blocks = self.orch.template.render_plan_summary_blocks(
             status=result.status,
             node_states={k: v.value for k, v in result.node_states.items()},
             artifacts_count=0,
             outputs=outputs_digest,  # 关键输出也落文档（Phase 14 真机发现缺失）
+            task_label=task_label,
         )
 
         # 4. 绑定文档则写回（Phase 14：card_confirm 卡片确认 / bind_scope 直写）

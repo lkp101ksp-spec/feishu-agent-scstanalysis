@@ -107,12 +107,14 @@ class TemplateEngine:
 
     def render_plan_summary_blocks(
         self, *, status: str, node_states: dict, artifacts_count: int,
-        outputs: list | None = None,
+        outputs: list | None = None, task_label: str = "",
     ) -> list:
         """Phase 5: 返回 Pydantic Block 列表（用于飞书 doc 渲染）。
 
         outputs：关键输出摘要行（Phase 14 补——IM 有「关键输出」段而
         文档没有，用户在文档里看不到研究结果，真机 2026-08-31 发现）。
+        task_label：任务标识（描述摘要+时间戳）——多任务写同文档时
+        用户区分是哪次写入（真机 2026-08-31 用户提出）。
         """
         from orchestrator.blocks.schemas import (
             HeadingBlock,
@@ -120,8 +122,11 @@ class TemplateEngine:
             TableBlock,
             TextBlock,
         )
+        title = f"Plan 执行结果（{status}）"
+        if task_label:
+            title += f"— {task_label}"
         blocks = [
-            HeadingBlock(level=2, text=f"Plan 执行结果（{status}）"),
+            HeadingBlock(level=2, text=title),
             TextBlock(text=f"Nodes: {len(node_states)}; Artifacts: {artifacts_count}"),
         ]
         if outputs:
