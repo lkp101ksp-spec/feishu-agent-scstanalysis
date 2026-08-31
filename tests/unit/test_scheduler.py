@@ -209,8 +209,10 @@ def test_resolve_inputs_dict_result_injects_dict_literal():
     真机 2026-08-31 综合演练：exec_code 的 result 曾一律为 repr 字符串，
     下游 `data = n2.result` 拿到字符串字面量，`data["percentage"]` 抛
     TypeError（b1_tn3 PY_RUNTIME_ERROR）；result 还原原生类型后本用例
-    守护注入链路闭环。
+    守护注入链路闭环。容器 repr 加括号包裹守护 f-string 场景（b1_tt1）。
     """
+    import ast as _ast
+
     stats = {"fetched": 5, "total": 67407, "percentage": 0.01}
     n1 = DAGNode(node_id="n1", kind="tool", tool_name="run_python",
                  inputs={}, depends_on=[])
@@ -227,11 +229,29 @@ def test_resolve_inputs_dict_result_injects_dict_literal():
         outputs={"result": stats},
     )
     resolved = sch._resolve_inputs(n2)
-    assert resolved["code"] == f"data = {stats!r}\nmsg = data['percentage']"
-    # 注入结果是合法 Python：可被字面量解析且求值后可取字段
-    import ast as _ast
+    assert resolved["code"] == f"data = ({stats!r})\nmsg = data['percentage']"
 
-    body = _ast.parse(resolved["code"], mode="exec")
-    assign = body.body[0]
-    assert isinstance(assign, _ast.Assign)
-    assert isinstance(assign.value, _ast.Dict)  # dict 字面量而非 Constant 字符串
+    def _first_expr(code: str) -> _ast.expr:
+        """首条语句必须是表达式且求值可取字段（AST 结构级断言）。"""
+        body = _ast.parse(code, mode="exec").body
+        assign = body[0]
+        assert isinstance(assign, _ast.Assign)
+        return assign.value
+
+    # 加括号后仍是 dict 字面量（而非 Constant 字符串）
+    assert isinstance(_first_expr(resolved["code"]), _ast.Dict)
+
+    # f-string 场景（b1_tt1 真机失败模式）：`{` 后注入 dict 不得产生 {{ 转义
+    n3 = DAGNode(node_id="n3", kind="tool", tool_name="run_python",
+                 inputs={"code": 'print(f"样本充足，取回比例：{n1.result["percentage"]}%")'},
+                 depends_on=["n1"])
+    plan.nodes.append(n3)
+    code3 = sch._resolve_inputs(n3)["code"]
+    # ast_guard 对注入后代码 ast.parse——语法必须成立
+    stmt3 = _ast.parse(code3, mode="exec").body[0]
+    fstr = stmt3.value.args[0]  # print(f"...") 的参数
+    assert isinstance(fstr, _ast.JoinedStr)  # 仍是 f-string
+    inner = fstr.values[1]  # {(...)} 表达式段
+    assert isinstance(inner.value, _ast.Subscript)  # ({...})["percentage"]
+    # 求值闭环：取出的字段值正确
+    assert eval(compile(_ast.Expression(inner.value), "<t>", "eval")) == 0.01

@@ -276,6 +276,9 @@ class Scheduler:
         （np.arange / e.g. / self.x）不受影响。
         引用已被引号包裹（'n1.text'）时只替换内核（外层引号保留），
         否则整段 repr——否则 ''xxx'' 双层引号是语法错误。
+        容器类 repr（{/[/( 开头）整段替换时加括号包裹：f-string 里
+        `{` 后紧跟 `{` 会被当转义大括号产生语法错误（真机 2026-08-31
+        b1_tt1 TOOL_BLOCKED：f"...{n2.result['k']}%" 注入 dict 后变 {{）。
         """
         def _sub(m: "re.Match") -> str:
             up_id, field = m.group(1), m.group(2)
@@ -287,6 +290,8 @@ class Scheduler:
             nxt = text[m.end()] if m.end() < len(text) else ""
             if prev in ("'", '"') and nxt in ("'", '"'):
                 return r[1:-1]
+            if r[:1] in "{[(":
+                return f"({r})"
             return r
 
         return _REF_TOKEN_RE.sub(_sub, text)
