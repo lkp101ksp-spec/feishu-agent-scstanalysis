@@ -44,7 +44,7 @@ class AutoFinishExecutor:
         return TaskHandle(
             execution_id=f"e{len(self.submitted)}", task_id=task.task_id,
             node_id=task.node_id, state=ExecutionState.SUCCESS,
-            started_at=dt.datetime.utcnow(), finished_at=dt.datetime.utcnow(),
+            started_at=dt.datetime.now(dt.UTC), finished_at=dt.datetime.now(dt.UTC),
             outputs=dict(self.outputs_for.get(task.tool_name, {"result": "ok"})),
         )
 
@@ -152,7 +152,7 @@ def test_upstream_context_big_field_does_not_drown_text():
     sch._handles["n1"] = TaskHandle(
         execution_id="e0", task_id="t", node_id="n1",
         state=ExecutionState.SUCCESS,
-        started_at=dt.datetime.utcnow(), finished_at=dt.datetime.utcnow(),
+        started_at=dt.datetime.now(dt.UTC), finished_at=dt.datetime.now(dt.UTC),
         outputs={"block_tree": big_tree, "text": long_text},
     )
     ctx = sch._upstream_context(sch._node_map["b1"])

@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -30,7 +30,7 @@ class ApprovalPolicy:
             return False
         if not getattr(session, "bind_expires_at", None):
             return False
-        if session.bind_expires_at < datetime.utcnow():
+        if session.bind_expires_at < datetime.now(UTC):
             return False
         return args.get("doc_id") == session.bound_doc_id
 

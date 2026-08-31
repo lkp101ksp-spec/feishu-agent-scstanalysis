@@ -17,7 +17,7 @@ class FakeExecutor:
             task_id=task.task_id,
             node_id=task.node_id,
             state=ExecutionState.RUNNING,
-            started_at=dt.datetime.utcnow(),
+            started_at=dt.datetime.now(dt.UTC),
         )
         self.submitted.append(task)
         self.handles[h.execution_id] = h
@@ -55,7 +55,7 @@ async def test_scheduler_runs_sequentially():
                 if h.state == ExecutionState.RUNNING and h.finished_at is None:
                     h.state = ExecutionState.SUCCESS
                     h.outputs = {"result": "ok"}
-                    h.finished_at = dt.datetime.utcnow()
+                    h.finished_at = dt.datetime.now(dt.UTC)
             if sch._all_terminal():
                 return
 
@@ -82,7 +82,7 @@ async def test_scheduler_continues_on_failure():
                 if h.state == ExecutionState.RUNNING and h.finished_at is None:
                     h.state = ExecutionState.FAILED
                     h.error_code = "X"
-                    h.finished_at = dt.datetime.utcnow()
+                    h.finished_at = dt.datetime.now(dt.UTC)
             if sch._all_terminal():
                 return
 
@@ -113,8 +113,8 @@ def test_resolve_inputs_alias_fallback():
     # 上游输出只有 records（无 result/summary）
     sch._handles["n1"] = TaskHandle(
         execution_id="e0", task_id="t", node_id="n1",
-        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
-        finished_at=dt.datetime.utcnow(),
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.now(dt.UTC),
+        finished_at=dt.datetime.now(dt.UTC),
         outputs={"records": [{"title": "BRCA1"}]},
     )
     resolved = sch._resolve_inputs(plan.nodes[1])
@@ -128,8 +128,8 @@ def test_resolve_inputs_missing_without_alias_is_none():
     sch = Scheduler(plan=plan, executor=ex)
     sch._handles["n1"] = TaskHandle(
         execution_id="e0", task_id="t", node_id="n1",
-        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
-        finished_at=dt.datetime.utcnow(),
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.now(dt.UTC),
+        finished_at=dt.datetime.now(dt.UTC),
         outputs={"answer": 42},
     )
     resolved = sch._resolve_inputs(plan.nodes[1])
@@ -158,8 +158,8 @@ def test_resolve_inputs_dot_literal_not_reference():
     # 真引用（已知 node_id 前缀）行为不变
     sch._handles["n1"] = TaskHandle(
         execution_id="e0", task_id="t", node_id="n1",
-        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
-        finished_at=dt.datetime.utcnow(),
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.now(dt.UTC),
+        finished_at=dt.datetime.now(dt.UTC),
         outputs={"result": "1267...5376"},
     )
     assert sch._resolve_inputs(n2)["x"] == "1267...5376"
@@ -181,8 +181,8 @@ def test_resolve_inputs_inline_reference_in_code():
     sch = Scheduler(plan=plan, executor=FakeExecutor())
     sch._handles["n1"] = TaskHandle(
         execution_id="e0", task_id="t", node_id="n1",
-        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
-        finished_at=dt.datetime.utcnow(),
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.now(dt.UTC),
+        finished_at=dt.datetime.now(dt.UTC),
         outputs={"text": doc, "records": [1, 2]},
     )
     resolved = sch._resolve_inputs(n2)
@@ -224,8 +224,8 @@ def test_resolve_inputs_dict_result_injects_dict_literal():
     sch = Scheduler(plan=plan, executor=FakeExecutor())
     sch._handles["n1"] = TaskHandle(
         execution_id="e0", task_id="t", node_id="n1",
-        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
-        finished_at=dt.datetime.utcnow(),
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.now(dt.UTC),
+        finished_at=dt.datetime.now(dt.UTC),
         outputs={"result": stats},
     )
     resolved = sch._resolve_inputs(n2)
@@ -274,7 +274,7 @@ class FlakyExecutor(FakeExecutor):
             h.state = ExecutionState.FAILED
             h.error_code = self._error_code
             h.error_message = "TypeError: string indices must be integers"
-            h.finished_at = dt.datetime.utcnow()
+            h.finished_at = dt.datetime.now(dt.UTC)
         return h
 
 
@@ -295,7 +295,7 @@ async def _run_with_drive(sch: Scheduler) -> PlanResult:
             for h in ex.handles.values():
                 if h.state == ExecutionState.RUNNING and h.finished_at is None:
                     h.state = ExecutionState.SUCCESS
-                    h.finished_at = dt.datetime.utcnow()
+                    h.finished_at = dt.datetime.now(dt.UTC)
             if sch._all_terminal():
                 return
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 import traceback
-from datetime import datetime
+from datetime import UTC, datetime
 
 from orchestrator.executor.executor_client import ExecutorClient
 from orchestrator.executor.kernel_manager import KernelPool
@@ -33,7 +33,7 @@ class LocalExecutor(ExecutorClient):
             task_id=task.task_id,
             node_id=task.node_id,
             state=ExecutionState.RUNNING,
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(UTC),
         )
         self._handles[handle.execution_id] = handle
         session_id = task.inputs.get("session_id") or task.task_id
@@ -90,12 +90,12 @@ class LocalExecutor(ExecutorClient):
                 task.node_id, task.tool_name, e,
             )
         finally:
-            handle.finished_at = datetime.utcnow()
+            handle.finished_at = datetime.now(UTC)
 
     def cancel(self, handle: TaskHandle) -> None:
         if handle.state == ExecutionState.RUNNING:
             handle.state = ExecutionState.CANCELLED
-            handle.finished_at = datetime.utcnow()
+            handle.finished_at = datetime.now(UTC)
 
     def get_status(self, handle: TaskHandle) -> ExecutionState:
         return handle.state

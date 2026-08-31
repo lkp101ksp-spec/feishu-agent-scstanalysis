@@ -12,7 +12,7 @@ def _make_executor():
         def submit(self, task):
             return TaskHandle(
                 execution_id="e1", task_id=task.task_id, node_id=task.node_id,
-                state=ExecutionState.RUNNING, started_at=dt.datetime.utcnow(),
+                state=ExecutionState.RUNNING, started_at=dt.datetime.now(UTC),
             )
 
         def get_status(self, h):

@@ -80,6 +80,15 @@ class BlastNCBITool:
             records = self._efetch(ids=ids, database=database)
         except httpx.HTTPError as e:
             return {"error_code": "BLAST_API_ERROR", "error_message": str(e)}
+        # docsum 不返回 protein 库序列长度（真机 2026-08-31 全 0）；
+        # fasta 批量取真实长度，失败降级保留 0（长度缺失不炸检索）
+        try:
+            lengths = self._fetch_lengths(ids=ids, database=database)
+            for r in records:
+                if r["id"] in lengths:
+                    r["length"] = lengths[r["id"]]
+        except httpx.HTTPError:
+            pass
         return {
             "ids": ids, "records": records,
             "total_count": total_count,
@@ -138,3 +147,30 @@ class BlastNCBITool:
                         "length": value.get("length", 0),
                     })
         return records
+
+    def _fetch_lengths(self, *, ids: list[str], database: str) -> dict[str, int]:
+        """efetch fasta 批量取每条序列真实长度（去空白计数）。
+
+        fasta 按 '>' 分条；NCBI uid 段可能非纯数字（如 pdb|9SQY|B），
+        与请求顺序对齐回填——按第 N 条序列对应 ids[N]。
+        """
+        self.rate_limiter.wait()
+        with httpx.Client(timeout=self.timeout_sec) as client:
+            resp = client.get(
+                f"{self.base_url}/efetch.fcgi",
+                params={
+                    "db": database,
+                    "id": ",".join(ids),
+                    "rettype": "fasta",
+                    "retmode": "text",
+                },
+            )
+            resp.raise_for_status()
+        lengths: dict[str, int] = {}
+        seqs = resp.text.split(">")
+        for uid, seq in zip(ids, [s for s in seqs if s.strip()]):
+            lines = seq.splitlines()
+            # 首行是 header（如 "111 title"），其余为序列行
+            n = sum(len(line.strip()) for line in lines[1:])
+            lengths[uid] = n
+        return lengths

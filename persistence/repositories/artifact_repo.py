@@ -1,7 +1,7 @@
 """artifacts 表 CRUD（Phase 2 扩字段 + 新方法）。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -38,8 +38,8 @@ class ArtifactRepo:
             size_bytes=size_bytes,
             caption=caption,
             status="pending",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         self.session.add(row)
         self.session.commit()
@@ -83,5 +83,5 @@ class ArtifactRepo:
         if caption is not None:
             row.caption = caption
         row.status = "ready"
-        row.updated_at = datetime.utcnow()
+        row.updated_at = datetime.now(UTC)
         self.session.commit()

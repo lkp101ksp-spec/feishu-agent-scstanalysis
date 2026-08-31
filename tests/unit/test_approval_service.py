@@ -1,6 +1,6 @@
 import hashlib
 import hmac
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from orchestrator.approval_service import (
     ApprovalPolicy,
@@ -12,7 +12,7 @@ from orchestrator.approval_service import (
 def test_policy_skips_approval_when_bound_to_doc():
     class FakeSession:
         bound_doc_id = "d1"
-        bind_expires_at = datetime.utcnow() + timedelta(seconds=600)
+        bind_expires_at = datetime.now(UTC) + timedelta(seconds=600)
 
     pol = ApprovalPolicy()
     assert pol.can_skip_approval("write_doc", {"doc_id": "d1"}, FakeSession()) is True
@@ -26,7 +26,7 @@ def test_policy_skips_approval_when_bound_to_doc():
 def test_policy_rejects_when_bind_expired():
     class FakeSession:
         bound_doc_id = "d1"
-        bind_expires_at = datetime.utcnow() - timedelta(seconds=10)
+        bind_expires_at = datetime.now(UTC) - timedelta(seconds=10)
 
     pol = ApprovalPolicy()
     assert pol.can_skip_approval("write_doc", {"doc_id": "d1"}, FakeSession()) is False
@@ -54,7 +54,7 @@ def test_request_sync_returns_true_when_skipped():
 
     class FakeSession:
         bound_doc_id = "d1"
-        bind_expires_at = datetime.utcnow() + timedelta(seconds=600)
+        bind_expires_at = datetime.now(UTC) + timedelta(seconds=600)
 
     assert (
         svc.request_sync(

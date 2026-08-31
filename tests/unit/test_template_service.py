@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -47,7 +47,7 @@ def test_delete_requires_owner():
     svc, repo = _make_service()
     repo.get.return_value = MagicMock(owner_open_id="ou_2",
                                        archived_at=None,
-                                       updated_at=datetime.utcnow())
+                                       updated_at=datetime.now(UTC))
     with pytest.raises(PermissionError):
         svc.delete(template_id="t1", caller_open_id="ou_1")
 
@@ -56,7 +56,7 @@ def test_delete_owner_succeeds():
     svc, repo = _make_service()
     repo.get.return_value = MagicMock(owner_open_id="ou_1",
                                        archived_at=None,
-                                       updated_at=datetime.utcnow())
+                                       updated_at=datetime.now(UTC))
     svc.delete(template_id="t1", caller_open_id="ou_1")
     repo.delete.assert_called_once_with("t1")
 
@@ -76,7 +76,7 @@ def test_render_subplan_substitutes_params():
         steps_json='[{"step_id": "s1", "tool_name": "blast_search",'
                   ' "inputs": {"query": "{{gene}}"}}]',
         blocks_json=None, archived_at=None,
-        updated_at=datetime.utcnow(),
+        updated_at=datetime.now(UTC),
     )
     out = svc.render_subplan(template_id="t1", params={"gene": "BRCA1"})
     assert out[0].inputs["query"] == "BRCA1"

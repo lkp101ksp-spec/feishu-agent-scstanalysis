@@ -11,7 +11,7 @@ Phase 2 增量：保留 process() Phase 1 路径；新增 process_phase2() 走 P
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from feishu_adapter.im_adapter import IMAdapter
@@ -366,7 +366,7 @@ class Orchestrator:
                 "BS",
                 (),
                 {"bound_doc_id": bound,
-                 "bind_expires_at": datetime.utcnow()},
+                 "bind_expires_at": datetime.now(UTC)},
             )()
         if self.approval.policy.can_skip_approval(
             "write_doc",

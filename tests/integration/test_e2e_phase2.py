@@ -62,7 +62,7 @@ def _drive_until_done(sch: Scheduler, ex: LocalExecutor):
     for _ in range(200):
         if sch._all_terminal():
             return
-        dt.datetime.utcnow()
+        dt.datetime.now(UTC)
         for h in list(sch._handles.values()):
             if h.state == ExecutionState.RUNNING:
                 h.state = ExecutionState.SUCCESS
@@ -71,7 +71,7 @@ def _drive_until_done(sch: Scheduler, ex: LocalExecutor):
                     "result": "boxplot.png",
                     "appended": 1,
                 }
-                h.finished_at = dt.datetime.utcnow()
+                h.finished_at = dt.datetime.now(UTC)
         # 触发 Scheduler 重新评估 ready
         for n in sch.plan.nodes:
             if n.node_id not in sch._handles:
@@ -120,7 +120,7 @@ async def test_e2e_boxplot_flow():
                         "result": "boxplot.png",
                         "appended": 1,
                     }
-                    h.finished_at = dt.datetime.utcnow()
+                    h.finished_at = dt.datetime.now(UTC)
             await asyncio.sleep(0.01)
 
     asyncio.create_task(drive())

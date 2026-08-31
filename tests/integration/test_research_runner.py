@@ -4,7 +4,7 @@
 验证受理即回、后台执行、结果回复与文档写回语义。
 """
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -32,8 +32,8 @@ class _FakeExecutor:
         self.calls.append(task.tool_name)
         return TaskHandle(
             execution_id=new_ulid(), task_id=task.task_id, node_id=task.node_id,
-            state=ExecutionState.SUCCESS, started_at=datetime.utcnow(),
-            finished_at=datetime.utcnow(), outputs=self.outputs,
+            state=ExecutionState.SUCCESS, started_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC), outputs=self.outputs,
         )
 
     def cancel(self, handle) -> None: ...
@@ -216,7 +216,7 @@ def test_outputs_digest_list_anti_spam():
         "n1": TaskHandle(
             execution_id="e1", task_id="t", node_id="n1",
             state=ExecutionState.SUCCESS,
-            started_at=datetime.utcnow(), finished_at=datetime.utcnow(),
+            started_at=datetime.now(UTC), finished_at=datetime.now(UTC),
             outputs={"records": records, "total_count": 67407},
         ),
     })

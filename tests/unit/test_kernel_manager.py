@@ -43,7 +43,7 @@ def test_idle_sweep_removes_old():
     sandbox = FakeSandbox()
     pool = KernelPool(sandbox=sandbox, idle_timeout_sec=1800)
     h = pool.acquire("s1")
-    h.last_used_at = dt.datetime.utcnow() - dt.timedelta(seconds=3600)
+    h.last_used_at = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=3600)
     removed = pool.idle_sweep()
     assert removed == 1
     assert sandbox.stopped == ["c_s1"]

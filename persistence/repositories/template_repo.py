@@ -1,7 +1,7 @@
 """templates 表的 CRUD。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from sqlalchemy import case, func, literal, select
@@ -203,5 +203,5 @@ class TemplateRepo:
     def delete(self, template_id: str) -> None:
         row = self.session.get(TemplateRow, template_id)
         if row is not None:
-            row.archived_at = datetime.utcnow()
+            row.archived_at = datetime.now(UTC)
             self.session.flush()

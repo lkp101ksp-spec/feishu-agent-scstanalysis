@@ -17,7 +17,7 @@ import ast
 import subprocess
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Optional
 
 from shared.errors import SandboxTimeoutError, SandboxUnavailableError
@@ -58,7 +58,7 @@ class KernelHandle:
     session_id: str
     container_name: str
     started_at: datetime
-    last_used_at: datetime = field(default_factory=datetime.utcnow)
+    last_used_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class KernelPool:
@@ -70,14 +70,14 @@ class KernelPool:
     def acquire(self, session_id: str) -> KernelHandle:
         existing = self._handles.get(session_id)
         if existing is not None:
-            existing.last_used_at = datetime.utcnow()
+            existing.last_used_at = datetime.now(UTC)
             return existing
         container_name = self._sandbox.start(session_id)
         handle = KernelHandle(
             kernel_id=uuid.uuid4().hex,
             session_id=session_id,
             container_name=container_name,
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(UTC),
         )
         self._handles[session_id] = handle
         return handle
@@ -90,10 +90,10 @@ class KernelPool:
     def touch(self, session_id: str) -> None:
         h = self._handles.get(session_id)
         if h:
-            h.last_used_at = datetime.utcnow()
+            h.last_used_at = datetime.now(UTC)
 
     def idle_sweep(self) -> int:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         expired = [
             sid
             for sid, h in self._handles.items()

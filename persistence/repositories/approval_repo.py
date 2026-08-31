@@ -1,7 +1,7 @@
 """approvals 表的 CRUD。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -36,7 +36,7 @@ class ApprovalRepo:
             nonce=nonce,
             status="pending",
             expires_at=datetime.fromisoformat(expires_at),
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(UTC),
         )
         self.session.add(row)
         self.session.commit()
@@ -56,11 +56,11 @@ class ApprovalRepo:
         row = self.get(approval_id)
         row.status = status
         row.resolved_by = resolved_by
-        row.resolved_at = datetime.utcnow()
+        row.resolved_at = datetime.now(UTC)
         self.session.commit()
 
     def expire_pending(self) -> int:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         rows = (
             self.session.query(ApprovalRow)
             .filter(ApprovalRow.status == "pending", ApprovalRow.expires_at < now)

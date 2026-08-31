@@ -1,7 +1,7 @@
 """executions 表的 CRUD。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -36,7 +36,7 @@ class ExecutionRepo:
             risk_level=risk_level,
             state="pending",
             inputs_json=inputs_json,
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(UTC),
         )
         self.session.add(row)
         self.session.commit()
@@ -74,7 +74,7 @@ class ExecutionRepo:
         row.approval_id = approval_id
         row.error_code = error_code
         row.error_message = error_message
-        row.finished_at = datetime.utcnow()
+        row.finished_at = datetime.now(UTC)
         self.session.commit()
 
     def list_by_plan(self, plan_id: str) -> list[ExecutionRow]:

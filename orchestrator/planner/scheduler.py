@@ -21,7 +21,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan
@@ -189,7 +189,7 @@ class Scheduler:
         self._while_state: dict[str, dict] = {}
         self._handles: dict[str, TaskHandle] = {}
         self._node_map: dict[str, DAGNode] = {n.node_id: n for n in plan.nodes}
-        self._started_at = datetime.utcnow()
+        self._started_at = datetime.now(UTC)
 
     @staticmethod
     def _expand_subplan_static(node: DAGNode, template_service) -> list[DAGNode]:
@@ -253,8 +253,8 @@ class Scheduler:
                     task_id=self.plan.task_id,
                     node_id=node.node_id,
                     state=ExecutionState.SKIPPED,
-                    started_at=datetime.utcnow(),
-                    finished_at=datetime.utcnow(),
+                    started_at=datetime.now(UTC),
+                    finished_at=datetime.now(UTC),
                 )
                 continue
             if all(s == ExecutionState.SUCCESS for s in upstreams):
@@ -475,7 +475,7 @@ class Scheduler:
             status=status,
             node_states=node_states,
             started_at=self._started_at,
-            finished_at=datetime.utcnow(),
+            finished_at=datetime.now(UTC),
         )
 
     # === Phase 13 T3：控制流解释器（branch / for / while）===
@@ -735,7 +735,7 @@ class Scheduler:
             execution_id=f"cf_{node.node_id}_{new_ulid()}",
             task_id=self.plan.task_id, node_id=node.node_id,
             state=ExecutionState.SUCCESS,
-            started_at=datetime.utcnow(), finished_at=datetime.utcnow(),
+            started_at=datetime.now(UTC), finished_at=datetime.now(UTC),
             outputs=outputs,
         )
 
@@ -747,6 +747,6 @@ class Scheduler:
             execution_id=f"cf_{node.node_id}_{new_ulid()}",
             task_id=self.plan.task_id, node_id=node.node_id,
             state=ExecutionState.FAILED,
-            started_at=datetime.utcnow(), finished_at=datetime.utcnow(),
+            started_at=datetime.now(UTC), finished_at=datetime.now(UTC),
             error_code=code, error_message=message,
         )

@@ -79,7 +79,7 @@ class PlanRuntime:
         # 2. 记录
         self._dynamic_nodes.append({
             "parent_node_id": parent_node_id,
-            "appended_at": datetime.datetime.utcnow().isoformat(),
+            "appended_at": datetime.datetime.now(datetime.UTC).isoformat(),
             "node_ids": [n.node_id for n in new_nodes],
         })
         # 3. 持久化
