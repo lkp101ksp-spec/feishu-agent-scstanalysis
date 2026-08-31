@@ -52,6 +52,10 @@ class CommentRepo:
         self.session.flush()
         return row, False
 
+    def get(self, comment_id: str) -> Optional[CommentRow]:
+        """按主键取评论行；不存在返回 None。"""
+        return self.session.get(CommentRow, comment_id)
+
     def list_by_doc(
         self, doc_id: str, block_id: Optional[str] = None,
     ) -> list[CommentRow]:
@@ -69,6 +73,26 @@ class CommentRepo:
             .order_by(CommentRow.created_at.asc())
             .all()
         )
+
+    def delete_missing(self, doc_id: str, keep_ids: set[str]) -> int:
+        """Phase 18：删除对账——删除该 doc 下不在 keep 集合内的本地行。
+
+        远端已删除/不可见的评论本地快照同步清除（快照镜像语义）；
+        返回删除条数。
+        """
+        rows = (
+            self.session.query(CommentRow)
+            .filter_by(doc_id=doc_id)
+            .all()
+        )
+        removed = 0
+        for row in rows:
+            if row.comment_id not in keep_ids:
+                self.session.delete(row)
+                removed += 1
+        if removed:
+            self.session.flush()
+        return removed
 
     def mark_processed(self, comment_id: str) -> None:
         """动作执行成功后打标；重复调用幂等。"""

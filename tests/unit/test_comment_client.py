@@ -102,6 +102,59 @@ def test_reply_comment_posts_text_element():
         {"type": "text_run", "text_run": {"text": "已按评论修改"}}]}}
 
 
+# --- Phase 18：分页循环拉全量 ---
+
+
+def _sdk_paged_returning(pages: list[dict]) -> MagicMock:
+    """sdk_client.request 依次返回多页 list 结构（side_effect）。"""
+    sdk = MagicMock()
+    sdk.request.side_effect = [
+        _fake_response({"code": 0, "data": p}) for p in pages
+    ]
+    return sdk
+
+
+def test_list_comments_paginates_until_has_more_false():
+    """多页评论：page_token 翻页聚合，has_more=false 即停。"""
+    sdk = _sdk_paged_returning([
+        {"items": [_official_item(cid="c1")], "has_more": True,
+         "page_token": "tok_2"},
+        {"items": [_official_item(cid="c2")], "has_more": False},
+    ])
+    client = CommentClient(sdk_client=sdk, rate_limiter=_FakeLimiter())
+    out = client.list_comments(doc_id="doccnX")
+    assert [c["comment_id"] for c in out] == ["c1", "c2"]
+    assert sdk.request.call_count == 2
+    # 第二次请求携带 page_token
+    second_req = sdk.request.call_args_list[1].args[0]
+    assert "tok_2" in second_req.queries["page_token"]
+
+
+def test_list_comments_stops_at_max_pages_cap():
+    """恒 has_more 的异常场景：达 max_pages 上限停止（防死循环）。"""
+    pages = [
+        {"items": [_official_item(cid=f"c{i}")], "has_more": True,
+         "page_token": f"tok_{i + 1}"}
+        for i in range(10)
+    ]
+    sdk = _sdk_paged_returning(pages)
+    client = CommentClient(sdk_client=sdk, rate_limiter=_FakeLimiter())
+    out = client.list_comments(doc_id="doccnX", max_pages=3)
+    assert len(out) == 3
+    assert sdk.request.call_count == 3
+
+
+def test_list_comments_single_page_without_token():
+    """单页且无 page_token：行为与旧单页一致（不多发请求）。"""
+    sdk = _sdk_paged_returning([
+        {"items": [_official_item(cid="c1")], "has_more": False},
+    ])
+    client = CommentClient(sdk_client=sdk, rate_limiter=_FakeLimiter())
+    out = client.list_comments(doc_id="doccnX")
+    assert len(out) == 1
+    assert sdk.request.call_count == 1
+
+
 def test_extract_text_none_safe():
     """_extract_text 对缺字段的 reply 安全返回空串。"""
     assert _extract_text(MagicMock(spec=[])) == ""

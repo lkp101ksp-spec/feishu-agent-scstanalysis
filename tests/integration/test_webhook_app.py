@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import hmac
+import json
 import time
 from unittest.mock import MagicMock, patch
 
@@ -166,6 +167,87 @@ def test_webhook_non_text_returns_400(orchestrator_mock):
             headers={"X-Lark-Request-Timestamp": ts, "X-Lark-Signature": sig},
         )
     assert resp.status_code == 400
+
+
+# --- Phase 18：url_verification challenge + 评论事件分流 ---
+
+
+def _comment_event_body() -> str:
+    """构造 drive.notice.comment_add_v1 事件 payload（v2 schema）。"""
+    return json.dumps({
+        "schema": "2.0",
+        "header": {"event_type": "drive.notice.comment_add_v1",
+                   "event_id": "ev_1"},
+        "event": {
+            "comment_id": "c1",
+            "notice_meta": {
+                "file_token": "doccnX",
+                "notice_type": "comment",
+                "from_user_id": {"open_id": "ou_teacher"},
+            },
+        },
+    })
+
+
+def test_webhook_url_verification_returns_challenge(orchestrator_mock):
+    """事件订阅首次配置：type=url_verification 直接回 challenge。"""
+    app = create_app(secret=SECRET, orchestrator=orchestrator_mock)
+    body = json.dumps({"type": "url_verification",
+                       "challenge": "cha_abc123"})
+    ts = str(int(time.time()))
+    sig = _sign(ts, body)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/webhook/lark",
+            content=body,
+            headers={"X-Lark-Request-Timestamp": ts,
+                     "X-Lark-Signature": sig},
+        )
+    assert resp.status_code == 200
+    assert resp.json() == {"challenge": "cha_abc123"}
+    orchestrator_mock.process.assert_not_called()
+
+
+def test_webhook_comment_event_routes_to_event_service(orchestrator_mock):
+    """评论事件分流到 comment_event_service；不进 IM 管线。"""
+    event_service = MagicMock()
+    event_service.handle.return_value = {"status": "handled",
+                                         "file_token": "doccnX"}
+    app = create_app(secret=SECRET, orchestrator=orchestrator_mock,
+                     comment_event_service=event_service)
+    body = _comment_event_body()
+    ts = str(int(time.time()))
+    sig = _sign(ts, body)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/webhook/lark",
+            content=body,
+            headers={"X-Lark-Request-Timestamp": ts,
+                     "X-Lark-Signature": sig},
+        )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "handled"
+    event_service.handle.assert_called_once_with(
+        file_token="doccnX", operator_open_id="ou_teacher",
+        comment_id="c1")
+    orchestrator_mock.process.assert_not_called()
+
+
+def test_webhook_comment_event_without_service_returns_503(orchestrator_mock):
+    """评论事件但 comment_event_service 未装配：503 明确报错。"""
+    app = create_app(secret=SECRET, orchestrator=orchestrator_mock)
+    body = _comment_event_body()
+    ts = str(int(time.time()))
+    sig = _sign(ts, body)
+    with TestClient(app) as client:
+        resp = client.post(
+            "/webhook/lark",
+            content=body,
+            headers={"X-Lark-Request-Timestamp": ts,
+                     "X-Lark-Signature": sig},
+        )
+    assert resp.status_code == 503
+    orchestrator_mock.process.assert_not_called()
 
 
 def test_webhook_rate_limit_returns_429(orchestrator_mock, session_factory_fixture):

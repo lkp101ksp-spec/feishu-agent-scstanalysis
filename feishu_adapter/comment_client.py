@@ -99,15 +99,29 @@ class CommentClient:
                 f"msg={payload.get('msg')} uri={uri}")
         return payload.get("data", {})
 
-    def list_comments(self, *, doc_id: str) -> list[dict]:
-        """列出文档全部评论（单页）；适配为下游扁平 dict。"""
-        data = self._request(
-            lark.HttpMethod.GET,
-            f"/open-apis/drive/v1/files/{doc_id}/comments",
-            queries={"file_type": ["docx"], "user_id_type": ["open_id"]},
-        )
-        items = data.get("items", []) or []
-        return [_to_flat(_AttrWrap(fc)) for fc in items]
+    def list_comments(self, *, doc_id: str, max_pages: int = 20) -> list[dict]:
+        """列出文档全部评论（Phase 18 分页循环拉全量）；适配为下游扁平 dict。
+
+        page_token 透传翻页，has_more 为假或达 max_pages 上限（防死循环保护）
+        即停；单页条数由服务端默认值决定。
+        """
+        flat: list[dict] = []
+        page_token: str | None = None
+        for _ in range(max_pages):
+            queries = {"file_type": ["docx"], "user_id_type": ["open_id"]}
+            if page_token:
+                queries["page_token"] = [page_token]
+            data = self._request(
+                lark.HttpMethod.GET,
+                f"/open-apis/drive/v1/files/{doc_id}/comments",
+                queries=queries,
+            )
+            items = data.get("items", []) or []
+            flat.extend(_to_flat(_AttrWrap(fc)) for fc in items)
+            page_token = data.get("page_token") or ""
+            if not data.get("has_more") or not page_token:
+                break
+        return flat
 
     def list_block_comments(self, *, doc_id: str, block_id: str) -> list[dict]:
         """列出指定块的评论（list 接口无 block_id，本地过滤恒空，保留兼容）。"""

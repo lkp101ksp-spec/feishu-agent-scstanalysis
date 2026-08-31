@@ -12,6 +12,7 @@
 5. 调用 orchestrator.process(incoming)
 6. 关联 task_id 到幂等键
 """
+import json
 import logging
 from dataclasses import dataclass
 
@@ -223,6 +224,7 @@ class AppContext:
     unified_search_service: object | None = None  # Phase 9
     auto_sync_worker: object | None = None  # Phase 9
     approval_broker: object | None = None  # Phase 14：写回审批决策传递
+    comment_event_service: object | None = None  # Phase 18：webhook 评论事件
 
 
 def create_app(
@@ -247,6 +249,7 @@ def create_app(
     unified_search_service=None,
     auto_sync_worker=None,
     approval_broker=None,
+    comment_event_service=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -288,6 +291,7 @@ def create_app(
         unified_search_service=unified_search_service,
         auto_sync_worker=auto_sync_worker,
         approval_broker=approval_broker,
+        comment_event_service=comment_event_service,
     )
 
     # === Phase 9: 评论自动同步后台轮询（可选注入，ADR-0024）===
@@ -741,10 +745,35 @@ def create_app(
             logger.warning("signature_invalid: %s", e)
             raise HTTPException(status_code=401, detail=str(e))
 
-        # 2-6. 限流/归一化/幂等/业务处理：公共管线（ADR-0031，ws 长连接同源）
+        body = json.loads(body_str)
+
+        # 2. Phase 18：url_verification challenge 应答（事件订阅首次配置校验）
+        if body.get("type") == "url_verification":
+            return {"challenge": body.get("challenge", "")}
+
+        # 3. Phase 18：评论事件分流（ws 容灾通道；结构与 ws 事件同源，
+        #    header.event_type 区分，event.notice_meta 提取上下文）
+        header = body.get("header") or {}
+        if header.get("event_type") == "drive.notice.comment_add_v1":
+            svc = ctx.comment_event_service
+            if svc is None:
+                raise HTTPException(
+                    status_code=503,
+                    detail="comment_event_service not configured")
+            event = body.get("event") or {}
+            meta = event.get("notice_meta") or {}
+            operator = meta.get("from_user_id") or {}
+            result = svc.handle(
+                file_token=meta.get("file_token", ""),
+                operator_open_id=operator.get("open_id", ""),
+                comment_id=event.get("comment_id", ""))
+            logger.info("webhook comment event handled: %s", result)
+            return result
+
+        # 4. 限流/归一化/幂等/业务处理：公共管线（ADR-0031，ws 长连接同源）
         app_id = request.headers.get("X-Lark-App-Id", "default")
         try:
-            return run_im_pipeline(app, app_id, await request.json())
+            return run_im_pipeline(app, app_id, body)
         except RateLimitExceededError as e:
             raise HTTPException(status_code=429, detail=str(e))
         except NormalizeError as e:

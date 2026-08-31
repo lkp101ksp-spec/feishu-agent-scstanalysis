@@ -75,15 +75,15 @@ def test_sync_idempotent_resync(session):
     svc = CommentSyncService(_StubClient(_items()), CommentRepo(session))
     first = svc.sync(doc_id="d1")
     second = svc.sync(doc_id="d1")
-    assert first == {"fetched": 3, "new": 3, "updated": 0}
-    assert second == {"fetched": 3, "new": 0, "updated": 3}
+    assert first == {"fetched": 3, "new": 3, "updated": 0, "deleted": 0}
+    assert second == {"fetched": 3, "new": 0, "updated": 3, "deleted": 0}
     assert len(svc.list_stored(doc_id="d1")) == 3
 
 
 def test_sync_empty_comments(session):
     svc = CommentSyncService(_StubClient([]), CommentRepo(session))
     out = svc.sync(doc_id="d1")
-    assert out == {"fetched": 0, "new": 0, "updated": 0}
+    assert out == {"fetched": 0, "new": 0, "updated": 0, "deleted": 0}
     assert svc.list_stored(doc_id="d1") == []
 
 
@@ -96,4 +96,43 @@ def test_sync_mixed_new_and_updated_counts(session):
         "comment_id": "c2", "user_name": "U", "text": "新评论",
     })
     out = svc.sync(doc_id="d1")
-    assert out == {"fetched": 4, "new": 1, "updated": 3}
+    assert out == {"fetched": 4, "new": 1, "updated": 3, "deleted": 0}
+
+
+# --- Phase 18：删除对账（远端消失的评论本地清除） ---
+
+
+def test_sync_deletes_stale_local_rows(session):
+    """远端已删评论：sync 对账后本地行被清除，deleted 计数正确。"""
+    repo = CommentRepo(session)
+    svc = CommentSyncService(_StubClient(_items()), repo)
+    svc.sync(doc_id="d1")
+    assert repo.get("r2") is not None
+
+    # 远端删除 r2（replies 只剩 r1）后再同步
+    svc.client.items[0]["replies"] = svc.client.items[0]["replies"][:1]
+    out = svc.sync(doc_id="d1")
+    assert out["deleted"] == 1
+    assert repo.get("r2") is None
+    assert repo.get("c1") is not None and repo.get("r1") is not None
+
+
+def test_sync_delete_scoped_to_same_doc(session):
+    """对账只影响同 doc 的行；其他 doc 的评论不受影响。"""
+    repo = CommentRepo(session)
+    repo.upsert_one(comment_id="other_doc_c", doc_id="d2", text="别删我")
+    svc = CommentSyncService(_StubClient([]), repo)
+    out = svc.sync(doc_id="d1")
+    assert out["deleted"] == 0
+    assert repo.get("other_doc_c") is not None
+
+
+def test_sync_delete_all_when_remote_empty(session):
+    """远端评论清空后本地该 doc 快照全删。"""
+    repo = CommentRepo(session)
+    svc = CommentSyncService(_StubClient(_items()), repo)
+    svc.sync(doc_id="d1")
+    svc.client.items = []
+    out = svc.sync(doc_id="d1")
+    assert out["deleted"] == 3
+    assert svc.list_stored(doc_id="d1") == []

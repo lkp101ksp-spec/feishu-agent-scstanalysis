@@ -230,6 +230,29 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     except Exception:
         logger.exception("cancel stale pending failed (ignored)")
 
+    # --- 评论事件服务（独立 event_session：ws/webhook 回调线程隔离，ADR-0033） ---
+    # Phase 18：/ask 问答依赖注入（doc_adapter/llm/qa_reply_client，
+    # 任一缺失自动禁用问答不回归）；create_app 前构造以便 webhook 分流注入
+    event_session = sessionmaker(
+        bind=get_engine(), expire_on_commit=False, autoflush=False,
+    )()
+    event_comment_client = CommentClient(
+        sdk_client=sdk, rate_limiter=RateLimiter(rate=3.0, per_sec=1.0))
+    comment_event_service = CommentEventService(
+        session_repo=SessionRepo(event_session),
+        sync_service=CommentSyncService(
+            event_comment_client, CommentRepo(event_session)),
+        notify_service=CommentNotifyService(
+            CommentRepo(event_session), CommentNotifyRepo(event_session), im,
+            notify_all=settings.comment_notify_all),
+        bot_open_id=get_bot_open_id(sdk),
+        session=event_session,
+        comment_repo=CommentRepo(event_session),
+        doc_adapter=getattr(orch, "doc_adapter", None),
+        llm=getattr(orch, "llm", None),
+        qa_reply_client=event_comment_client,
+    )
+
     app = create_app(
         secret=settings.feishu.webhook_secret,
         orchestrator=orch,
@@ -253,6 +276,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         unified_search_service=unified_search_service,
         auto_sync_worker=auto_sync_worker_startup,
         approval_broker=approval_broker,
+        comment_event_service=comment_event_service,
     )
     # 主 session 挂载：run_im_pipeline / 卡片管线在处理成功后负责 commit
     app.state.main_session = session
@@ -267,23 +291,6 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         AuditRepo(scan_session), settings.bind_doc_ttl_sec,
         session_repo=SessionRepo(scan_session), im_adapter=im,
         renew_threshold_sec=settings.bind_doc_renew_threshold_sec,
-    )
-
-    # --- 评论事件服务（独立 event_session：ws 回调线程隔离，ADR-0033） ---
-    event_session = sessionmaker(
-        bind=get_engine(), expire_on_commit=False, autoflush=False,
-    )()
-    comment_event_service = CommentEventService(
-        session_repo=SessionRepo(event_session),
-        sync_service=CommentSyncService(
-            CommentClient(sdk_client=sdk,
-                          rate_limiter=RateLimiter(rate=3.0, per_sec=1.0)),
-            CommentRepo(event_session)),
-        notify_service=CommentNotifyService(
-            CommentRepo(event_session), CommentNotifyRepo(event_session), im,
-            notify_all=settings.comment_notify_all),
-        bot_open_id=get_bot_open_id(sdk),
-        session=event_session,
     )
 
     # --- 轮询兜底 worker（独立 session：ws_client 守护线程隔离，ADR-0033） ---

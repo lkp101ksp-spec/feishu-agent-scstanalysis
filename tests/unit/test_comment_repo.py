@@ -56,3 +56,34 @@ def test_list_by_doc_block_filter(session):
     repo.upsert_one(comment_id="c2", doc_id="d1", block_id="b2", text="y")
     hits = repo.list_by_doc("d1", block_id="b1")
     assert [r.comment_id for r in hits] == ["c1"]
+
+
+# --- Phase 18：get / delete_missing（删除对账） ---
+
+
+def test_get_returns_row_or_none(session):
+    repo = CommentRepo(session)
+    repo.upsert_one(comment_id="c1", doc_id="d1", text="x")
+    assert repo.get("c1").text == "x"
+    assert repo.get("nope") is None
+
+
+def test_delete_missing_removes_only_stale_rows(session):
+    repo = CommentRepo(session)
+    repo.upsert_one(comment_id="c1", doc_id="d1", text="x")
+    repo.upsert_one(comment_id="c2", doc_id="d1", text="y")
+    repo.upsert_one(comment_id="c_other", doc_id="d2", text="keep")
+
+    removed = repo.delete_missing("d1", keep_ids={"c1"})
+    assert removed == 1
+    assert repo.get("c1") is not None
+    assert repo.get("c2") is None
+    assert repo.get("c_other") is not None  # 其他 doc 不受影响
+
+
+def test_delete_missing_noop_when_all_kept(session):
+    repo = CommentRepo(session)
+    repo.upsert_one(comment_id="c1", doc_id="d1", text="x")
+    assert repo.delete_missing("d1", keep_ids={"c1"}) == 0
+    assert repo.delete_missing("d1", keep_ids=set()) == 1  # 全删
+    assert repo.list_by_doc("d1") == []

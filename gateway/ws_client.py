@@ -249,7 +249,8 @@ def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
         logger.info("ws raw comment event: %s", getattr(ev, "event", None))
         payload = comment_event_to_payload(ev)
         result = svc.handle(file_token=payload["file_token"],
-                            operator_open_id=payload["operator_open_id"])
+                            operator_open_id=payload["operator_open_id"],
+                            comment_id=payload["comment_id"])
         logger.info("ws comment event handled: %s", result)
 
     return (

@@ -95,6 +95,99 @@ def test_handle_commits_session_on_success_and_rolls_back_on_error():
     session2.commit.assert_not_called()
 
 
+# --- Phase 18：/ask 评论问答（LLM 作答 + reply 回写 + 幂等） ---
+
+
+def _qa_svc(comment_text="/ask 文档的结论是什么？", processed_at=None,
+            with_qa_deps=True):
+    """构造带问答依赖的事件服务；comment_repo mock 返回指定评论。"""
+    svc, sync, notify = _svc()
+    comment = MagicMock(text=comment_text, processed_at=processed_at)
+    comment_repo = MagicMock()
+    comment_repo.get.return_value = comment
+    doc_adapter = MagicMock()
+    doc_adapter.get_block_tree.return_value = [
+        {"text": {"elements": [
+            {"text_run": {"content": "实验结论：BRCA1 显著下调"}}]}}
+    ]
+    llm = MagicMock()
+    llm.call.return_value = "根据文档，结论是 BRCA1 显著下调。"
+    qa_client = MagicMock()
+    if with_qa_deps:
+        svc.comment_repo = comment_repo
+        svc.doc_adapter = doc_adapter
+        svc.llm = llm
+        svc.qa_reply_client = qa_client
+    return svc, comment_repo, llm, qa_client
+
+
+def test_extract_question_prefix_and_mention():
+    """/ask 前缀与 @agent 子串均可提取问题；普通评论返回 None。"""
+    from orchestrator.templates.comment_event_service import extract_question
+
+    assert extract_question("/ask 结论是什么") == "结论是什么"
+    assert extract_question("  /ask  结论是什么  ") == "结论是什么"
+    assert extract_question("@agent 帮我总结") == "帮我总结"
+    assert extract_question("/ask") is None  # 无问题正文
+    assert extract_question("普通评论") is None
+    assert extract_question("") is None
+
+
+def test_handle_answers_ask_comment():
+    """/ask 评论：LLM 基于文档上下文作答并 reply 回写，随后打标。"""
+    svc, comment_repo, llm, qa_client = _qa_svc()
+    out = svc.handle(file_token="doccnX", operator_open_id="ou_teacher",
+                     comment_id="c1")
+    assert out["qa"]["status"] == "qa_answered"
+    llm.call.assert_called_once()
+    prompt = llm.call.call_args.kwargs["prompt"]
+    assert "BRCA1 显著下调" in prompt  # 文档上下文注入
+    assert "文档的结论是什么" in prompt  # 问题注入
+    qa_client.reply_comment.assert_called_once_with(
+        file_token="doccnX", comment_id="c1",
+        text="根据文档，结论是 BRCA1 显著下调。")
+    comment_repo.mark_processed.assert_called_once_with("c1")
+
+
+def test_handle_ask_comment_idempotent_on_replay():
+    """已答过的评论（processed_at 非空）事件重发不再作答。"""
+    svc, comment_repo, llm, qa_client = _qa_svc(processed_at="2026-09-01")
+    out = svc.handle(file_token="doccnX", operator_open_id="ou_teacher",
+                     comment_id="c1")
+    assert out["qa"]["status"] == "qa_already_answered"
+    llm.call.assert_not_called()
+    qa_client.reply_comment.assert_not_called()
+
+
+def test_handle_non_ask_comment_skips_qa():
+    """普通评论（无 /ask / @agent）不触发问答。"""
+    svc, comment_repo, llm, qa_client = _qa_svc(comment_text="这个图表不错")
+    out = svc.handle(file_token="doccnX", operator_open_id="ou_teacher",
+                     comment_id="c1")
+    assert "qa" not in out
+    llm.call.assert_not_called()
+
+
+def test_handle_qa_disabled_without_deps():
+    """问答依赖缺失（comment_repo=None）：主链正常，无问答。"""
+    svc, _, llm, qa_client = _qa_svc(with_qa_deps=False)
+    out = svc.handle(file_token="doccnX", operator_open_id="ou_teacher",
+                     comment_id="c1")
+    assert out["status"] == "handled"
+    llm.call.assert_not_called()
+    qa_client.reply_comment.assert_not_called()
+
+
+def test_handle_qa_comment_not_in_local_snapshot():
+    """sync 后本地仍查不到评论（如远端删除）：跳过不炸。"""
+    svc, comment_repo, llm, qa_client = _qa_svc()
+    comment_repo.get.return_value = None
+    out = svc.handle(file_token="doccnX", operator_open_id="ou_teacher",
+                     comment_id="c_missing")
+    assert out["qa"]["status"] == "qa_comment_not_found"
+    llm.call.assert_not_called()
+
+
 # --- bot_info：原始请求模式获取 bot open_id（缓存 + 失败 None） ---
 
 
