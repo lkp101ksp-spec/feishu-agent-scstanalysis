@@ -225,6 +225,7 @@ class AppContext:
     auto_sync_worker: object | None = None  # Phase 9
     approval_broker: object | None = None  # Phase 14：写回审批决策传递
     comment_event_service: object | None = None  # Phase 18：webhook 评论事件
+    tag_recommend_service: object | None = None  # Phase 19：标签推荐
 
 
 def create_app(
@@ -250,6 +251,7 @@ def create_app(
     auto_sync_worker=None,
     approval_broker=None,
     comment_event_service=None,
+    tag_recommend_service=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -292,6 +294,7 @@ def create_app(
         auto_sync_worker=auto_sync_worker,
         approval_broker=approval_broker,
         comment_event_service=comment_event_service,
+        tag_recommend_service=tag_recommend_service,
     )
 
     # === Phase 9: 评论自动同步后台轮询（可选注入，ADR-0024）===
@@ -645,6 +648,21 @@ def create_app(
         return {"templates": [
             getattr(r, "template_id", r) for r in ts.find_by_tag(tag)
         ]}
+
+    @app.get("/templates/{template_id}/tag-suggestions")
+    async def tag_suggestions(template_id: str, limit: int = 5):
+        """Phase 19：标签推荐（共现 + 热度兜底，任意人可读）。"""
+        ctx = app.state.ctx
+        rs = ctx.tag_recommend_service
+        if rs is None:
+            raise _HTTPException(
+                status_code=503,
+                detail="tag_recommend_service not configured")
+        try:
+            suggestions = rs.suggest(template_id=template_id, limit=limit)
+        except ValueError as e:
+            raise _HTTPException(status_code=404, detail=str(e))
+        return {"template_id": template_id, "suggestions": suggestions}
 
     @app.get("/templates/favorites/{user_open_id}")
     async def favorites_of(user_open_id: str):

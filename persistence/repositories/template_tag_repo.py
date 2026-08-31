@@ -57,3 +57,11 @@ class TemplateTagRepo:
             .all()
         )
         return [r.template_id for r in rows]
+
+    def list_all(self) -> list[tuple[str, str]]:
+        """Phase 19：返回全部 (template_id, tag) 行（标签推荐数据源）。
+
+        标签表规模为模板数量级（小表），全量扫描可接受。
+        """
+        rows = self.session.query(TemplateTagRow).all()
+        return [(r.template_id, r.tag) for r in rows]

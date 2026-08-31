@@ -51,6 +51,7 @@ from orchestrator.templates.notify_service import CommentNotifyService
 from orchestrator.templates.public_service import PublicTemplateService
 from orchestrator.templates.search_service import TemplateSearchService
 from orchestrator.templates.share_service import ShareService
+from orchestrator.templates.tag_recommend_service import TagRecommendService
 from orchestrator.templates.tag_service import TagService
 from orchestrator.templates.template_service import TemplateService
 from orchestrator.templates.unified_search_service import UnifiedSearchService
@@ -173,6 +174,9 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     )
     fork_service = ForkService(template_repo)
     tag_service = TagService(TemplateTagRepo(session), template_repo)
+    # Phase 19：标签推荐（共现 + 热度兜底，spec 2026-09-01 phase19）
+    tag_recommend_service = TagRecommendService(
+        TemplateTagRepo(session), template_repo)
     favorite_service = FavoriteService(TemplateFavoriteRepo(session), template_repo)
     diff_service = VersionDiffService(
         TemplateVersionRepo(session), template_repo,
@@ -277,6 +281,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         auto_sync_worker=auto_sync_worker_startup,
         approval_broker=approval_broker,
         comment_event_service=comment_event_service,
+        tag_recommend_service=tag_recommend_service,
     )
     # 主 session 挂载：run_im_pipeline / 卡片管线在处理成功后负责 commit
     app.state.main_session = session
