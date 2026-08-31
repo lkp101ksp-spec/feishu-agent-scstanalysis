@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 import respx
@@ -29,6 +31,26 @@ def _efetch_json(records):
 class NoWaitLimiter:
     def wait(self):
         pass
+
+
+@respx.mock
+def test_handle_efetch_concatenated_json_merges_records(blast):
+    """大响应多段 JSON 拼接：逐段解析合并 records（真机 2026-08-31）。"""
+    respx.post("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi").mock(
+        return_value=httpx.Response(200, json=_esearch_json(["111", "222"], 2))
+    )
+    # 两段完整 JSON 无分隔符拼接（NCBI 大响应实测行为）
+    body = json.dumps(_efetch_json([
+        {"id": "111", "title": "BRCA1", "summary": "s1", "length": 100},
+    ])) + json.dumps(_efetch_json([
+        {"id": "222", "title": "BRCA2", "summary": "s2", "length": 200},
+    ]))
+    respx.get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi").mock(
+        return_value=httpx.Response(200, text=body)
+    )
+    out = blast.handle(query="BRCA1", database="nr", max_hits=2)
+    assert out["ids"] == ["111", "222"]
+    assert [r["title"] for r in out["records"]] == ["BRCA1", "BRCA2"]
 
 
 @pytest.fixture

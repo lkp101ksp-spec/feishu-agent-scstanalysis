@@ -5,11 +5,33 @@ rate-limit 复用 RateLimiter（3 req/s）。
 """
 from __future__ import annotations
 
+import json
 from typing import Optional
 
 import httpx
 
 from orchestrator.tools.bio.rate_limiter import RateLimiter
+
+
+def _load_json_stream(raw: str) -> list[dict]:
+    """解析 NCBI 拼接式多段 JSON 响应，返回逐段 dict 列表。
+
+    真机 2026-08-31：efetch 大响应（实测 ~82KB 起）会被 NCBI 按
+    分段切成多个完整 JSON 文档无分隔符直接拼接，resp.json() 抛
+    "Extra data"。用 raw_decode 逐段消费即可。
+    """
+    decoder = json.JSONDecoder()
+    objs: list[dict] = []
+    idx, n = 0, len(raw)
+    while idx < n:
+        while idx < n and raw[idx] in " \t\r\n":
+            idx += 1
+        if idx >= n:
+            break
+        obj, idx = decoder.raw_decode(raw, idx)
+        if isinstance(obj, dict):
+            objs.append(obj)
+    return objs
 
 # BLAST 习惯库名 → Entrez esearch/efetch 真实库名
 _ENTREZ_DB_ALIAS = {
@@ -78,11 +100,12 @@ class BlastNCBITool:
                 },
             )
             resp.raise_for_status()
-        data = resp.json()
-        esr = data.get("esearchresult", {})
-        ids = esr.get("idlist", [])
-        total_count = int(esr.get("count", 0))
-        return ids, total_count
+        # 防御性走多段解析：esearch 响应小，但同源问题可能复现
+        for data in _load_json_stream(resp.text):
+            esr = data.get("esearchresult", {})
+            if esr.get("idlist"):
+                return esr.get("idlist", []), int(esr.get("count", 0))
+        return [], 0
 
     def _efetch(self, *, ids: list[str], database: str) -> list[dict]:
         self.rate_limiter.wait()
@@ -97,10 +120,13 @@ class BlastNCBITool:
                 },
             )
             resp.raise_for_status()
-        data = resp.json()
-        result = data.get("result")
+        # 多段 JSON 逐段解析合并（真机 2026-08-31：大响应分段拼接，
+        # resp.json() 抛 "Extra data: char 99176" 导致整节点失败）
         records: list[dict] = []
-        if isinstance(result, dict):
+        for data in _load_json_stream(resp.text):
+            result = data.get("result")
+            if not isinstance(result, dict):
+                continue
             for key, value in result.items():
                 if key == "uids":
                     continue
