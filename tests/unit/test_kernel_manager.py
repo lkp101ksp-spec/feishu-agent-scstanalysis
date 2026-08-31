@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from orchestrator.executor.kernel_manager import KernelPool
+from orchestrator.executor.kernel_manager import KernelPool, _revive_result
 from shared.errors import SandboxTimeoutError, SandboxUnavailableError
 
 
@@ -90,7 +90,7 @@ def test_exec_code_roundtrip_stdout_and_result():
     pool = KernelPool(sandbox=sandbox, idle_timeout_sec=1800)
     out = pool.exec_code("s1", "print('hello')\n2**100", timeout_sec=30)
 
-    assert out == {"stdout": "hello\n", "result": "1267650600228229401496703205376"}
+    assert out == {"stdout": "hello\n", "result": 1267650600228229401496703205376}
     # 第一次调用：stdin 写代码，零转义
     w = sandbox.exec_calls[0]
     assert w["input"] == "print('hello')\n2**100"
@@ -166,3 +166,30 @@ def test_split_sentinel_missing_falls_back():
     stdout, result = KernelPool._split_sentinel("raw output without sentinel")
     assert stdout == "raw output without sentinel"
     assert result == "None"
+
+
+# === result repr → 原生类型还原（真机 2026-08-31 b1_tn3 TypeError 修复）===
+
+def test_exec_code_result_revives_dict():
+    """dict repr 还原为原生 dict——下游 `data = n2.result` 后可直接取字段。"""
+    sandbox = ExecFakeSandbox(exec_results=[
+        _completed(),
+        _completed(
+            stdout="out\n###RESULT###\n"
+                   "{'fetched': 5, 'total': 67407, 'percentage': 0.01}\n"
+        ),
+    ])
+    pool = KernelPool(sandbox=sandbox)
+    out = pool.exec_code("s1", "{'fetched': 5, 'total': 67407, 'percentage': 0.01}")
+    assert out["result"] == {"fetched": 5, "total": 67407, "percentage": 0.01}
+
+
+def test_revive_result_variants():
+    """还原门槛：字符串/元组/None/非法 repr/对象 repr 的边界行为。"""
+    assert _revive_result("'boxplot.png'\n") == "boxplot.png"  # str repr → 原串
+    assert _revive_result("None") is None
+    assert _revive_result("True") is True
+    assert _revive_result("(1, 2)\n") == [1, 2]  # tuple → list（JSON 安全）
+    assert _revive_result("array([1, 2])") == "array([1, 2])"  # 对象 repr 跳过
+    assert _revive_result("{1, 2}") == "{1, 2}"  # set 不可序列化，不还原
+    assert _revive_result("") == ""

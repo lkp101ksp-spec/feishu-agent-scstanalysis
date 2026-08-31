@@ -49,7 +49,7 @@ def test_real_container_print_and_result(pool):
     out = pool.exec_code("itest", "print('hello')\n2**100", timeout_sec=60)
     assert out.get("error_code") is None
     assert out["stdout"] == "hello\n"
-    assert out["result"] == "1267650600228229401496703205376"
+    assert out["result"] == 1267650600228229401496703205376  # 还原为原生 int
 
 
 def test_real_container_numpy_available(pool):
@@ -77,4 +77,4 @@ def test_real_container_timeout_rebuilds(pool):
     # 容器已销毁：下一次执行会重建并正常完成
     time.sleep(1)
     out = pool.exec_code("itest", "41+1", timeout_sec=60)
-    assert out["result"] == "42"
+    assert out["result"] == 42

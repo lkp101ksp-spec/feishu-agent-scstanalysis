@@ -59,8 +59,9 @@ def register_l1_compute(
             name="run_python",
             description=(
                 "在隔离沙箱执行 Python（numpy/pandas/matplotlib 可用，断网只读）。"
-                "输出 stdout=打印内容、result=末表达式值"
-                "（下游工具用 <node_id>.result 引用）。"
+                "输出 stdout=打印内容、result=末表达式原生值"
+                "（dict/list/数字/bool/None，下游用 <node_id>.result 引用，"
+                "是 dict 时可直接 data['字段'] 取值）"
                 "code 中内嵌的 <node_id>.<field> 会被替换为上游输出值的"
                 " Python 字面量（如 len(n1.text) 直接算上游文本长度）"
             ),

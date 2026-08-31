@@ -201,3 +201,37 @@ def test_resolve_inputs_inline_reference_in_code():
     code3 = sch._resolve_inputs(n3)["code"]
     assert "np.arange" in code3
     assert "n1.nofield" in code3  # 字段不存在 → 保留原文（执行时显式报错）
+
+
+def test_resolve_inputs_dict_result_injects_dict_literal():
+    """上游 result 为原生 dict 时，内嵌注入的是 dict 字面量（非带引号字符串）。
+
+    真机 2026-08-31 综合演练：exec_code 的 result 曾一律为 repr 字符串，
+    下游 `data = n2.result` 拿到字符串字面量，`data["percentage"]` 抛
+    TypeError（b1_tn3 PY_RUNTIME_ERROR）；result 还原原生类型后本用例
+    守护注入链路闭环。
+    """
+    stats = {"fetched": 5, "total": 67407, "percentage": 0.01}
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="run_python",
+                 inputs={}, depends_on=[])
+    n2 = DAGNode(node_id="n2", kind="tool", tool_name="run_python",
+                 inputs={"code": "data = n1.result\nmsg = data['percentage']"},
+                 depends_on=["n1"])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, n2], entry_node_ids=["n1"])
+    sch = Scheduler(plan=plan, executor=FakeExecutor())
+    sch._handles["n1"] = TaskHandle(
+        execution_id="e0", task_id="t", node_id="n1",
+        state=ExecutionState.SUCCESS, started_at=dt.datetime.utcnow(),
+        finished_at=dt.datetime.utcnow(),
+        outputs={"result": stats},
+    )
+    resolved = sch._resolve_inputs(n2)
+    assert resolved["code"] == f"data = {stats!r}\nmsg = data['percentage']"
+    # 注入结果是合法 Python：可被字面量解析且求值后可取字段
+    import ast as _ast
+
+    body = _ast.parse(resolved["code"], mode="exec")
+    assign = body.body[0]
+    assert isinstance(assign, _ast.Assign)
+    assert isinstance(assign.value, _ast.Dict)  # dict 字面量而非 Constant 字符串
