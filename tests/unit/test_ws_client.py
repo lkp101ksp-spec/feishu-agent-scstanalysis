@@ -23,6 +23,7 @@ from gateway.ws_client import (
     run_auto_sync_tick,
     run_renew_scan_once,
     start_auto_sync_scanner,
+    start_kernel_idle_sweeper,
     start_renew_scanner,
 )
 
@@ -208,6 +209,51 @@ def test_start_renew_scanner_no_service_is_noop():
 
     rt = SimpleNamespace(renew_scan_service=None, renew_scan_interval_sec=60)
     assert start_renew_scanner(rt) is None
+
+
+# --- Phase 16：沙箱容器空闲清扫线程 ---
+
+
+def test_start_kernel_idle_sweeper_sweeps():
+    """清扫线程按 interval 周期调用 idle_sweep（等首轮即可）。"""
+    import time
+    from unittest.mock import MagicMock
+
+    pool = MagicMock()
+    pool.idle_sweep.return_value = 0
+    t = start_kernel_idle_sweeper(pool, interval_sec=0.05)
+    assert t is not None and t.daemon
+    for _ in range(100):
+        if pool.idle_sweep.call_count >= 1:
+            break
+        time.sleep(0.02)
+    assert pool.idle_sweep.call_count >= 1
+
+
+def test_start_kernel_idle_sweeper_noop_cases():
+    """kernel_pool None（引擎未装配）或 interval 0（显式关闭）→ 不启动。"""
+    from unittest.mock import MagicMock
+
+    assert start_kernel_idle_sweeper(None, interval_sec=300) is None
+    assert start_kernel_idle_sweeper(MagicMock(), interval_sec=0) is None
+
+
+def test_start_kernel_idle_sweeper_swallows_exception():
+    """单轮 idle_sweep 异常被吃掉保线程（下一轮继续跑）。"""
+    import time
+    from unittest.mock import MagicMock
+
+    pool = MagicMock()
+    pool.idle_sweep.side_effect = RuntimeError("docker down")
+    t = start_kernel_idle_sweeper(pool, interval_sec=0.01)
+    assert t is not None
+    for _ in range(100):
+        if pool.idle_sweep.call_count >= 2:
+            break
+        time.sleep(0.02)
+    # 异常后线程仍存活且继续调用
+    assert pool.idle_sweep.call_count >= 2
+    assert t.is_alive()
 
 
 # --- 生产组装（runtime） ---

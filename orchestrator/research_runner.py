@@ -12,6 +12,7 @@ import threading
 from datetime import datetime
 
 from orchestrator.planner.scheduler import Scheduler
+from orchestrator.tools.tool_registry import parse_disabled_tools
 from shared.executor_types import ExecutionState
 from shared.schemas import IncomingMessage
 
@@ -151,10 +152,13 @@ class ResearchRunner:
                 )
         # L2 副作用工具整体不可规划（名字与 schema 都不给模型）：
         # 研究结果由本 Runner 自动写回绑定文档，模型规划 write_doc 只会
-        # 被 approval 拒掉（真机 2026-08-30 n3 TOOL_DENIED）
+        # 被 approval 拒掉（真机 2026-08-30 n3 TOOL_DENIED）；
+        # Phase 16 ACL：禁用名单内工具同样不给模型
+        disabled = parse_disabled_tools(
+            getattr(self.orch.settings, "disabled_tools", ""))
         visible = [
             t for t in self.orch.registry.list(planner_visible=True)
-            if t.risk_level != "L2_side_effect"
+            if t.risk_level != "L2_side_effect" and t.name not in disabled
         ]
         available_tools = [t.name for t in visible]
         tools_schema = [t.to_openai_function() for t in visible]

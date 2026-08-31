@@ -82,6 +82,11 @@ class Settings:
     research_approval_timeout_sec: int = 600
     # run_python 代码级失败（运行时异常/语法被拦）LLM 自愈重试上限（0 关闭）
     node_repair_max_retries: int = 1
+    # === Phase 16: 安全加固 ===
+    # 沙箱容器空闲清扫线程间隔（秒，0 关闭；空闲超时仍由 kernel_idle_timeout_sec 决定）
+    kernel_sweep_interval_sec: int = 300
+    # 工具禁用名单（逗号分隔，如 "blast_search,run_python"；planner 不可见 + 执行层拒绝）
+    disabled_tools: str = ""
 
 
 def _load_yaml(path: str) -> dict:
@@ -161,4 +166,8 @@ def load_settings() -> Settings:
             os.environ.get("KERNEL_IDLE_TIMEOUT_SEC", "1800")),
         kernel_exec_timeout_sec=int(
             os.environ.get("KERNEL_EXEC_TIMEOUT_SEC", "60")),
+        # Phase 16：清扫间隔（0 关闭）+ 工具禁用名单
+        kernel_sweep_interval_sec=int(
+            os.environ.get("KERNEL_SWEEP_INTERVAL_SEC", "300")),
+        disabled_tools=os.environ.get("DISABLED_TOOLS", ""),
     )

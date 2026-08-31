@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import ast
 import subprocess
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -62,45 +63,64 @@ class KernelHandle:
 
 
 class KernelPool:
+    """Phase 16 起多线程访问（exec_code 调用线程 + idle_sweep 守护线程），
+    全部句柄表操作持锁；docker exec 等慢操作在锁外执行。"""
+
     def __init__(self, sandbox, idle_timeout_sec: int = 1800) -> None:
         self._sandbox = sandbox
         self._idle_timeout = timedelta(seconds=idle_timeout_sec)
         self._handles: dict[str, KernelHandle] = {}
+        self._lock = threading.Lock()
 
     def acquire(self, session_id: str) -> KernelHandle:
-        existing = self._handles.get(session_id)
-        if existing is not None:
-            existing.last_used_at = datetime.now(UTC)
-            return existing
-        container_name = self._sandbox.start(session_id)
+        with self._lock:
+            existing = self._handles.get(session_id)
+            if existing is not None:
+                existing.last_used_at = datetime.now(UTC)
+                return existing
+        container_name = self._sandbox.start(session_id)  # 慢操作锁外
         handle = KernelHandle(
             kernel_id=uuid.uuid4().hex,
             session_id=session_id,
             container_name=container_name,
             started_at=datetime.now(UTC),
         )
-        self._handles[session_id] = handle
-        return handle
+        with self._lock:
+            # 并发 acquire 竞争：后建者让位（丢弃自己的容器，复用先入表者）
+            winner = self._handles.get(session_id)
+            if winner is not None:
+                loser_name = handle.container_name
+            else:
+                self._handles[session_id] = handle
+                winner = handle
+        if winner is not handle:
+            self._sandbox.stop(loser_name)  # 清理竞争败者容器
+        return winner
 
     def release(self, session_id: str) -> None:
-        h = self._handles.pop(session_id, None)
+        with self._lock:
+            h = self._handles.pop(session_id, None)
         if h:
-            self._sandbox.stop(h.container_name)
+            self._sandbox.stop(h.container_name)  # 慢操作锁外
 
     def touch(self, session_id: str) -> None:
-        h = self._handles.get(session_id)
-        if h:
-            h.last_used_at = datetime.now(UTC)
+        with self._lock:
+            h = self._handles.get(session_id)
+            if h:
+                h.last_used_at = datetime.now(UTC)
 
     def idle_sweep(self) -> int:
-        now = datetime.now(UTC)
-        expired = [
-            sid
-            for sid, h in self._handles.items()
-            if now - h.last_used_at > self._idle_timeout
-        ]
-        for sid in expired:
-            self.release(sid)
+        with self._lock:
+            now = datetime.now(UTC)
+            expired = [
+                sid
+                for sid, h in self._handles.items()
+                if now - h.last_used_at > self._idle_timeout
+            ]
+            # 先从表里摘除（锁内），stop 在锁外执行
+            handles = [self._handles.pop(sid) for sid in expired]
+        for h in handles:
+            self._sandbox.stop(h.container_name)
         return len(expired)
 
     def get(self, session_id: str) -> Optional[KernelHandle]:

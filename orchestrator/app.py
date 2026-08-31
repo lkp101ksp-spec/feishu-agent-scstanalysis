@@ -28,7 +28,7 @@ from orchestrator.session_service import SessionService
 from orchestrator.task_service import TaskService
 from orchestrator.template_engine import TemplateEngine
 from orchestrator.tools.tool_handler import ToolHandler
-from orchestrator.tools.tool_registry import ToolRegistry
+from orchestrator.tools.tool_registry import ToolRegistry, parse_disabled_tools
 from shared.errors import BindDocInvalidError, DocWriteError, FeishuAgentError, LLMCallError
 from shared.schemas import ChatMessage, IncomingMessage
 
@@ -107,7 +107,9 @@ class Orchestrator:
                 im_adapter=im_adapter, approval_repo=None, audit_repo=audit_repo
             )
             self.tool_handler = ToolHandler(
-                registry=self.registry, approval_service=self.approval
+                registry=self.registry,
+                approval_service=self.approval,
+                settings=settings,  # Phase 16 ACL：执行层禁用名单兜底
             )
             self.executor = LocalExecutor(
                 kernel_pool=self.kernel_pool, tool_handler=self.tool_handler
@@ -308,12 +310,16 @@ class Orchestrator:
             intent="phase2_plan",
         )
 
-        # 只暴露 Planner 可见工具（stub 隐藏，Phase 12 板块④）
-        visible = self.registry.list(planner_visible=True)
-        available_tools = [t.name for t in visible]
-        tools_schema = [
-            t.to_openai_function() for t in visible if t.risk_level != "L2_side_effect"
+        # 只暴露 Planner 可见工具（stub 隐藏，Phase 12 板块④）；
+        # Phase 16 ACL：禁用名单内工具同样不给模型
+        disabled = parse_disabled_tools(
+            getattr(self.settings, "disabled_tools", ""))
+        visible = [
+            t for t in self.registry.list(planner_visible=True)
+            if t.risk_level != "L2_side_effect" and t.name not in disabled
         ]
+        available_tools = [t.name for t in visible]
+        tools_schema = [t.to_openai_function() for t in visible]
         try:
             plan = self.planner.plan(
                 message=incoming.text,

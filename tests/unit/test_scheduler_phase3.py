@@ -5,6 +5,7 @@ from orchestrator.runtime.plan_runtime import PlanRuntime
 
 def _make_executor():
     import datetime as dt
+    from datetime import UTC
 
     from shared.executor_types import ExecutionState, TaskHandle
 

@@ -1,6 +1,7 @@
 """Phase 2 端到端：画箱线图场景（read_doc → run_python → write_doc）。"""
 import asyncio
 import datetime as dt
+from datetime import UTC
 
 from orchestrator.executor.kernel_manager import KernelPool
 from orchestrator.executor.local_executor import LocalExecutor

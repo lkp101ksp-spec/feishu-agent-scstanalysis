@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 
 from orchestrator.tools.ast_guard import ASTGuard
-from orchestrator.tools.tool_registry import ToolRegistry
+from orchestrator.tools.tool_registry import ToolRegistry, parse_disabled_tools
 from shared.errors import ToolBlockedError
 
 logger = logging.getLogger(__name__)
@@ -24,10 +24,18 @@ class ToolResult:
 
 
 class ToolHandler:
-    def __init__(self, registry: ToolRegistry, *, approval_service=None) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        *,
+        approval_service=None,
+        settings=None,
+    ) -> None:
         self.registry = registry
         self._ast = ASTGuard()
         self._approval = approval_service
+        # Phase 16 ACL：settings.disabled_tools 禁用名单（执行层兜底校验）
+        self.settings = settings
 
     def execute(
         self,
@@ -38,6 +46,20 @@ class ToolHandler:
         session_id: str = "",
     ) -> ToolResult:
         spec = self.registry.get(tool_name)
+        # Phase 16 ACL：执行层禁用名单兜底（planner 已过滤，防绕过规划直呼）
+        disabled = parse_disabled_tools(
+            getattr(self.settings, "disabled_tools", "") or ""
+        ) if self.settings is not None else set()
+        if tool_name in disabled:
+            logger.warning("tool %s blocked by ACL (disabled list)", tool_name)
+            return ToolResult(
+                outputs={},
+                artifacts_ids=[],
+                error_code="TOOL_DISABLED",
+                error_message=(
+                    f"tool {tool_name!r} is disabled by system administrator"
+                ),
+            )
         # L1: AST check
         ast_report = None
         if spec.risk_level == "L1_compute":

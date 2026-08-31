@@ -14,6 +14,15 @@ from shared.errors import ToolNotFoundError
 RiskLevel = Literal["L0_read", "L1_compute", "L2_side_effect"]
 
 
+def parse_disabled_tools(raw: str) -> set[str]:
+    """Phase 16 ACL：逗号分隔配置串 → 工具名集合（strip + 去空项）。
+
+    " blast_search, run_python " → {"blast_search", "run_python"}；
+    空串/全空白 → 空集（不禁用任何工具，与现状一致）。
+    """
+    return {item.strip() for item in (raw or "").split(",") if item.strip()}
+
+
 class ToolSpec(BaseModel):
     """LLM 看的工具契约。"""
 

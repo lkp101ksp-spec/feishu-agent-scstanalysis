@@ -81,6 +81,32 @@ def run_auto_sync_tick(worker) -> dict:
     return worker.tick()
 
 
+def start_kernel_idle_sweeper(kernel_pool, interval_sec: int = 300):
+    """Phase 16：沙箱容器空闲清扫守护线程（每 interval 秒 idle_sweep 一轮）。
+
+    kernel_pool None（引擎未装配）或 interval 0（显式关闭）→ 不启动；
+    单轮异常吃掉保线程（下一轮继续）。
+    """
+    if kernel_pool is None or not interval_sec:
+        return None
+
+    def loop() -> None:
+        while True:
+            time.sleep(interval_sec)
+            try:
+                removed = kernel_pool.idle_sweep()
+                if removed:
+                    logger.info("kernel idle sweep removed %d container(s)",
+                                removed)
+            except Exception:
+                logger.exception("kernel idle sweep failed")
+
+    t = threading.Thread(target=loop, daemon=True, name="kernel-idle-sweeper")
+    t.start()
+    logger.info("kernel idle sweeper started (interval=%ss)", interval_sec)
+    return t
+
+
 def start_auto_sync_scanner(worker, interval_sec: int = 300):
     """启动评论轮询兜底守护线程（ws 模式下 FastAPI startup 钩子不触发）。"""
     if worker is None:
@@ -247,6 +273,11 @@ def main() -> None:
     start_auto_sync_scanner(
         rt.auto_sync_worker,
         interval_sec=rt.settings.comment_sync_interval_sec,
+    )
+    # Phase 16：沙箱容器空闲清扫（引擎未装配时 orchestrator.kernel_pool 不存在）
+    start_kernel_idle_sweeper(
+        getattr(rt.orchestrator, "kernel_pool", None),
+        interval_sec=getattr(rt.settings, "kernel_sweep_interval_sec", 300),
     )
     client = lark.ws.Client(
         rt.settings.feishu.app_id,

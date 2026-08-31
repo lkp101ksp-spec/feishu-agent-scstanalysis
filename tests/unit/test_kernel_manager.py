@@ -193,3 +193,68 @@ def test_revive_result_variants():
     assert _revive_result("array([1, 2])") == "array([1, 2])"  # 对象 repr 跳过
     assert _revive_result("{1, 2}") == "{1, 2}"  # set 不可序列化，不还原
     assert _revive_result("") == ""
+
+
+# === Phase 16 T1：KernelPool 线程安全 ===
+
+def test_acquire_concurrent_single_container():
+    """并发 acquire 同一 session：只留一个容器，败者容器被清理。"""
+    import threading
+
+    sandbox = FakeSandbox()
+    pool = KernelPool(sandbox=sandbox, idle_timeout_sec=1800)
+    handles: list = []
+    lock = threading.Lock()
+
+    def worker():
+        h = pool.acquire("s1")
+        with lock:
+            handles.append(h)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # 全部拿到同一个 handle，容器只 start 一次（可能多次尝试，但最终只有一个存活）
+    assert len({id(h) for h in handles}) == 1
+    winners = {h.container_name for h in handles}
+    assert winners <= set(sandbox.started)
+    # 败者容器全部被清理，只剩胜者一个未被 stop
+    alive = set(sandbox.started) - set(sandbox.stopped)
+    assert alive == winners
+
+
+def test_idle_sweep_thread_safe_with_concurrent_acquire():
+    """idle_sweep 与并发 acquire 混跑不抛异常（迭代中修改防护）。"""
+    import threading
+
+    sandbox = FakeSandbox()
+    pool = KernelPool(sandbox=sandbox, idle_timeout_sec=0)  # 立即过期
+
+    errors: list[Exception] = []
+
+    def sweeper():
+        try:
+            for _ in range(50):
+                pool.idle_sweep()
+        except Exception as e:  # pragma: no cover
+            errors.append(e)
+
+    def acquirer():
+        try:
+            for i in range(50):
+                pool.acquire(f"s{i % 5}")
+        except Exception as e:  # pragma: no cover
+            errors.append(e)
+
+    threads = (
+        [threading.Thread(target=sweeper) for _ in range(2)]
+        + [threading.Thread(target=acquirer) for _ in range(2)]
+    )
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
