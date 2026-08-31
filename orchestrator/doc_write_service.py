@@ -95,10 +95,13 @@ class DocWriteService:
 
     def create_confirm_pending(
         self, *, session_id: str, task_id: str, requested_by: str,
-        preview_text: str,
+        preview_text: str, approval_mode: str = "card_confirm",
     ) -> dict:
-        """card_confirm 第一步：校验 bind + 建 pending 记录（等待卡片决策）。
+        """card_confirm / node_l2 第一步：校验 bind + 建 pending 记录。
 
+        approval_mode="card_confirm"（Phase 14 收尾整体写回审批）或
+        "node_l2"（Phase 17 write_doc 节点级审批）——两者共用 doc_writes
+        表、owner 校验与启动清扫，仅发起位置不同。
         返回 {doc_write_id, doc_id}；无 bind / 过期抛 DocWriteError（调用方
         以 IM 提示收场，不写文档）。preview_text 落 payload_json 供审计。
         """
@@ -109,7 +112,7 @@ class DocWriteService:
             task_id=task_id,
             doc_id=doc_id,
             requested_by=requested_by,
-            approval_mode="card_confirm",
+            approval_mode=approval_mode,
             payload_text=preview_text,
         )
         return {"doc_write_id": doc_write_id, "doc_id": doc_id}
@@ -148,14 +151,16 @@ class DocWriteService:
                 "anchor_block_id": anchor, "status": "success"}
 
     def cancel_stale_pending(self) -> int:
-        """启动清扫：遗留 card_confirm pending（重启后无人等待）置 cancelled。
+        """启动清扫：遗留卡片审批 pending（重启后无人等待）置 cancelled。
 
-        返回清扫条数。正常流转的 pending 生命周期 ≤ 审批超时，启动时
-        仍在 pending 的必是孤儿记录。
+        覆盖 card_confirm（Phase 14 收尾写回）与 node_l2（Phase 17 节点级）
+        两种 mode。返回清扫条数。正常流转的 pending 生命周期 ≤ 审批超时，
+        启动时仍在 pending 的必是孤儿记录。
         """
         rows = (
             self.doc_repo.session.query(DocWriteRow)
-            .filter(DocWriteRow.approval_mode == "card_confirm",
+            .filter(DocWriteRow.approval_mode.in_(
+                        ["card_confirm", "node_l2"]),
                     DocWriteRow.status == "pending")
             .all()
         )

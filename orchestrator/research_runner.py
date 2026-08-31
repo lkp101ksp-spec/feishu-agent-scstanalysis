@@ -124,11 +124,24 @@ class ResearchRunner:
         # 绑定文档等运行时上下文注入 prompt——模型无从得知 doc_id，
         # 不注入则 read_doc 只能编占位符（真机 2026-08-30 发现）
         bound_doc_pre = session_service.bound_doc_id(session_id)
+        # Phase 17：节点级 L2 审批（write_doc 开放规划 + 执行前卡片确认）
+        broker = getattr(self.orch, "approval_broker", None)
+        allow_node_l2 = (
+            getattr(self.orch.settings, "research_allow_node_l2", True)
+            and broker is not None
+        )
         if bound_doc_pre:
             session_context = (
                 f"当前会话已绑定文档 doc_id={bound_doc_pre}"
                 f"（read_doc 的 doc_id 直接用它）"
             )
+            if allow_node_l2:
+                session_context += (
+                    "。如需把结果写入绑定文档，可规划 write_doc 工具节点"
+                    f"（doc_id 用 {bound_doc_pre}，blocks 为文本块列表，"
+                    "每块形如 {\"type\": \"text\", \"text\": \"...\"}）；"
+                    "该节点执行前会发卡片请求用户确认。"
+                )
         else:
             # 区分「从未绑定」与「绑定过期」：过期时模型只看到"未绑定"
             # 会尝试编造占位符（真机 2026-08-30 docx invalid param）
@@ -150,15 +163,17 @@ class ResearchRunner:
                     "当前会话未绑定文档（涉及文档读取时应在回复中提示"
                     "用户先 /bind-doc）"
                 )
-        # L2 副作用工具整体不可规划（名字与 schema 都不给模型）：
-        # 研究结果由本 Runner 自动写回绑定文档，模型规划 write_doc 只会
-        # 被 approval 拒掉（真机 2026-08-30 n3 TOOL_DENIED）；
+        # L2 副作用工具默认不可规划（名字与 schema 都不给模型）；
+        # Phase 17 例外：开关开启且有 broker 时放行 write_doc（节点级审批，
+        # 其余 L2——send_card/write_base_projection/upload_drive——仍不给）；
         # Phase 16 ACL：禁用名单内工具同样不给模型
         disabled = parse_disabled_tools(
             getattr(self.orch.settings, "disabled_tools", ""))
         visible = [
             t for t in self.orch.registry.list(planner_visible=True)
-            if t.risk_level != "L2_side_effect" and t.name not in disabled
+            if t.name not in disabled
+            and (t.risk_level != "L2_side_effect"
+                 or (allow_node_l2 and t.name == "write_doc"))
         ]
         available_tools = [t.name for t in visible]
         tools_schema = [t.to_openai_function() for t in visible]
@@ -189,6 +204,15 @@ class ResearchRunner:
         # 2. 执行（整体 wall-clock 超时保护）
         # T3：condition_llm 注入——branch/while 条件判定器（orch.llm 即 LLMRouter）
         # 自愈轮：code_repair_llm 注入——run_python 代码级失败 LLM 修复重跑
+        # Phase 17：l2_gate 注入——write_doc 节点执行前卡片审批
+        node_write_map: dict[str, str] = {}  # node_id -> doc_write_id（收尾补状态机）
+        l2_gate = None
+        if allow_node_l2:
+            l2_gate = self._make_l2_gate(
+                session=session, session_id=session_id, task_id=task_id,
+                incoming=incoming, broker=broker, bound_doc=bound_doc_pre,
+                task_text=task_text, node_write_map=node_write_map,
+            )
         scheduler = Scheduler(
             plan=plan, executor=self.orch.executor,
             max_concurrent=self.orch.settings.max_concurrent_nodes,
@@ -196,6 +220,7 @@ class ResearchRunner:
             code_repair_llm=getattr(self.orch, "llm", None),
             node_repair_max_retries=getattr(
                 self.orch.settings, "node_repair_max_retries", 1),
+            l2_gate=l2_gate,
         )
         loop = asyncio.new_event_loop()
         try:
@@ -217,6 +242,9 @@ class ResearchRunner:
             return {"status": "research_timeout", "task_id": task_id}
         finally:
             loop.close()
+
+        # 2.5 Phase 17：write_doc 节点审批记录收尾（按节点终态补状态机）
+        self._finalize_node_writes(session, scheduler, node_write_map)
 
         # 3. 渲染结果（文档块 + IM 文本摘要）
         node_lines = [
@@ -243,7 +271,27 @@ class ResearchRunner:
         bound_doc = session_service.bound_doc_id(session_id)
         doc_written = False
         writeback_note = ""
-        if bound_doc:
+        # Phase 17：模型已规划 write_doc 节点（无论终态）→ 写回以该节点
+        # 为准，收尾不再自动写回（防双写）
+        has_write_node = any(
+            n.kind == "tool" and n.tool_name == "write_doc" for n in plan.nodes
+        )
+        if has_write_node:
+            write_states = [
+                result.node_states.get(n.node_id)
+                for n in plan.nodes
+                if n.kind == "tool" and n.tool_name == "write_doc"
+            ]
+            ok_states = [s for s in write_states if s == ExecutionState.SUCCESS]
+            if ok_states:
+                doc_written = True
+                writeback_note = "写回已由 write_doc 节点执行（跳过自动写回）"
+            else:
+                writeback_note = (
+                    "write_doc 节点未成功写入（审批拒绝/执行失败），"
+                    "已跳过自动写回"
+                )
+        elif bound_doc:
             broker = getattr(self.orch, "approval_broker", None)
             if self.writeback_mode == "card_confirm" and broker is not None:
                 doc_written, writeback_note = self._writeback_with_confirm(
@@ -292,6 +340,167 @@ class ResearchRunner:
             "plan_id": plan.plan_id,
             "node_states": {k: v.value for k, v in result.node_states.items()},
             "doc_written": doc_written,
+        }
+
+    # === Phase 17：节点级 L2 审批（write_doc 卡片确认） ===
+
+    def _make_l2_gate(
+        self, *, session, session_id: str, task_id: str,
+        incoming: IncomingMessage, broker, bound_doc: str | None,
+        task_text: str, node_write_map: dict[str, str],
+    ):
+        """构造 scheduler 的 l2_gate 闭包（捕获本次任务的审批上下文）。"""
+        def gate(node, inputs: dict) -> tuple[bool, str]:
+            if node.tool_name != "write_doc":
+                return True, ""  # 防御性放行（其余 L2 不会出现在 plan 里）
+            return self._gate_write_doc(
+                node=node, inputs=inputs, session=session,
+                session_id=session_id, task_id=task_id,
+                incoming=incoming, broker=broker, bound_doc=bound_doc,
+                task_text=task_text, node_write_map=node_write_map,
+            )
+        return gate
+
+    def _gate_write_doc(
+        self, *, node, inputs: dict, session, session_id: str, task_id: str,
+        incoming: IncomingMessage, broker, bound_doc: str | None,
+        task_text: str, node_write_map: dict[str, str],
+    ) -> tuple[bool, str]:
+        """write_doc 节点审批门：校验 doc_id → 落 pending → 发卡 → 等决策。
+
+        返回 (approved, error_code)。approve 后 doc_write 记 approved，
+        终态（success/failed）由 _finalize_node_writes 按节点结果补。
+        任何异常按拒绝收场（安全侧失败）。
+        """
+        from orchestrator.doc_write_service import DocWriteService
+        from persistence.repositories.doc_write_repo import DocWriteRepo
+        from persistence.repositories.session_repo import SessionRepo
+        from shared.errors import DocWriteError
+
+        # 1. doc_id 必须 = 绑定文档（模型编造/引用错位直接拒，不发卡）
+        if not bound_doc:
+            return False, "TOOL_DENIED"
+        if inputs.get("doc_id") != bound_doc:
+            logger.warning(
+                "write_doc node %s targets %r, not bound doc %r",
+                node.node_id, inputs.get("doc_id"), bound_doc)
+            return False, "TOOL_DENIED"
+
+        svc = DocWriteService(
+            SessionRepo(session), DocWriteRepo(session), self.orch.doc_adapter
+        )
+        try:
+            pending = svc.create_confirm_pending(
+                session_id=session_id, task_id=task_id,
+                requested_by=incoming.sender_open_id,
+                preview_text=self._write_doc_preview(inputs),
+                approval_mode="node_l2",
+            )
+        except DocWriteError as e:
+            logger.warning("node_l2 pending create failed: %s", e)
+            return False, "TOOL_DENIED"
+        doc_write_id = pending["doc_write_id"]
+
+        try:
+            self.im.send_card(incoming.chat_id, self._node_l2_card(
+                node_id=node.node_id, doc_write_id=doc_write_id,
+                task_text=task_text, inputs=inputs,
+            ))
+        except Exception as e:
+            logger.warning("node_l2 approval card send failed: %s", e)
+            svc.complete_confirmed(
+                doc_write_id=doc_write_id, decision="deny", blocks=[])
+            return False, "TOOL_DENIED"
+
+        decision = broker.wait(doc_write_id, self.approval_timeout_sec)
+        if decision == "approve":
+            DocWriteRepo(session).transition(doc_write_id, "approved")
+            node_write_map[node.node_id] = doc_write_id
+            return True, ""
+        # deny / 超时：cancelled 收尾（complete_confirmed 非 approve 即 cancelled）
+        svc.complete_confirmed(
+            doc_write_id=doc_write_id, decision=decision or "deny", blocks=[])
+        return False, "APPROVAL_TIMEOUT" if decision is None else "TOOL_DENIED"
+
+    def _finalize_node_writes(self, session, scheduler, node_write_map: dict) -> None:
+        """write_doc 节点终态 → doc_writes 状态机收尾（success/failed）。
+
+        gate 批准时记录只到 approved；节点真实执行结果由本方法补齐。
+        审计粒度=审批记录，异常只记日志（不影响任务结论）。
+        """
+        if not node_write_map:
+            return
+        from persistence.repositories.doc_write_repo import DocWriteRepo
+
+        repo = DocWriteRepo(session)
+        for node_id, doc_write_id in node_write_map.items():
+            handle = scheduler._handles.get(node_id)
+            if handle is None:
+                continue
+            if handle.state == ExecutionState.SUCCESS:
+                repo.transition(doc_write_id, "writing")
+                repo.mark_success(
+                    doc_write_id,
+                    anchor_block_id=str(
+                        (handle.outputs or {}).get("anchor_block_id", "")
+                    ) or "",
+                )
+            else:
+                repo.mark_failed(
+                    doc_write_id,
+                    reason=f"node {node_id} {handle.state.value}: "
+                           f"{handle.error_code or ''} {handle.error_message or ''}",
+                )
+
+    @staticmethod
+    def _write_doc_preview(inputs: dict, max_chars: int = 400) -> str:
+        """write_doc 参数摘要（落库 payload 审计 + 卡片预览）。"""
+        import json
+
+        blocks = inputs.get("blocks")
+        if isinstance(blocks, list):
+            head = json.dumps(blocks[:2], ensure_ascii=False, default=str)
+            preview = (
+                f"blocks: 共 {len(blocks)} 块；前 2 块 {head}"
+            )
+        else:
+            preview = f"blocks: {blocks!r}"
+        return (f"doc_id={inputs.get('doc_id')}; "
+                f"{preview}")[:max_chars]
+
+    @staticmethod
+    def _node_l2_card(
+        *, node_id: str, doc_write_id: str, task_text: str, inputs: dict,
+    ) -> dict:
+        """Phase 17：write_doc 节点审批卡片（任务摘要+参数预览+按钮）。"""
+        task_short = task_text[:60] + ("…" if len(task_text) > 60 else "")
+        preview = ResearchRunner._write_doc_preview(inputs, max_chars=200)
+        return {
+            "header": f"节点 {node_id} 请求写入绑定文档（write_doc）",
+            "elements": [
+                {"tag": "hr"},
+                {"tag": "div", "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        f"**任务**：{task_short}\n"
+                        f"**参数**：{preview}"
+                    ),
+                }},
+                {"tag": "hr"},
+                {"tag": "action", "actions": [
+                    {"tag": "button",
+                     "text": {"tag": "plain_text", "content": "同意执行"},
+                     "type": "primary",
+                     "value": {"action": "node_l2_approval",
+                               "doc_write_id": doc_write_id,
+                               "decision": "approve"}},
+                    {"tag": "button",
+                     "text": {"tag": "plain_text", "content": "跳过"},
+                     "value": {"action": "node_l2_approval",
+                               "doc_write_id": doc_write_id,
+                               "decision": "deny"}},
+                ]},
+            ],
         }
 
     def _writeback_with_confirm(

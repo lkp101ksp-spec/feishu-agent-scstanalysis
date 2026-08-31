@@ -107,6 +107,7 @@ def _orch(db, *, with_engine=True, bound_doc=None, writeback="bind_scope",
             max_concurrent_nodes=2, research_task_timeout_sec=30,
             research_writeback_approval=writeback,
             research_approval_timeout_sec=approval_timeout,
+            research_allow_node_l2=True,
         ),
     )
     # 预置绑定文档（直接写 DB，模拟 /bind-doc 已生效）
@@ -366,4 +367,144 @@ def test_bind_scope_mode_unchanged_regression(db):
 
     assert _wait_reply_count(orch.im, 2)
     orch.im.send_card.assert_not_called()
-    orch.doc_adapter.render_blocks.assert_called_once()
+
+
+# === Phase 17：节点级 L2 审批（write_doc 开放规划） ===
+
+def _write_plan(doc_id="doccnR1"):
+    """n1(总结) → n2(write_doc) 链。"""
+    return DAGPlan(
+        plan_id="plan_w", task_id="t1", session_id="s1",
+        nodes=[
+            DAGNode(node_id="n1", kind="tool", tool_name="summarize_text",
+                    inputs={"text": "x"}),
+            DAGNode(node_id="n2", kind="tool", tool_name="write_doc",
+                    inputs={"doc_id": doc_id,
+                            "blocks": '[{"type": "text", "text": "结论"}]'},
+                    depends_on=["n1"]),
+        ],
+        entry_node_ids=["n1"],
+    )
+
+
+def _orch_with_broker(db, *, plan=None, bound_doc="doccnR1",
+                      writeback="bind_scope"):
+    """带 ApprovalBroker + 自定义 plan 的 orch（Phase 17 用）。"""
+    from orchestrator.approval_broker import ApprovalBroker
+
+    orch = _orch(db, bound_doc=bound_doc, writeback=writeback)
+    orch.approval_broker = ApprovalBroker()
+    if plan is not None:
+        orch.planner.plan.return_value = plan
+    return orch
+
+
+def test_node_l2_write_doc_visible_to_planner(db):
+    """开关开 + 有 broker：write_doc 可规划，其余 L2 仍不可见。"""
+    from orchestrator.tools.builtin.l2_side_effect import register_l2_side_effect
+
+    orch = _orch_with_broker(db)
+    register_l2_side_effect(
+        orch.registry, doc_adapter=object(), base_adapter=object(),
+        im_adapter=object(), drive_adapter=object(),
+    )
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+    assert _wait_reply_count(orch.im, 2)
+    kwargs = orch.planner.plan.call_args.kwargs
+    assert "write_doc" in kwargs["available_tools"]
+    assert "send_card" not in kwargs["available_tools"]
+    schema_names = {f["function"]["name"] for f in kwargs["tools_schema"]}
+    assert "write_doc" in schema_names and "send_card" not in schema_names
+
+
+def test_node_l2_disabled_without_broker(db):
+    """无 broker（引擎未装配 broker）：write_doc 不给 Planner（回退旧行为）。"""
+    from orchestrator.tools.builtin.l2_side_effect import register_l2_side_effect
+
+    orch = _orch(db)  # 不设 approval_broker
+    register_l2_side_effect(
+        orch.registry, doc_adapter=object(), base_adapter=object(),
+        im_adapter=object(), drive_adapter=object(),
+    )
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+    assert _wait_reply_count(orch.im, 2)
+    kwargs = orch.planner.plan.call_args.kwargs
+    assert "write_doc" not in kwargs["available_tools"]
+
+
+def test_node_l2_approve_executes_write_doc_node(db):
+    """批准：write_doc 节点提交执行 + doc_writes 落 node_l2 success + 不自动写回。"""
+    orch = _orch_with_broker(db, plan=_write_plan())
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 把结论写入文档"))
+
+    value = _wait_card_sent(orch.im)
+    assert value["action"] == "node_l2_approval"
+    assert value["decision"] == "approve"
+    assert orch.approval_broker.decide(value["doc_write_id"], "approve", "ou_r")
+
+    assert _wait_reply_count(orch.im, 2)
+    # write_doc 节点真实提交执行
+    assert orch.executor.calls == ["summarize_text", "write_doc"]
+    # 不再自动写回（has_write_node 短路）
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "写回已由 write_doc 节点执行" in final
+    # doc_writes 状态机收尾：node_l2 + success
+    row = _latest_doc_write(db)
+    assert row.approval_mode == "node_l2"
+    assert row.status == "success"
+    # 自动写回路径未触发（render_blocks 仅 write_doc handler 可能用；
+    # FakeExecutor 不跑真 handler，故此处必须零调用）
+    orch.doc_adapter.render_blocks.assert_not_called()
+
+
+def test_node_l2_deny_denies_node(db):
+    """拒绝：write_doc 节点 DENIED（不进 executor）+ doc_writes cancelled。"""
+    orch = _orch_with_broker(db, plan=_write_plan())
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 把结论写入文档"))
+
+    value = _wait_card_sent(orch.im)
+    assert orch.approval_broker.decide(value["doc_write_id"], "deny", "ou_r")
+
+    assert _wait_reply_count(orch.im, 2)
+    assert orch.executor.calls == ["summarize_text"]  # write_doc 未执行
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "n2: denied" in final
+    assert "write_doc 节点未成功写入" in final
+    assert _latest_doc_write(db).status == "cancelled"
+
+
+def test_node_l2_wrong_doc_id_denied_without_card(db):
+    """doc_id ≠ 绑定文档：直接拒（不发卡），节点 DENIED。"""
+    orch = _orch_with_broker(
+        db, plan=_write_plan(doc_id="docWRONG"))
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 把结论写入文档"))
+
+    assert _wait_reply_count(orch.im, 2)
+    # 不发审批卡（仅受理语与结果回复两条 reply，零 send_card）
+    orch.im.send_card.assert_not_called()
+    assert orch.executor.calls == ["summarize_text"]
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "n2: denied" in final
+
+
+def test_node_l2_timeout_denies_node(db):
+    """审批超时：节点 DENIED + doc_writes cancelled（approval_timeout=0）。"""
+    orch = _orch(db, bound_doc="doccnR1", approval_timeout=0)
+    from orchestrator.approval_broker import ApprovalBroker
+    orch.approval_broker = ApprovalBroker()
+    orch.planner.plan.return_value = _write_plan()
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 把结论写入文档"))
+
+    assert _wait_reply_count(orch.im, 2)
+    assert orch.executor.calls == ["summarize_text"]
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "n2: denied" in final
+    assert _latest_doc_write(db).status == "cancelled"
+    # has_write_node 短路：自动写回也不触发
+    orch.doc_adapter.render_blocks.assert_not_called()

@@ -82,6 +82,10 @@ class Settings:
     research_approval_timeout_sec: int = 600
     # run_python 代码级失败（运行时异常/语法被拦）LLM 自愈重试上限（0 关闭）
     node_repair_max_retries: int = 1
+    # === Phase 17: 节点级 L2 审批 ===
+    # research 链路开放 write_doc 节点（执行前卡片确认）；False 时回到
+    # Phase 14 行为（L2 整体不可规划 + 收尾整体写回）
+    research_allow_node_l2: bool = True
     # === Phase 16: 安全加固 ===
     # 沙箱容器空闲清扫线程间隔（秒，0 关闭；空闲超时仍由 kernel_idle_timeout_sec 决定）
     kernel_sweep_interval_sec: int = 300
@@ -155,6 +159,9 @@ def load_settings() -> Settings:
             os.environ.get("RESEARCH_APPROVAL_TIMEOUT_SEC", "600")),
         node_repair_max_retries=int(
             os.environ.get("NODE_REPAIR_MAX_RETRIES", "1")),
+        # Phase 17：节点级 L2 审批开关（RESEARCH_ALLOW_NODE_L2=0 关闭）
+        research_allow_node_l2=os.environ.get(
+            "RESEARCH_ALLOW_NODE_L2", "1").lower() not in ("0", "false", "no"),
         # Phase 13 T2：沙箱配置外化（DOCKER_*/KERNEL_*）
         docker_image=os.environ.get(
             "DOCKER_IMAGE", "feishu-research-agent/kernel:latest"),

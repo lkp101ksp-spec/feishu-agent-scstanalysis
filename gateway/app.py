@@ -149,7 +149,9 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
             return {"ok": False, "reason": str(e)}
     # research_writeback 分支（Phase 14）：写入决策到 broker，
     # 由 research 线程完成后续写入与回执（避免双线程写文档）
-    if action == "research_writeback":
+    # Phase 17：node_l2_approval（write_doc 节点级审批）同一处理逻辑——
+    # 同样落 doc_writes（owner 校验复用）+ broker 决策
+    if action in ("research_writeback", "node_l2_approval"):
         broker = ctx.approval_broker
         if broker is None:
             logger.warning("research_writeback received but broker not configured")

@@ -172,3 +172,28 @@ def test_research_writeback_without_broker_not_configured():
     })
     assert resp.json()["ok"] is False
     assert "not configured" in resp.json()["reason"]
+
+
+# === Phase 17：node_l2_approval 分支（write_doc 节点审批） ===
+
+def test_node_l2_approval_decide_reaches_broker(client_with_broker):
+    """发起者点同意：决策写入 broker（同一分支逻辑，action 不同）。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, {
+        "action": "node_l2_approval", "doc_write_id": "dw1",
+        "decision": "approve", "open_id": "ou_1",
+    })
+    assert resp.json() == {"ok": True, "status": "decided",
+                           "decision": "approve"}
+    assert broker.wait("dw1", timeout=0.1) == "approve"
+
+
+def test_node_l2_approval_non_owner_forbidden(client_with_broker):
+    """非发起者点击 node_l2_approval → forbidden（owner 校验复用）。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, {
+        "action": "node_l2_approval", "doc_write_id": "dw1",
+        "decision": "approve", "open_id": "ou_other",
+    })
+    assert resp.json() == {"ok": False, "status": "forbidden"}
+    assert broker.wait("dw1", timeout=0.1) is None

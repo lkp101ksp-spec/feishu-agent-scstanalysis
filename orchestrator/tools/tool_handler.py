@@ -28,12 +28,10 @@ class ToolHandler:
         self,
         registry: ToolRegistry,
         *,
-        approval_service=None,
         settings=None,
     ) -> None:
         self.registry = registry
         self._ast = ASTGuard()
-        self._approval = approval_service
         # Phase 16 ACL：settings.disabled_tools 禁用名单（执行层兜底校验）
         self.settings = settings
 
@@ -80,25 +78,9 @@ class ToolHandler:
                 {"level": n[0], "message": n[1], "line": n[2]}
                 for n in ast_report.notices
             ]
-        # L2: approval stub
-        if spec.risk_level == "L2_side_effect" and self._approval is not None:
-            ok = self._approval.request_sync(
-                tool_name=tool_name,
-                args_preview=inputs,
-                actor_open_id=actor_open_id,
-                session=type(
-                    "S",
-                    (),
-                    {"bound_doc_id": None, "bind_expires_at": None},
-                )(),
-            )
-            if not ok:
-                return ToolResult(
-                    outputs={},
-                    artifacts_ids=[],
-                    error_code="TOOL_DENIED",
-                    error_message="denied",
-                )
+        # L2 审批：Phase 17 起由 scheduler 层 l2_gate 负责（research 链路
+        # write_doc 节点卡片确认）；原 Phase 2 approval stub（request_sync
+        # mock，bind 不覆盖恒 deny）已删除——L2 均不可直呼时该分支不可达
         try:
             out = spec.handler(**inputs)
             if not isinstance(out, dict):

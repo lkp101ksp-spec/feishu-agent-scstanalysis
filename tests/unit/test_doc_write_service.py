@@ -256,3 +256,68 @@ def test_complete_confirmed_missing_row_fails_gracefully():
         doc_write_id="dw1", decision="approve", blocks=["b1"])
     assert out["status"] == "failed"
     doc_adapter.render_blocks.assert_not_called()
+
+
+# === Phase 17：node_l2 节点级审批 ===
+
+def test_create_confirm_pending_node_l2_mode():
+    """approval_mode="node_l2" 透传落库（write_doc 节点审批记录）。"""
+    svc, doc_repo, _ = _make_confirm_service()
+    out = svc.create_confirm_pending(
+        session_id="s1", task_id="t1", requested_by="ou_x",
+        preview_text="doc_id=doccnABC123; blocks: ...",
+        approval_mode="node_l2")
+    assert out["doc_id"] == "doccnABC123"
+    kwargs = doc_repo.create_pending.call_args.kwargs
+    assert kwargs["approval_mode"] == "node_l2"
+    assert kwargs["payload_text"] == "doc_id=doccnABC123; blocks: ..."
+
+
+def test_cancel_stale_pending_covers_both_modes():
+    """启动清扫同时清 card_confirm 与 node_l2 的孤儿 pending。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from persistence.models import Base
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine, expire_on_commit=False)
+    s = Session()
+    try:
+        repo = DocWriteRepo(s)
+        repo.create_pending(
+            doc_write_id="dw_c", task_id="t1", doc_id="doc1",
+            requested_by="ou_1", approval_mode="card_confirm",
+            payload_text="x")
+        repo.create_pending(
+            doc_write_id="dw_n", task_id="t1", doc_id="doc1",
+            requested_by="ou_1", approval_mode="node_l2",
+            payload_text="y")
+        repo.create_pending(
+            doc_write_id="dw_b", task_id="t1", doc_id="doc1",
+            requested_by="ou_1", approval_mode="bind_scope",
+            payload_text="z")
+        s.commit()
+
+        svc = DocWriteService(
+            session_repo=MagicMock(spec=SessionRepo), doc_repo=repo,
+            doc_adapter=MagicMock(spec=DocAdapter),
+        )
+        assert svc.cancel_stale_pending() == 2
+        s.commit()
+        from persistence.models import DocWriteRow
+        statuses = {
+            row.doc_write_id: row.status
+            for row in s.query(DocWriteRow).all()
+        }
+        assert statuses["dw_c"] == "cancelled"
+        assert statuses["dw_n"] == "cancelled"
+        assert statuses["dw_b"] == "pending"  # bind_scope 不在清扫范围
+    finally:
+        s.close()
+        engine.dispose()

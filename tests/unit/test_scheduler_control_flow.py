@@ -394,3 +394,60 @@ async def test_while_rule_shortcut_skips_llm():
     assert result.status == "success"
     assert sch._handles["w1"].outputs == {"rounds": 1}
     assert len(llm.calls) == 0
+
+
+# === Phase 17：节点级 L2 审批门（l2_gate） ===
+
+def _l2_plan():
+    """n1(读) → n3(write_doc) 链；write_doc 依赖 n1。"""
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="read_doc",
+                 inputs={}, depends_on=[])
+    n3 = DAGNode(node_id="n3", kind="tool", tool_name="write_doc",
+                 inputs={"doc_id": "doc1"}, depends_on=["n1"])
+    return DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, n3], entry_node_ids=["n1"])
+
+
+async def test_l2_gate_deny_marks_denied_and_skips_downstream():
+    """gate 拒绝 write_doc → 节点 DENIED + 下游 SKIPPED + plan partial。"""
+    plan = _l2_plan()
+    ex = AutoFinishExecutor()
+    gate_calls = []
+
+    def gate(node, inputs):
+        gate_calls.append(node.node_id)
+        if node.tool_name == "write_doc":
+            return False, "TOOL_DENIED"
+        return True, ""
+
+    sch = Scheduler(plan=plan, executor=ex, l2_gate=gate)
+    result = await _run(sch)
+    assert result.node_states["n1"] == ExecutionState.SUCCESS
+    assert result.node_states["n3"] == ExecutionState.DENIED
+    assert sch._handles["n3"].error_code == "TOOL_DENIED"
+    # write_doc 未进 executor
+    assert [t.node_id for t in ex.submitted] == ["n1"]
+    # DENIED 计入 partial（无 FAILED 无 SKIPPED 但有 DENIED）
+    assert result.status == "success_with_partial_failure"
+
+
+async def test_l2_gate_approve_passes_all():
+    """gate 全放行 → 两节点均提交执行，plan success。"""
+    plan = _l2_plan()
+    ex = AutoFinishExecutor()
+
+    sch = Scheduler(plan=plan, executor=ex, l2_gate=lambda n, i: (True, ""))
+    result = await _run(sch)
+    assert [t.node_id for t in ex.submitted] == ["n1", "n3"]
+    assert result.status == "success"
+    assert result.node_states["n3"] == ExecutionState.SUCCESS
+
+
+async def test_no_gate_keeps_behavior():
+    """未注入 gate → 行为与原先一致（无 DENIED，全部提交）。"""
+    plan = _l2_plan()
+    ex = AutoFinishExecutor()
+    sch = Scheduler(plan=plan, executor=ex)
+    result = await _run(sch)
+    assert [t.node_id for t in ex.submitted] == ["n1", "n3"]
+    assert result.status == "success"

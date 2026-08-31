@@ -174,13 +174,17 @@ class PlanResult:
 class Scheduler:
     def __init__(self, plan: DAGPlan, executor, max_concurrent: int = 4,
                  runtime=None, condition_llm=None, code_repair_llm=None,
-                 node_repair_max_retries: int = 1) -> None:
+                 node_repair_max_retries: int = 1,
+                 l2_gate=None) -> None:
         self.plan = plan
         self.executor = executor
         self.max_concurrent = max_concurrent
         self.runtime = runtime  # Phase 3：可选注入；None 时走 Phase 2 路径
         # T3：branch/while 条件判定器（llm_router）；None 时控制流节点 FAILED
         self._condition_llm = condition_llm
+        # Phase 17：节点级 L2 审批门（callable(node, inputs) -> (ok, code)）；
+        # None 不设门（现行为）。denied 节点置 DENIED，下游照常 SKIPPED。
+        self.l2_gate = l2_gate
         # 节点自愈（综合演练轮）：run_python 代码级失败 → LLM 修 code 重跑
         self._code_repair_llm = code_repair_llm
         self._node_repair_max_retries = max(0, int(node_repair_max_retries))
@@ -377,6 +381,23 @@ class Scheduler:
                 if node.kind in ("branch", "while", "for"):
                     self._expand_control_node(node)
                     continue
+                # Phase 17：L2 节点过审批门（gate 自行短路非 L2 工具）；
+                # 拒绝 → 节点 DENIED（下游照常 SKIPPED，安全侧失败）
+                if self.l2_gate is not None and node.kind == "tool":
+                    resolved = self._resolve_inputs(node)
+                    ok, err_code = self.l2_gate(node, resolved)
+                    if not ok:
+                        now = datetime.now(UTC)
+                        self._handles[node.node_id] = TaskHandle(
+                            execution_id=f"dn_{node.node_id}",
+                            task_id=self.plan.task_id,
+                            node_id=node.node_id,
+                            state=ExecutionState.DENIED,
+                            started_at=now, finished_at=now,
+                            error_code=err_code or "TOOL_DENIED",
+                            error_message="denied by approval gate",
+                        )
+                        continue
                 task = ExecutionTask(
                     task_id=self.plan.task_id,
                     node_id=node.node_id,
@@ -463,7 +484,9 @@ class Scheduler:
     def _collect_result(self) -> PlanResult:
         node_states = {n.node_id: self._node_state(n.node_id) for n in self.plan.nodes}
         failed = any(s == ExecutionState.FAILED for s in node_states.values())
-        skipped = any(s == ExecutionState.SKIPPED for s in node_states.values())
+        # DENIED（Phase 17 审批拒绝）与 SKIPPED 同档：计入 partial
+        skipped = any(s in (ExecutionState.SKIPPED, ExecutionState.DENIED)
+                      for s in node_states.values())
         if failed and not skipped:
             status = "failed"
         elif failed or skipped:

@@ -11,11 +11,9 @@ Phase 2 增量：保留 process() Phase 1 路径；新增 process_phase2() 走 P
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
 from typing import Optional
 
 from feishu_adapter.im_adapter import IMAdapter
-from orchestrator.approval_service import ApprovalService
 from orchestrator.bind_doc_service import BindDocService
 from orchestrator.doc_write_service import DocWriteService
 from orchestrator.executor.kernel_manager import KernelPool
@@ -103,12 +101,8 @@ class Orchestrator:
             # === Phase 4 MVP: L3 领域工具 ===
             from orchestrator.tools.builtin.l3_bio import register_l3_bio
             register_l3_bio(self.registry)
-            self.approval = ApprovalService(
-                im_adapter=im_adapter, approval_repo=None, audit_repo=audit_repo
-            )
             self.tool_handler = ToolHandler(
                 registry=self.registry,
-                approval_service=self.approval,
                 settings=settings,  # Phase 16 ACL：执行层禁用名单兜底
             )
             self.executor = LocalExecutor(
@@ -361,25 +355,12 @@ class Orchestrator:
             artifacts_count=0,
         )
 
-        class _EmptySession:
-            bound_doc_id = None
-            bind_expires_at = None
-
-        sess = _EmptySession()
+        # Phase 17：原 self.approval.policy.can_skip_approval 判定随
+        # ApprovalService 装配移除——bound_doc_id 已含有效期校验，
+        # 有效绑定即授权直写（bind_scope 语义不变）
         bound = self.session_service.bound_doc_id(session_id)
         if bound:
-            sess = type(
-                "BS",
-                (),
-                {"bound_doc_id": bound,
-                 "bind_expires_at": datetime.now(UTC)},
-            )()
-        if self.approval.policy.can_skip_approval(
-            "write_doc",
-            {"doc_id": getattr(sess, "bound_doc_id", None) or ""},
-            sess,
-        ) and getattr(sess, "bound_doc_id", None):
-            self.doc_adapter.render_blocks(sess.bound_doc_id, blocks)
+            self.doc_adapter.render_blocks(bound, blocks)
 
         self.task_service.mark_success(
             task_id=task_id, reply_text=f"Plan {result.status}"
