@@ -245,6 +245,9 @@ class ResearchRunner:
                 doc_written, writeback_note = self._writeback_with_confirm(
                     session=session, session_id=session_id, task_id=task_id,
                     incoming=incoming, blocks=blocks, broker=broker,
+                    task_text=task_text, status=result.status,
+                    node_count=len(result.node_states),
+                    outputs_digest=outputs_digest,
                 )
             else:
                 # bind_scope（或 broker 未装配降级）：绑定即授权直写
@@ -290,12 +293,16 @@ class ResearchRunner:
     def _writeback_with_confirm(
         self, *, session, session_id: str, task_id: str,
         incoming: IncomingMessage, blocks: list, broker,
+        task_text: str = "", status: str = "", node_count: int = 0,
+        outputs_digest: list | None = None,
     ) -> tuple[bool, str]:
         """card_confirm 写回：落 pending → 发审批卡片 → 等决策 → 收尾状态机。
 
         返回 (doc_written, note)。任何分支都不抛（写回是附属动作，
         不改变研究任务本身的 success 结论）。DocWriteService 用 research
         线程自己的 session 构造（跨线程不共享主 Session）。
+        task_text/status/node_count/outputs_digest 供审批卡片结构化预览
+        （Phase 15 T3）。
         """
         from orchestrator.doc_write_service import DocWriteService
         from persistence.repositories.doc_write_repo import DocWriteRepo
@@ -317,30 +324,11 @@ class ResearchRunner:
         doc_write_id = pending["doc_write_id"]
 
         try:
-            self.im.send_card(incoming.chat_id, {
-                "header": f"研究任务完成——是否写入绑定文档？（task {task_id[:8]}）",
-                "elements": [
-                    {"tag": "hr"},
-                    {"tag": "div", "text": {
-                        "tag": "lark_md",
-                        "content": preview[:600] + ("…" if len(preview) > 600 else ""),
-                    }},
-                    {"tag": "hr"},
-                    {"tag": "action", "actions": [
-                        {"tag": "button",
-                         "text": {"tag": "plain_text", "content": "同意写入"},
-                         "type": "primary",
-                         "value": {"action": "research_writeback",
-                                   "doc_write_id": doc_write_id,
-                                   "decision": "approve"}},
-                        {"tag": "button",
-                         "text": {"tag": "plain_text", "content": "跳过"},
-                         "value": {"action": "research_writeback",
-                                   "doc_write_id": doc_write_id,
-                                   "decision": "deny"}},
-                    ]},
-                ],
-            })
+            self.im.send_card(incoming.chat_id, self._approval_card(
+                task_id=task_id, doc_write_id=doc_write_id,
+                task_text=task_text, status=status, node_count=node_count,
+                outputs_digest=outputs_digest or [],
+            ))
         except Exception as e:
             logger.warning("approval card send failed: %s", e)
             svc.complete_confirmed(
@@ -365,6 +353,55 @@ class ResearchRunner:
                      if self.approval_timeout_sec >= 60
                      else f"{self.approval_timeout_sec} 秒")
         return False, f"审批超时（{wait_text}无人处理），已跳过写回"
+
+    @staticmethod
+    def _approval_card(
+        *, task_id: str, doc_write_id: str, task_text: str,
+        status: str, node_count: int, outputs_digest: list,
+    ) -> dict:
+        """Phase 15 T3：结构化审批卡片（任务摘要+统计+关键输出+按钮）。
+
+        数据均来自调用方 _execute 已有产物；preview_text 落库审计不变，
+        卡片只做决策所需的最小信息展示（每条输出截 120，最多 5 条）。
+        """
+        task_short = task_text[:80] + ("…" if len(task_text) > 80 else "")
+        # 关键输出（前 5 条，每条截 120；超出提示总量）
+        shown = [line[:120] + ("…" if len(line) > 120 else "")
+                 for line in outputs_digest[:5]]
+        outputs_md = ""
+        if shown:
+            outputs_md = "\n**关键输出**\n" + "\n".join(
+                f"- {line}" for line in shown)
+            if len(outputs_digest) > 5:
+                outputs_md += f"\n- … 等共 {len(outputs_digest)} 条，完整内容将写入文档"
+        return {
+            "header": f"研究任务完成——是否写入绑定文档？（task {task_id[:8]}）",
+            "elements": [
+                {"tag": "hr"},
+                {"tag": "div", "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        f"**任务**：{task_short}\n"
+                        f"执行状态：{status or 'unknown'} · Nodes: {node_count}"
+                        + outputs_md
+                    ),
+                }},
+                {"tag": "hr"},
+                {"tag": "action", "actions": [
+                    {"tag": "button",
+                     "text": {"tag": "plain_text", "content": "同意写入"},
+                     "type": "primary",
+                     "value": {"action": "research_writeback",
+                               "doc_write_id": doc_write_id,
+                               "decision": "approve"}},
+                    {"tag": "button",
+                     "text": {"tag": "plain_text", "content": "跳过"},
+                     "value": {"action": "research_writeback",
+                               "doc_write_id": doc_write_id,
+                               "decision": "deny"}},
+                ]},
+            ],
+        }
 
     @staticmethod
     def _failure_digest(scheduler: Scheduler, max_chars: int = 300) -> list[str]:

@@ -62,13 +62,44 @@ def test_card_non_renew_action_does_not_call_renew(client_with_bind_doc_service)
 
 @pytest.fixture
 def client_with_broker():
+    """内存 SQLite（含 dw1 → requested_by=ou_1）+ 真 ApprovalBroker。
+
+    Phase 15 T1 起回调需查 doc_writes.requested_by 做 operator 校验，
+    session_factory 必须注入，避免测试连真实 PG。
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
     from orchestrator.approval_broker import ApprovalBroker
+    from persistence.models import Base
+    from persistence.repositories.doc_write_repo import DocWriteRepo
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    s = factory()
+    try:
+        DocWriteRepo(s).create_pending(
+            doc_write_id="dw1", task_id="t1", doc_id="doc1",
+            requested_by="ou_1", approval_mode="card_confirm",
+            payload_text="preview",
+        )
+        s.commit()
+    finally:
+        s.close()
+
     broker = ApprovalBroker()
-    client = TestClient(create_app(
+    app = create_app(
         secret="phase2-secret",
         orchestrator=object(),
         approval_broker=broker,
-    ))
+    )
+    app.state.session_factory = factory
+    client = TestClient(app)
     return client, broker
 
 
@@ -84,26 +115,51 @@ def _post_card(client, payload: dict):
 
 
 def test_research_writeback_decide_reaches_broker(client_with_broker):
-    """首次点击：决策写入 broker，research 线程 wait 能取到。"""
+    """发起者首次点击：决策写入 broker，research 线程 wait 能取到。"""
     client, broker = client_with_broker
     resp = _post_card(client, {
         "action": "research_writeback", "doc_write_id": "dw1",
         "decision": "approve", "open_id": "ou_1",
     })
     assert resp.status_code == 200
-    assert resp.json() == {"ok": True, "status": "decided"}
+    assert resp.json() == {"ok": True, "status": "decided",
+                           "decision": "approve"}
     assert broker.wait("dw1", timeout=0.1) == "approve"
 
 
 def test_research_writeback_duplicate_click_rejected(client_with_broker):
-    """重复点击：幂等拒绝，首个决策不被覆盖。"""
+    """发起者重复点击：幂等拒绝，首个决策不被覆盖。"""
     client, broker = client_with_broker
     _post_card(client, {"action": "research_writeback", "doc_write_id": "dw1",
                         "decision": "approve", "open_id": "ou_1"})
     resp = _post_card(client, {"action": "research_writeback", "doc_write_id": "dw1",
-                               "decision": "deny", "open_id": "ou_2"})
-    assert resp.json() == {"ok": False, "status": "already_handled"}
+                               "decision": "deny", "open_id": "ou_1"})
+    assert resp.json() == {"ok": False, "status": "already_handled",
+                           "decision": ""}
     assert broker.wait("dw1", timeout=0.1) == "approve"
+
+
+def test_research_writeback_non_owner_forbidden(client_with_broker):
+    """Phase 15 T1：非发起者点击 → forbidden，决策不进 broker。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, {
+        "action": "research_writeback", "doc_write_id": "dw1",
+        "decision": "approve", "open_id": "ou_other",
+    })
+    assert resp.json() == {"ok": False, "status": "forbidden"}
+    # broker 未收到决策（wait 超时返回 None）
+    assert broker.wait("dw1", timeout=0.1) is None
+
+
+def test_research_writeback_unknown_doc_write_passes(client_with_broker):
+    """row 缺失（重启后孤儿/未知 id）：owner 查不到不拦截，走 broker 原逻辑。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, {
+        "action": "research_writeback", "doc_write_id": "dw_unknown",
+        "decision": "deny", "open_id": "ou_anyone",
+    })
+    assert resp.json() == {"ok": True, "status": "decided", "decision": "deny"}
+    assert broker.wait("dw_unknown", timeout=0.1) == "deny"
 
 
 def test_research_writeback_without_broker_not_configured():

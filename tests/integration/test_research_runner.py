@@ -315,6 +315,33 @@ def test_card_confirm_timeout_skips_write(db):
     assert _latest_doc_write(db).status == "cancelled"
 
 
+def test_card_confirm_approval_card_structured_content(db):
+    """Phase 15 T3：审批卡片结构化——任务摘要/状态/Nodes 统计/关键输出。"""
+    orch = _orch(db, bound_doc="doccnR1", writeback="card_confirm",
+                 approval_timeout=0)
+    from orchestrator.approval_broker import ApprovalBroker
+    orch.approval_broker = ApprovalBroker()
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    card = orch.im.send_card.call_args.args[1]
+    # 卡片结构：hr + div(lark_md) + hr + action(两按钮)
+    assert card["elements"][-1]["tag"] == "action"
+    assert len(card["elements"][-1]["actions"]) == 2
+    div = next(e for e in card["elements"] if e.get("tag") == "div")
+    content = div["text"]["content"]
+    assert "**任务**：总结要点" in content      # 任务摘要
+    assert "执行状态：success" in content       # 执行状态
+    assert "Nodes: 1" in content                # 节点统计
+    assert "关键输出" in content                # 关键输出段
+    # 按钮语义不变（approve/deny + doc_write_id）
+    approve_val = card["elements"][-1]["actions"][0]["value"]
+    assert approve_val["action"] == "research_writeback"
+    assert approve_val["decision"] == "approve"
+    assert approve_val["doc_write_id"]
+
+
 def test_card_confirm_without_broker_falls_back_to_direct_write(db):
     """broker 未装配：降级 bind_scope 直写（不阻塞等待）。"""
     orch = _orch(db, bound_doc="doccnR1", writeback="card_confirm")

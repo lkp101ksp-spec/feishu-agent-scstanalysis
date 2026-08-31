@@ -154,17 +154,47 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         if broker is None:
             logger.warning("research_writeback received but broker not configured")
             return {"ok": False, "reason": "approval broker not configured"}
+        # Phase 15 T1：仅任务发起者可决策（群聊其他成员点击无效）
+        operator = payload.get("open_id", "")
+        owner = _doc_write_owner(app, payload.get("doc_write_id", ""))
+        if owner is not None and owner != operator:
+            logger.warning(
+                "research_writeback forbidden: doc_write_id=%s operator=%s owner=%s",
+                payload.get("doc_write_id", ""), operator, owner)
+            return {"ok": False, "status": "forbidden"}
+        decision = payload.get("decision", "")
         decided = broker.decide(
-            payload.get("doc_write_id", ""),
-            payload.get("decision", ""),
-            operator=payload.get("open_id", ""),
+            payload.get("doc_write_id", ""), decision, operator=operator,
         )
         if not decided:
             logger.info("research_writeback ignored (dup/unknown/invalid): %s",
                         payload.get("doc_write_id", ""))
         return {"ok": decided,
-                "status": "decided" if decided else "already_handled"}
+                "status": "decided" if decided else "already_handled",
+                "decision": decision if decided else ""}
     return {"ok": True}
+
+
+def _doc_write_owner(app: FastAPI, doc_write_id: str) -> str | None:
+    """查 doc_writes.requested_by（发起者 open_id）；row 缺失返回 None（不拦截）。"""
+    if not doc_write_id:
+        return None
+    if app.state.session_factory is not None:
+        factory = app.state.session_factory
+    else:
+        from persistence.engine import get_engine
+        factory = sessionmaker(bind=get_engine(), expire_on_commit=False, autoflush=False)
+    try:
+        s = factory()
+        try:
+            from persistence.repositories.doc_write_repo import DocWriteRepo
+            row = DocWriteRepo(s).get(doc_write_id)
+            return getattr(row, "requested_by", None) if row else None
+        finally:
+            s.close()
+    except Exception:
+        logger.exception("doc_write owner lookup failed (allow pass)")
+        return None
 
 
 @dataclass

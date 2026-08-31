@@ -153,19 +153,40 @@ def _utc_iso_to_beijing_hm(iso: str) -> str:
 
 
 def card_result_to_response(result: dict) -> P2CardActionTriggerResponse | None:
-    """管线结果 → 卡片回调 Toast 响应；无需反馈的动作（无 new_expires）返回 None。"""
-    if "new_expires" not in result:
-        return None
-    toast = CallBackToast({})
-    if result.get("ok"):
-        toast.type = "success"
-        toast.content = f"已续期至 {_utc_iso_to_beijing_hm(result['new_expires'])}"
-    else:
-        toast.type = "error"
-        toast.content = f"续期失败：{result.get('reason', 'unknown')}"
-    resp = P2CardActionTriggerResponse({})
-    resp.toast = toast
-    return resp
+    """管线结果 → 卡片回调 Toast 响应；无需反馈的动作返回 None。
+
+    renew_bind：成功/失败续期 toast（Phase 3）。
+    research_writeback（Phase 15 T2）：decided / already_handled / forbidden
+    三态 toast，用户点击按钮即有反馈，不必等 research 线程 IM 回执。
+    """
+    if "new_expires" in result:
+        toast = CallBackToast({})
+        if result.get("ok"):
+            toast.type = "success"
+            toast.content = f"已续期至 {_utc_iso_to_beijing_hm(result['new_expires'])}"
+        else:
+            toast.type = "error"
+            toast.content = f"续期失败：{result.get('reason', 'unknown')}"
+        resp = P2CardActionTriggerResponse({})
+        resp.toast = toast
+        return resp
+    status = result.get("status", "")
+    if status in ("decided", "already_handled", "forbidden"):
+        toast = CallBackToast({})
+        if status == "decided":
+            toast.type = "success"
+            toast.content = ("已记录：将写入文档" if result.get("decision") == "approve"
+                             else "已记录：跳过写入")
+        elif status == "already_handled":
+            toast.type = "info"
+            toast.content = "该卡片已处理过"
+        else:  # forbidden
+            toast.type = "error"
+            toast.content = "仅任务发起者可操作"
+        resp = P2CardActionTriggerResponse({})
+        resp.toast = toast
+        return resp
+    return None
 
 
 def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:

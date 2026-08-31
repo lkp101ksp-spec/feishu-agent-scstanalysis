@@ -116,8 +116,45 @@ def test_card_result_to_response_error_toast():
 
 
 def test_card_result_to_response_none_for_silent_action():
-    """非续期动作（无 new_expires）→ 不弹 Toast。"""
+    """非续期动作（无 new_expires/status）→ 不弹 Toast。"""
     assert card_result_to_response({"ok": True}) is None
+
+
+# --- Phase 15 T2：research_writeback 决策 Toast ---
+
+def test_card_result_to_response_writeback_decided_approve():
+    """发起者点同意 → success Toast「已记录：将写入文档」。"""
+    resp = card_result_to_response(
+        {"ok": True, "status": "decided", "decision": "approve"})
+    assert resp is not None
+    assert resp.toast.type == "success"
+    assert resp.toast.content == "已记录：将写入文档"
+
+
+def test_card_result_to_response_writeback_decided_deny():
+    """发起者点跳过 → success Toast「已记录：跳过写入」。"""
+    resp = card_result_to_response(
+        {"ok": True, "status": "decided", "decision": "deny"})
+    assert resp is not None
+    assert resp.toast.type == "success"
+    assert resp.toast.content == "已记录：跳过写入"
+
+
+def test_card_result_to_response_writeback_already_handled():
+    """重复点击 → info Toast「该卡片已处理过」。"""
+    resp = card_result_to_response(
+        {"ok": False, "status": "already_handled", "decision": ""})
+    assert resp is not None
+    assert resp.toast.type == "info"
+    assert resp.toast.content == "该卡片已处理过"
+
+
+def test_card_result_to_response_writeback_forbidden():
+    """非发起者点击 → error Toast「仅任务发起者可操作」。"""
+    resp = card_result_to_response({"ok": False, "status": "forbidden"})
+    assert resp is not None
+    assert resp.toast.type == "error"
+    assert resp.toast.content == "仅任务发起者可操作"
 
 
 def test_build_dispatcher_smoke():
