@@ -106,18 +106,32 @@ class TemplateEngine:
     # === Phase 5: 富文本块（AnyBlock） ===
 
     def render_plan_summary_blocks(
-        self, *, status: str, node_states: dict, artifacts_count: int
+        self, *, status: str, node_states: dict, artifacts_count: int,
+        outputs: list | None = None,
     ) -> list:
-        """Phase 5: 返回 Pydantic Block 列表（用于飞书 doc 渲染）。"""
-        from orchestrator.blocks.schemas import HeadingBlock, TableBlock, TextBlock
-        return [
+        """Phase 5: 返回 Pydantic Block 列表（用于飞书 doc 渲染）。
+
+        outputs：关键输出摘要行（Phase 14 补——IM 有「关键输出」段而
+        文档没有，用户在文档里看不到研究结果，真机 2026-08-31 发现）。
+        """
+        from orchestrator.blocks.schemas import (
+            HeadingBlock,
+            ListBlock,
+            TableBlock,
+            TextBlock,
+        )
+        blocks = [
             HeadingBlock(level=2, text=f"Plan 执行结果（{status}）"),
             TextBlock(text=f"Nodes: {len(node_states)}; Artifacts: {artifacts_count}"),
-            TableBlock(
-                headers=["Node", "State"],
-                rows=[[nid, state] for nid, state in node_states.items()],
-            ),
         ]
+        if outputs:
+            blocks.append(HeadingBlock(level=3, text="关键输出"))
+            blocks.append(ListBlock(items=list(outputs)))
+        blocks.append(TableBlock(
+            headers=["Node", "State"],
+            rows=[[nid, state] for nid, state in node_states.items()],
+        ))
+        return blocks
 
     def render_blocks_to_text(self, blocks) -> str:
         """Phase 5: list[Block] → 纯文本（用于 IM reply）。"""

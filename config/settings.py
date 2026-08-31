@@ -75,6 +75,11 @@ class Settings:
     research_task_timeout_sec: int = 300
     # LLM 单次调用超时（秒）：DAG 规划 prompt 大、推理重，30s 真机会 ReadTimeout
     llm_timeout_sec: int = 120
+    # === Phase 14: L2 写回审批流 ===
+    # 研究任务写回模式：card_confirm（卡片确认后写入）/ bind_scope（绑定即授权直写）
+    research_writeback_approval: str = "card_confirm"
+    # 审批卡片等待时长（秒），超时按拒绝处理
+    research_approval_timeout_sec: int = 600
 
 
 def _load_yaml(path: str) -> dict:
@@ -136,6 +141,11 @@ def load_settings() -> Settings:
         max_concurrent_nodes=int(
             os.environ.get("MAX_CONCURRENT_NODES", "4")),
         llm_timeout_sec=int(os.environ.get("LLM_TIMEOUT_SEC", "120")),
+        # Phase 14：写回审批（RESEARCH_WRITEBACK_APPROVAL=bind_scope 关闭卡片确认）
+        research_writeback_approval=os.environ.get(
+            "RESEARCH_WRITEBACK_APPROVAL", "card_confirm"),
+        research_approval_timeout_sec=int(
+            os.environ.get("RESEARCH_APPROVAL_TIMEOUT_SEC", "600")),
         # Phase 13 T2：沙箱配置外化（DOCKER_*/KERNEL_*）
         docker_image=os.environ.get(
             "DOCKER_IMAGE", "feishu-research-agent/kernel:latest"),

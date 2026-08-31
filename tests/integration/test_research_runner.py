@@ -85,7 +85,8 @@ def _wait_reply_count(im, count: int, timeout: float = 10.0) -> bool:
     return False
 
 
-def _orch(db, *, with_engine=True, bound_doc=None):
+def _orch(db, *, with_engine=True, bound_doc=None, writeback="bind_scope",
+          approval_timeout=30):
     """构造带假引擎的 Orchestrator 替身（SimpleNamespace）。"""
     from orchestrator.session_service import SessionService
     from orchestrator.template_engine import TemplateEngine
@@ -104,6 +105,8 @@ def _orch(db, *, with_engine=True, bound_doc=None):
         template=TemplateEngine(), doc_adapter=doc_adapter,
         settings=SimpleNamespace(
             max_concurrent_nodes=2, research_task_timeout_sec=30,
+            research_writeback_approval=writeback,
+            research_approval_timeout_sec=approval_timeout,
         ),
     )
     # 预置绑定文档（直接写 DB，模拟 /bind-doc 已生效）
@@ -204,3 +207,116 @@ def test_task_row_created_with_research_intent(db):
     assert task is not None
     assert task.intent == "research"
     s.close()
+
+
+# === Phase 14：card_confirm 卡片确认写回 ===
+
+def _wait_card_sent(im, timeout: float = 10.0) -> dict:
+    """轮询等待审批卡发出，返回首个按钮的 value（含 doc_write_id/decision）。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if im.send_card.call_count >= 1:
+            card = im.send_card.call_args.args[1]
+            return card["elements"][-1]["actions"][0]["value"]
+        time.sleep(0.02)
+    raise AssertionError("approval card not sent in time")
+
+
+def _latest_doc_write(db):
+    from persistence.models import DocWriteRow
+    s = db()
+    row = s.query(DocWriteRow).order_by(
+        DocWriteRow.created_at.desc()).first()
+    s.close()
+    return row
+
+
+def test_card_confirm_approve_writes_doc(db):
+    """同意：卡片确认后 render_blocks 写入，doc_writes 落 card_confirm success。"""
+    from orchestrator.approval_broker import ApprovalBroker
+
+    orch = _orch(db, bound_doc="doccnR1", writeback="card_confirm")
+    orch.doc_adapter.render_blocks.return_value = "blk_ok"  # 落库需真实字符串
+    broker = ApprovalBroker()
+    orch.approval_broker = broker
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    value = _wait_card_sent(orch.im)
+    assert value["action"] == "research_writeback"
+    assert value["decision"] == "approve"
+    assert broker.decide(value["doc_write_id"], "approve", "ou_r") is True
+
+    assert _wait_reply_count(orch.im, 2)
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "已写入文档（经卡片确认）" in final
+    orch.doc_adapter.render_blocks.assert_called_once()
+    row = _latest_doc_write(db)
+    assert row.approval_mode == "card_confirm"
+    assert row.status == "success"
+
+
+def test_card_confirm_deny_skips_write(db):
+    """跳过：不写文档，doc_writes 落 cancelled。"""
+    from orchestrator.approval_broker import ApprovalBroker
+
+    orch = _orch(db, bound_doc="doccnR1", writeback="card_confirm")
+    broker = ApprovalBroker()
+    orch.approval_broker = broker
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    value = _wait_card_sent(orch.im)
+    # 点「跳过」按钮（actions[1]，decision=deny）
+    deny_value = orch.im.send_card.call_args.args[1]["elements"][-1]["actions"][1]["value"]
+    assert deny_value["decision"] == "deny"
+    assert broker.decide(value["doc_write_id"], "deny", "ou_r") is True
+
+    assert _wait_reply_count(orch.im, 2)
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "已按您的选择跳过写回" in final
+    orch.doc_adapter.render_blocks.assert_not_called()
+    assert _latest_doc_write(db).status == "cancelled"
+
+
+def test_card_confirm_timeout_skips_write(db):
+    """超时无人点：安全侧失败按拒绝收尾（timeout=0 立即超时）。"""
+    orch = _orch(db, bound_doc="doccnR1", writeback="card_confirm",
+                 approval_timeout=0)
+    from orchestrator.approval_broker import ApprovalBroker
+    orch.approval_broker = ApprovalBroker()
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "审批超时" in final
+    orch.doc_adapter.render_blocks.assert_not_called()
+    assert _latest_doc_write(db).status == "cancelled"
+
+
+def test_card_confirm_without_broker_falls_back_to_direct_write(db):
+    """broker 未装配：降级 bind_scope 直写（不阻塞等待）。"""
+    orch = _orch(db, bound_doc="doccnR1", writeback="card_confirm")
+    # 不设 orch.approval_broker
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "结果已写入绑定文档 doccnR1" in final
+    orch.doc_adapter.render_blocks.assert_called_once()
+
+
+def test_bind_scope_mode_unchanged_regression(db):
+    """bind_scope 模式：无卡片，直写（Phase 13 行为回归基线）。"""
+    from orchestrator.approval_broker import ApprovalBroker
+
+    orch = _orch(db, bound_doc="doccnR1", writeback="bind_scope")
+    orch.approval_broker = ApprovalBroker()  # 有 broker 也不走卡片
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    orch.im.send_card.assert_not_called()
+    orch.doc_adapter.render_blocks.assert_called_once()

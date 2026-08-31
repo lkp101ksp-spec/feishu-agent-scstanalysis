@@ -15,6 +15,7 @@ repos/services 全家桶 → Orchestrator（Phase 5-9 服务双通道注入）�
 """
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import FastAPI
@@ -30,6 +31,7 @@ from feishu_adapter.drive_adapter import DriveAdapter
 from feishu_adapter.im_adapter import IMAdapter
 from gateway.app import create_app
 from orchestrator.app import Orchestrator
+from orchestrator.approval_broker import ApprovalBroker
 from orchestrator.approval_service import ApprovalService
 from orchestrator.bind_doc_service import BindDocService
 from orchestrator.doc_write_service import DocWriteService
@@ -66,6 +68,8 @@ from persistence.repositories.template_favorite_repo import TemplateFavoriteRepo
 from persistence.repositories.template_repo import TemplateRepo
 from persistence.repositories.template_tag_repo import TemplateTagRepo
 from persistence.repositories.template_version_repo import TemplateVersionRepo
+
+logger = logging.getLogger(__name__)
 
 
 class Runtime:
@@ -214,6 +218,18 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     # --- 卡片回调 HMAC（Phase 2） ---
     _approval = ApprovalService(secret=settings.approval_hmac_secret)  # noqa: F841 预热校验
 
+    # --- ApprovalBroker（Phase 14：写回审批决策跨线程传递） ---
+    # research 线程 wait / ws 卡片回调线程 decide 共用同一实例；
+    # 启动清扫遗留 card_confirm pending（重启后无人等待的孤儿记录）
+    approval_broker = ApprovalBroker()
+    orch.approval_broker = approval_broker
+    try:
+        stale = doc_write_service.cancel_stale_pending()
+        if stale:
+            logger.info("cancelled %d stale card_confirm pending(s)", stale)
+    except Exception:
+        logger.exception("cancel stale pending failed (ignored)")
+
     app = create_app(
         secret=settings.feishu.webhook_secret,
         orchestrator=orch,
@@ -236,6 +252,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         favorite_service=favorite_service,
         unified_search_service=unified_search_service,
         auto_sync_worker=auto_sync_worker_startup,
+        approval_broker=approval_broker,
     )
     # 主 session 挂载：run_im_pipeline / 卡片管线在处理成功后负责 commit
     app.state.main_session = session

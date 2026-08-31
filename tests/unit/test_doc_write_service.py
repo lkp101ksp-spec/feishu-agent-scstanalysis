@@ -172,3 +172,87 @@ def test_write_transitions_through_full_state_machine():
     transitions = [c.args[1] for c in doc_repo.transition.call_args_list]
     assert transitions == ["approved", "writing"]
     assert doc_repo.mark_success.call_count == 1
+
+
+# === Phase 14：card_confirm 卡片确认写回 ===
+
+def _make_confirm_service(
+    render_returns: str = "blk_y",
+    render_raises: Exception | None = None,
+    row_missing: bool = False,
+):
+    """card_confirm 用例的 service 工厂：doc_repo.get 返回带 doc_id 的 row。"""
+    svc, _, doc_repo, doc_adapter = _make_service()
+    doc_adapter.render_blocks.return_value = render_returns
+    if render_raises is not None:
+        doc_adapter.render_blocks.side_effect = render_raises
+    if row_missing:
+        doc_repo.get.return_value = None
+    else:
+        doc_repo.get.return_value = MagicMock(doc_id="doccnABC123")
+    return svc, doc_repo, doc_adapter
+
+
+def test_create_confirm_pending_records_card_confirm_mode():
+    svc, doc_repo, _ = _make_confirm_service()
+    out = svc.create_confirm_pending(
+        session_id="s1", task_id="t1", requested_by="ou_x",
+        preview_text="预览文本")
+    assert out["doc_id"] == "doccnABC123"
+    kwargs = doc_repo.create_pending.call_args.kwargs
+    assert kwargs["approval_mode"] == "card_confirm"
+    assert kwargs["payload_text"] == "预览文本"
+
+
+def test_create_confirm_pending_rejects_expired_bind():
+    svc, _, _, _ = _make_service(expires_in_sec=-60)
+    with pytest.raises(DocWriteError):
+        svc.create_confirm_pending(
+            session_id="s1", task_id="t1", requested_by="ou_x",
+            preview_text="x")
+
+
+def test_complete_confirmed_approve_renders_and_succeeds():
+    svc, doc_repo, doc_adapter = _make_confirm_service()
+    out = svc.complete_confirmed(
+        doc_write_id="dw1", decision="approve", blocks=["b1"])
+    assert out["status"] == "success"
+    assert out["anchor_block_id"] == "blk_y"
+    transitions = [c.args[1] for c in doc_repo.transition.call_args_list]
+    assert transitions == ["approved", "writing"]
+    doc_adapter.render_blocks.assert_called_once_with("doccnABC123", ["b1"])
+    assert doc_repo.mark_success.call_count == 1
+
+
+def test_complete_confirmed_deny_cancels_without_render():
+    svc, doc_repo, doc_adapter = _make_confirm_service()
+    out = svc.complete_confirmed(
+        doc_write_id="dw1", decision="deny", blocks=["b1"])
+    assert out["status"] == "cancelled"
+    doc_repo.transition.assert_called_once_with("dw1", "cancelled")
+    doc_adapter.render_blocks.assert_not_called()
+
+
+def test_complete_confirmed_timeout_cancels():
+    svc, doc_repo, _ = _make_confirm_service()
+    out = svc.complete_confirmed(
+        doc_write_id="dw1", decision="timeout", blocks=["b1"])
+    assert out["status"] == "cancelled"
+
+
+def test_complete_confirmed_render_failure_marks_failed_not_raises():
+    svc, doc_repo, _ = _make_confirm_service(
+        render_raises=RuntimeError("lark boom"))
+    out = svc.complete_confirmed(
+        doc_write_id="dw1", decision="approve", blocks=["b1"])
+    assert out["status"] == "failed"
+    assert "lark boom" in out["reason"]
+    doc_repo.mark_failed.assert_called_once()
+
+
+def test_complete_confirmed_missing_row_fails_gracefully():
+    svc, _, doc_adapter = _make_confirm_service(row_missing=True)
+    out = svc.complete_confirmed(
+        doc_write_id="dw1", decision="approve", blocks=["b1"])
+    assert out["status"] == "failed"
+    doc_adapter.render_blocks.assert_not_called()

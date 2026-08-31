@@ -121,7 +121,8 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
                 actor_id=payload.get("open_id", ""),
                 action=f"card_{payload.get('action', 'unknown')}",
                 target_type="approval",
-                target_id=payload.get("approval_id", ""),
+                target_id=payload.get("approval_id", "")
+                or payload.get("doc_write_id", ""),
                 detail=payload,
             )
             s.commit()
@@ -146,6 +147,23 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         except Exception as e:
             logger.exception("renew_bind failed")
             return {"ok": False, "reason": str(e)}
+    # research_writeback 分支（Phase 14）：写入决策到 broker，
+    # 由 research 线程完成后续写入与回执（避免双线程写文档）
+    if action == "research_writeback":
+        broker = ctx.approval_broker
+        if broker is None:
+            logger.warning("research_writeback received but broker not configured")
+            return {"ok": False, "reason": "approval broker not configured"}
+        decided = broker.decide(
+            payload.get("doc_write_id", ""),
+            payload.get("decision", ""),
+            operator=payload.get("open_id", ""),
+        )
+        if not decided:
+            logger.info("research_writeback ignored (dup/unknown/invalid): %s",
+                        payload.get("doc_write_id", ""))
+        return {"ok": decided,
+                "status": "decided" if decided else "already_handled"}
     return {"ok": True}
 
 
@@ -172,6 +190,7 @@ class AppContext:
     favorite_service: object | None = None  # Phase 8
     unified_search_service: object | None = None  # Phase 9
     auto_sync_worker: object | None = None  # Phase 9
+    approval_broker: object | None = None  # Phase 14：写回审批决策传递
 
 
 def create_app(
@@ -195,6 +214,7 @@ def create_app(
     favorite_service=None,
     unified_search_service=None,
     auto_sync_worker=None,
+    approval_broker=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -235,6 +255,7 @@ def create_app(
         favorite_service=favorite_service,
         unified_search_service=unified_search_service,
         auto_sync_worker=auto_sync_worker,
+        approval_broker=approval_broker,
     )
 
     # === Phase 9: 评论自动同步后台轮询（可选注入，ADR-0024）===

@@ -37,6 +37,13 @@ class ResearchRunner:
         self.timeout_sec = getattr(
             settings, "research_task_timeout_sec", 300
         ) if settings is not None else 300
+        # Phase 14：写回审批模式（card_confirm / bind_scope）与审批超时
+        self.writeback_mode = getattr(
+            settings, "research_writeback_approval", "bind_scope"
+        ) if settings is not None else "bind_scope"
+        self.approval_timeout_sec = getattr(
+            settings, "research_approval_timeout_sec", 600
+        ) if settings is not None else 600
 
     # === 对外入口 ===
 
@@ -191,19 +198,30 @@ class ResearchRunner:
             status=result.status,
             node_states={k: v.value for k, v in result.node_states.items()},
             artifacts_count=0,
+            outputs=outputs_digest,  # 关键输出也落文档（Phase 14 真机发现缺失）
         )
 
-        # 4. 绑定文档则写回（approval skip：bind-doc 前置授权语义）
+        # 4. 绑定文档则写回（Phase 14：card_confirm 卡片确认 / bind_scope 直写）
         # render_blocks 是 DocAdapter 真实 API（原 append_blocks 不存在，
         # 真机 2026-08-30 发现 AttributeError）
         bound_doc = session_service.bound_doc_id(session_id)
         doc_written = False
+        writeback_note = ""
         if bound_doc:
-            try:
-                self.orch.doc_adapter.render_blocks(bound_doc, blocks)
-                doc_written = True
-            except Exception as e:
-                logger.warning("research doc write failed: %s", e)
+            broker = getattr(self.orch, "approval_broker", None)
+            if self.writeback_mode == "card_confirm" and broker is not None:
+                doc_written, writeback_note = self._writeback_with_confirm(
+                    session=session, session_id=session_id, task_id=task_id,
+                    incoming=incoming, blocks=blocks, broker=broker,
+                )
+            else:
+                # bind_scope（或 broker 未装配降级）：绑定即授权直写
+                try:
+                    self.orch.doc_adapter.render_blocks(bound_doc, blocks)
+                    doc_written = True
+                except Exception as e:
+                    logger.warning("research doc write failed: %s", e)
+                    writeback_note = f"写入失败：{e}"
 
         # 5. IM 回复结果摘要（失败节点附 error_code/message，便于排障）
         reply_lines = [f"[研究任务] 执行完成（{result.status}）"]
@@ -216,7 +234,10 @@ class ResearchRunner:
             reply_lines.append("")
             reply_lines.append("关键输出：")
             reply_lines.extend(outputs_digest)
-        if doc_written:
+        if writeback_note:
+            reply_lines.append("")
+            reply_lines.append(f"写回：{writeback_note}")
+        elif doc_written:
             reply_lines.append("")
             reply_lines.append(f"结果已写入绑定文档 {bound_doc}")
         self.im.reply(incoming.chat_id, "\n".join(reply_lines))
@@ -233,6 +254,85 @@ class ResearchRunner:
             "node_states": {k: v.value for k, v in result.node_states.items()},
             "doc_written": doc_written,
         }
+
+    def _writeback_with_confirm(
+        self, *, session, session_id: str, task_id: str,
+        incoming: IncomingMessage, blocks: list, broker,
+    ) -> tuple[bool, str]:
+        """card_confirm 写回：落 pending → 发审批卡片 → 等决策 → 收尾状态机。
+
+        返回 (doc_written, note)。任何分支都不抛（写回是附属动作，
+        不改变研究任务本身的 success 结论）。DocWriteService 用 research
+        线程自己的 session 构造（跨线程不共享主 Session）。
+        """
+        from orchestrator.doc_write_service import DocWriteService
+        from persistence.repositories.doc_write_repo import DocWriteRepo
+        from persistence.repositories.session_repo import SessionRepo
+        from shared.errors import DocWriteError
+
+        svc = DocWriteService(
+            SessionRepo(session), DocWriteRepo(session), self.orch.doc_adapter
+        )
+        preview = self.orch.template.render_blocks_to_text(blocks)
+        try:
+            pending = svc.create_confirm_pending(
+                session_id=session_id, task_id=task_id,
+                requested_by=incoming.sender_open_id,
+                preview_text=preview[:800],
+            )
+        except DocWriteError as e:
+            return False, f"已跳过（绑定无效，请 /bind-doc 后重试：{e}）"
+        doc_write_id = pending["doc_write_id"]
+
+        try:
+            self.im.send_card(incoming.chat_id, {
+                "header": f"研究任务完成——是否写入绑定文档？（task {task_id[:8]}）",
+                "elements": [
+                    {"tag": "hr"},
+                    {"tag": "div", "text": {
+                        "tag": "lark_md",
+                        "content": preview[:600] + ("…" if len(preview) > 600 else ""),
+                    }},
+                    {"tag": "hr"},
+                    {"tag": "action", "actions": [
+                        {"tag": "button",
+                         "text": {"tag": "plain_text", "content": "同意写入"},
+                         "type": "primary",
+                         "value": {"action": "research_writeback",
+                                   "doc_write_id": doc_write_id,
+                                   "decision": "approve"}},
+                        {"tag": "button",
+                         "text": {"tag": "plain_text", "content": "跳过"},
+                         "value": {"action": "research_writeback",
+                                   "doc_write_id": doc_write_id,
+                                   "decision": "deny"}},
+                    ]},
+                ],
+            })
+        except Exception as e:
+            logger.warning("approval card send failed: %s", e)
+            svc.complete_confirmed(
+                doc_write_id=doc_write_id, decision="deny", blocks=blocks)
+            return False, "已跳过（审批卡片发送失败）"
+
+        decision = broker.wait(doc_write_id, self.approval_timeout_sec)
+        if decision == "approve":
+            out = svc.complete_confirmed(
+                doc_write_id=doc_write_id, decision="approve", blocks=blocks)
+            if out.get("status") == "success":
+                return True, "已写入文档（经卡片确认）"
+            return False, f"写入失败：{out.get('reason', 'unknown')}"
+        if decision == "deny":
+            svc.complete_confirmed(
+                doc_write_id=doc_write_id, decision="deny", blocks=blocks)
+            return False, "已按您的选择跳过写回"
+        # 超时：安全侧失败，按拒绝收尾
+        svc.complete_confirmed(
+            doc_write_id=doc_write_id, decision="timeout", blocks=blocks)
+        wait_text = (f"{self.approval_timeout_sec // 60} 分钟"
+                     if self.approval_timeout_sec >= 60
+                     else f"{self.approval_timeout_sec} 秒")
+        return False, f"审批超时（{wait_text}无人处理），已跳过写回"
 
     @staticmethod
     def _failure_digest(scheduler: Scheduler, max_chars: int = 300) -> list[str]:

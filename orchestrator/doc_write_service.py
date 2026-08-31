@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from feishu_adapter.doc_adapter import DocAdapter
+from persistence.models import DocWriteRow
 from persistence.repositories.doc_write_repo import DocWriteRepo
 from persistence.repositories.session_repo import SessionRepo
 from shared.errors import DocWriteError
@@ -46,18 +47,7 @@ class DocWriteService:
 
         异常：DocWriteError（无 bind / bind 过期 / 写入失败）
         """
-        session_row = self.session_repo.get(session_id)
-        if session_row is None or session_row.bound_doc_id is None:
-            raise DocWriteError("no valid bind-doc on this session")
-        if session_row.bind_expires_at is None:
-            raise DocWriteError("bind-doc expired, please /bind-doc again")
-        expires_at = session_row.bind_expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        if expires_at <= datetime.now(timezone.utc):
-            raise DocWriteError("bind-doc expired, please /bind-doc again")
-
-        doc_id = session_row.bound_doc_id
+        session_row, doc_id = self._valid_bound_doc(session_id)
         doc_write_id = new_ulid()
 
         # 1. pending → approved → writing
@@ -94,6 +84,95 @@ class DocWriteService:
             "anchor_block_id": anchor,
             "status": "success",
         }
+
+    # === Phase 14：card_confirm 卡片确认写回 ===
+
+    def create_confirm_pending(
+        self, *, session_id: str, task_id: str, requested_by: str,
+        preview_text: str,
+    ) -> dict:
+        """card_confirm 第一步：校验 bind + 建 pending 记录（等待卡片决策）。
+
+        返回 {doc_write_id, doc_id}；无 bind / 过期抛 DocWriteError（调用方
+        以 IM 提示收场，不写文档）。preview_text 落 payload_json 供审计。
+        """
+        _, doc_id = self._valid_bound_doc(session_id)
+        doc_write_id = new_ulid()
+        self.doc_repo.create_pending(
+            doc_write_id=doc_write_id,
+            task_id=task_id,
+            doc_id=doc_id,
+            requested_by=requested_by,
+            approval_mode="card_confirm",
+            payload_text=preview_text,
+        )
+        return {"doc_write_id": doc_write_id, "doc_id": doc_id}
+
+    def complete_confirmed(
+        self, *, doc_write_id: str, decision: str, blocks: list,
+    ) -> dict:
+        """card_confirm 第二步：按决策收尾状态机并（若 approve）渲染写入。
+
+        decision="approve" → approved → writing → render_blocks → success/failed；
+        "deny"/"timeout" → cancelled（不写文档）。返回 {status, ...}，
+        写入异常不抛（mark_failed 后返回 failed，调用方 IM 提示）。
+        """
+        if decision != "approve":
+            self.doc_repo.transition(doc_write_id, "cancelled")
+            return {"doc_write_id": doc_write_id, "status": "cancelled"}
+
+        self.doc_repo.transition(doc_write_id, "approved")
+        self.doc_repo.transition(doc_write_id, "writing")
+        row = self.doc_repo.get(doc_write_id)
+        if row is None:
+            return {"doc_write_id": doc_write_id, "status": "failed",
+                    "reason": "doc_write row missing"}
+        try:
+            anchor = self.doc_adapter.render_blocks(row.doc_id, blocks)
+        except Exception as e:
+            reason = f"{type(e).__name__}: {e}"
+            self.doc_repo.mark_failed(doc_write_id, reason=reason)
+            logger.warning(
+                "doc_write_failed doc_write_id=%s reason=%s",
+                doc_write_id, reason)
+            return {"doc_write_id": doc_write_id, "status": "failed",
+                    "reason": reason}
+        self.doc_repo.mark_success(doc_write_id, anchor_block_id=anchor)
+        return {"doc_write_id": doc_write_id, "doc_id": row.doc_id,
+                "anchor_block_id": anchor, "status": "success"}
+
+    def cancel_stale_pending(self) -> int:
+        """启动清扫：遗留 card_confirm pending（重启后无人等待）置 cancelled。
+
+        返回清扫条数。正常流转的 pending 生命周期 ≤ 审批超时，启动时
+        仍在 pending 的必是孤儿记录。
+        """
+        rows = (
+            self.doc_repo.session.query(DocWriteRow)
+            .filter(DocWriteRow.approval_mode == "card_confirm",
+                    DocWriteRow.status == "pending")
+            .all()
+        )
+        for row in rows:
+            row.status = "cancelled"
+            row.fail_reason = "stale pending on startup"
+        if rows:
+            self.doc_repo.session.flush()
+        return len(rows)
+
+    def _valid_bound_doc(self, session_id: str):
+        """校验 session 的 bind-doc 授权窗口，返回 (session_row, doc_id)。"""
+        session_row = self.session_repo.get(session_id)
+        if session_row is None or session_row.bound_doc_id is None:
+            raise DocWriteError("no valid bind-doc on this session")
+        if session_row.bind_expires_at is None:
+            raise DocWriteError("bind-doc expired, please /bind-doc again")
+        expires_at = session_row.bind_expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= datetime.now(timezone.utc):
+            raise DocWriteError("bind-doc expired, please /bind-doc again")
+        return session_row, session_row.bound_doc_id
 
     def _resolve_insert_index(self, session_row, session_id: str,
                               doc_id: str, msg_anchor: Optional[str] = None) -> int:
