@@ -224,10 +224,11 @@ class ResearchRunner:
             l2_gate=l2_gate,
         )
         loop = asyncio.new_event_loop()
-        # Phase 20：plan 含 sc_* 节点时放宽 wall-clock（单细胞分析单节点
-        # 可达数百秒；纯检索任务维持原超时不受影响）
+        # Phase 20/21：plan 含 sc_*/st_* 节点时放宽 wall-clock（单细胞/
+        # 空间转录组分析单节点可达数百秒；纯检索任务维持原超时不受影响）
         wall_timeout = self.timeout_sec
-        if any(n.kind == "tool" and (n.tool_name or "").startswith("sc_")
+        if any(n.kind == "tool"
+               and (n.tool_name or "").startswith(("sc_", "st_"))
                for n in plan.nodes):
             wall_timeout = max(
                 self.timeout_sec,
@@ -363,7 +364,8 @@ class ResearchRunner:
     # === Phase 20：sc_* 分析图 IM 回传 ===
 
     def _sc_image_host_paths(self, plan, scheduler, ws_root: str) -> list[str]:
-        """收集成功 sc_* 节点输出的图片主机路径（umap/dotplot/plot，有序）。
+        """收集成功 sc_*/st_* 节点输出的图片主机路径
+        （umap/dotplot/spatial/plot，有序）。
 
         容器内 /ws/... 路径映射回 bio_workspace_root；非法路径跳过。
         IM 发图与文档写回共用本收集逻辑。
@@ -376,10 +378,10 @@ class ResearchRunner:
         for node_id, handle in scheduler._handles.items():
             if handle.state != ExecutionState.SUCCESS or not handle.outputs:
                 continue
-            if not (tool_names.get(node_id) or "").startswith("sc_"):
+            if not (tool_names.get(node_id) or "").startswith(("sc_", "st_")):
                 continue
             raw: list[str] = []
-            for key in ("umap_png", "dotplot_png"):
+            for key in ("umap_png", "dotplot_png", "spatial_png"):
                 if handle.outputs.get(key):
                     raw.append(handle.outputs[key])
             raw.extend(p for p in (handle.outputs.get("pngs") or [])

@@ -743,3 +743,74 @@ def test_sc_images_not_injected_with_write_doc_node(db, tmp_path):
     assert orch.approval_broker.decide(value["doc_write_id"], "approve", "ou_r")
     assert _wait_reply_count(orch.im, 2)
     # write_doc 节点提交执行（blocks 为模型规划内容，无自动图片注入）
+
+
+# === Phase 21：st_* 图片收集/超时放大判定前缀扩展 ===
+
+def _st_plan(tool_name: str = "st_process") -> DAGPlan:
+    """单节点 st_* 计划（默认 st_process，超时用例传 st_qc）。"""
+    return DAGPlan(
+        plan_id="plan_st", task_id="t1", session_id="s1",
+        nodes=[
+            DAGNode(node_id="n1", kind="tool", tool_name=tool_name,
+                    inputs={"dataset_ref": "ds"}),
+        ],
+        entry_node_ids=["n1"],
+    )
+
+
+def test_st_image_fields_collected_and_sent(tmp_path):
+    """st_* 节点成功后 spatial_png/pngs 收集并发送（前缀判定扩展）。"""
+    orch = SimpleNamespace(
+        settings=SimpleNamespace(bio_workspace_root=str(tmp_path)),
+        im=MagicMock(),
+    )
+    orch.im.upload_image.side_effect = ["k1", "k2"]
+    plan = _st_plan()
+    sch = SimpleNamespace(_handles={
+        "n1": TaskHandle(
+            execution_id="e1", task_id="t", node_id="n1",
+            state=ExecutionState.SUCCESS,
+            started_at=datetime.now(UTC), finished_at=datetime.now(UTC),
+            outputs={
+                "spatial_png": "/ws/ds/spatial_domains.png",
+                "pngs": ["/ws/ds/G1_spatial.png"],
+                "dataset_ref": "ds",
+            },
+        ),
+    })
+    runner = ResearchRunner(orchestrator=orch, session_factory=MagicMock())
+
+    hosts = runner._sc_image_host_paths(plan, sch, str(tmp_path))
+    assert hosts == [
+        str((tmp_path / "ds" / "spatial_domains.png").resolve()),
+        str((tmp_path / "ds" / "G1_spatial.png").resolve()),
+    ]
+
+    assert runner._send_sc_images(_incoming(), plan, sch) == 2
+    upload_hosts = [c.args[0] for c in orch.im.upload_image.call_args_list]
+    assert upload_hosts == hosts
+    keys = [c.args[1] for c in orch.im.send_image.call_args_list]
+    assert keys == ["k1", "k2"]
+
+
+def test_st_node_extends_wallclock_timeout(db, monkeypatch):
+    """含 st_* 节点的 plan wall-clock 放大到 research_sc_timeout_sec。"""
+    import asyncio
+
+    orch = _orch(db)
+    orch.settings.research_sc_timeout_sec = 3600
+    orch.planner.plan.return_value = _st_plan("st_qc")
+    captured: dict = {}
+    real_wait_for = asyncio.wait_for
+
+    def _spy(coro, timeout=None):
+        captured["timeout"] = timeout
+        return real_wait_for(coro, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", _spy)
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 空间转录组质控"))
+
+    assert _wait_reply_count(orch.im, 2)
+    assert captured["timeout"] == 3600
