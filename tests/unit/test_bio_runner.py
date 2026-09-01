@@ -4,6 +4,7 @@ docker subprocess 全部 mock，不起真实容器。
 """
 import json
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -81,6 +82,31 @@ def test_compute_dataset_id_stable_and_size_sensitive(tmp_path):
     assert compute_dataset_id(str(f)) != id1
 
 
+def test_compute_dataset_id_dir_aggregate(tmp_path):
+    """目录聚合 hash：任一文件变化换 id；目录不动 id 稳定。"""
+    from orchestrator.tools.bio.bio_runner import compute_dataset_id_dir
+
+    d = tmp_path / "spaceranger_out"
+    d.mkdir()
+    (d / "filtered_feature_bc_matrix.h5").write_bytes(b"v1")
+    (d / "tissue_positions.csv").write_bytes(b"pos")
+
+    id1 = compute_dataset_id_dir(str(d))
+    id2 = compute_dataset_id_dir(str(d))
+    assert id1 == id2 and len(id1) == 12
+
+    (d / "tissue_positions.csv").write_bytes(b"pos-changed")
+    id3 = compute_dataset_id_dir(str(d))
+    assert id3 != id1
+
+
+def test_compute_dataset_id_dir_missing_raises(tmp_path):
+    from orchestrator.tools.bio.bio_runner import BioRunError, compute_dataset_id_dir
+    import pytest
+    with pytest.raises(BioRunError, match="not found"):
+        compute_dataset_id_dir(str(tmp_path / "nope"))
+
+
 # === run()：容器执行错误链 ===
 
 def _fake_proc(monkeypatch, *, rc=0, stdout="{}", stderr=""):
@@ -156,3 +182,48 @@ def test_run_docker_cmd_has_limits_and_network_none(
     assert "--network" in cmd and "none" in cmd
     assert "--cpus" in cmd and "--memory" in cmd
     assert cmd[-1] == "/opt/sc_tools/qc.py"
+
+
+# === run() 参数化：镜像 / 脚本目录覆盖（Phase 21 st_* 工具链） ===
+
+@pytest.fixture
+def runner(roots, tmp_path):
+    """默认镜像 bio:test 的 BioRunner 实例。"""
+    return _runner(roots, tmp_path)
+
+
+@pytest.fixture
+def fake_docker_ok(monkeypatch):
+    """mock subprocess.run 成功，记录完整 docker cmd 供断言。"""
+    rec = SimpleNamespace(cmd=[])
+
+    def _capture(cmd, **k):
+        rec.cmd = cmd
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=0, stdout='{"ok": true}', stderr="")
+
+    monkeypatch.setattr(
+        "orchestrator.tools.bio.bio_runner.subprocess.run", _capture)
+    return rec
+
+
+def test_run_uses_custom_image_and_script_dir(runner, fake_docker_ok):
+    """run(image=..., script_dir=...) 覆盖实例默认值（st 镜像走 /opt/st_tools）。"""
+    out = runner.run(
+        "load", {"path": "x"},
+        image="feishu-research-agent/bio:st-cpu-latest",
+        script_dir="/opt/st_tools")
+    assert out["ok"] is True
+    cmd = fake_docker_ok.cmd
+    img_idx = cmd.index("feishu-research-agent/bio:st-cpu-latest")
+    script_idx = cmd.index("python")
+    assert cmd[script_idx + 1] == "/opt/st_tools/load.py"
+    assert img_idx < script_idx
+
+
+def test_run_default_image_and_script_dir(runner, fake_docker_ok):
+    """不传覆盖参数时沿用实例默认 image 与 /opt/sc_tools。"""
+    runner.run("load", {})
+    cmd = fake_docker_ok.cmd
+    assert "bio:test" in cmd  # runner fixture 默认镜像（同 _runner）
+    assert "/opt/sc_tools/load.py" in cmd

@@ -37,6 +37,28 @@ def compute_dataset_id(abs_path: str) -> str:
     return digest[:12]
 
 
+def compute_dataset_id_dir(abs_dir: str) -> str:
+    """目录数据集（如 spaceranger 输出）幂等键：聚合 hash 目录内容。
+
+    递归收集（相对路径, 文件大小, mtime_ns）排序后聚合 sha1[:12]——
+    任一文件增删/改内容（大小或 mtime 变化）即换 id（Phase 21 spec §3）。
+    目录不存在抛 BioRunError。
+    """
+    d = Path(abs_dir)
+    if not d.is_dir():
+        raise BioRunError(
+            "SC_FILE_NOT_FOUND", f"data dir not found: {abs_dir}")
+    items = []
+    for p in sorted(d.rglob("*")):
+        if p.is_file():
+            st = p.stat()
+            items.append(f"{p.relative_to(d).as_posix()}:{st.st_size}:{st.st_mtime_ns}")
+    digest = hashlib.sha1(
+        f"{os.path.realpath(abs_dir)}|".encode("utf-8")
+        + "|".join(items).encode("utf-8")).hexdigest()
+    return digest[:12]
+
+
 class BioRunner:
     """短命 bio 容器执行（同步阻塞在工具 handler 内，与 BLAST 同模式）。"""
 
@@ -83,10 +105,13 @@ class BioRunner:
     # --- 执行 ---
 
     def run(self, script: str, args: dict, *, timeout_sec: int | None = None,
-            mounts: list[tuple[str, str]] | None = None) -> dict:
-        """跑 /opt/sc_tools/<script>.py，返回 stdout JSON dict。
+            mounts: list[tuple[str, str]] | None = None,
+            image: str | None = None, script_dir: str = "/opt/sc_tools") -> dict:
+        """跑 <script_dir>/<script>.py，返回 stdout JSON dict。
 
         mounts: 额外 (主机目录, 容器目录) 挂载（sc_load 的数据目录）。
+        image/script_dir: 覆盖实例默认镜像与脚本目录——st_* 空间转录组
+        工具传 image=st 镜像 + script_dir=/opt/st_tools（Phase 21 spec §3）。
         超时/非零退出/JSON 解析失败 → BioRunError。
         """
         cmd = ["docker", "run", "--rm", "-i", "--network", "none",
@@ -94,7 +119,7 @@ class BioRunner:
                "-v", f"{self.workspace_root}:/ws"]
         for host_dir, container_dir in (mounts or []):
             cmd += ["-v", f"{host_dir}:{container_dir}:ro"]
-        cmd += [self.image, "python", f"/opt/sc_tools/{script}.py"]
+        cmd += [image or self.image, "python", f"{script_dir}/{script}.py"]
 
         timeout = timeout_sec or self.timeout_sec
         try:
