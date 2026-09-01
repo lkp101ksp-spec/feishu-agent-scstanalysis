@@ -1,6 +1,7 @@
 """L2 副作用工具：write_doc, write_base_projection, send_card, upload_drive。"""
 from __future__ import annotations
 
+from orchestrator.blocks.serializer import parse_blocks
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
 
@@ -17,7 +18,11 @@ def register_l2_side_effect(
         reg.register(
             ToolSpec(
                 name="write_doc",
-                description="追加块到飞书 doc",
+                description=(
+                    "追加块列表到飞书 doc（每块形如 "
+                    '{"type": "text", "text": "..."}，文本可引用上游输出如'
+                    " 'n3.summary'）"
+                ),
                 parameters={
                     "type": "object",
                     "properties": {
@@ -27,7 +32,8 @@ def register_l2_side_effect(
                     "required": ["doc_id", "blocks"],
                 },
                 risk_level="L2_side_effect",
-                handler=lambda doc_id, blocks: doc_adapter.append_blocks(doc_id, blocks),
+                handler=lambda doc_id, blocks: doc_adapter.render_blocks(
+                    doc_id, parse_blocks(blocks)),
                 approval_card_template="l2_tool_confirm",
             )
         )

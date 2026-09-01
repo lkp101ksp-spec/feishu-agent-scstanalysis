@@ -178,3 +178,57 @@ def test_l2_registers_four():
     ]
     for t in reg.list():
         assert t.risk_level == "L2_side_effect"
+
+
+def test_write_doc_handler_parses_repr_string_blocks():
+    """write_doc 节点路径：blocks 为 repr 风格字符串 → 解析后走 render_blocks。
+
+    真机 2026-09-01：handler 曾调不存在的 append_blocks（TOOL_EXEC_FAILED），
+    且 planner 传入的 blocks 是 str() 强转后的单引号 repr 串。
+    """
+    from unittest.mock import MagicMock
+
+    from orchestrator.blocks.schemas import HeadingBlock, TextBlock
+
+    doc_adapter = MagicMock()
+    doc_adapter.render_blocks.return_value = "blk_last"
+    reg = ToolRegistry()
+    register_l2_side_effect(
+        reg, doc_adapter=doc_adapter, base_adapter=None,
+        im_adapter=None, drive_adapter=None,
+    )
+    blocks_str = ("[{'type': 'heading', 'level': 2, 'text': '结果'}, "
+                  "{'type': 'text', 'text': 'BRCA1 全长 1863 aa'}]")
+    out = reg.get("write_doc").handler(doc_id="doc1", blocks=blocks_str)
+    assert out == "blk_last"
+    called = doc_adapter.render_blocks.call_args
+    assert called.args[0] == "doc1"
+    parsed = called.args[1]
+    assert parsed == [
+        HeadingBlock(level=2, text="结果"),
+        TextBlock(text="BRCA1 全长 1863 aa"),
+    ]
+
+
+def test_write_doc_handler_accepts_json_and_list():
+    """blocks 兼容 JSON 字符串 / list[dict] / 单 dict 三种形态。"""
+    from unittest.mock import MagicMock
+
+    from orchestrator.blocks.schemas import TextBlock
+
+    doc_adapter = MagicMock()
+    reg = ToolRegistry()
+    register_l2_side_effect(
+        reg, doc_adapter=doc_adapter, base_adapter=None,
+        im_adapter=None, drive_adapter=None,
+    )
+    handler = reg.get("write_doc").handler
+
+    handler(doc_id="d", blocks='[{"type": "text", "text": "a"}]')
+    assert doc_adapter.render_blocks.call_args.args[1] == [TextBlock(text="a")]
+
+    handler(doc_id="d", blocks=[{"type": "text", "text": "b"}])
+    assert doc_adapter.render_blocks.call_args.args[1] == [TextBlock(text="b")]
+
+    handler(doc_id="d", blocks={"type": "text", "text": "c"})
+    assert doc_adapter.render_blocks.call_args.args[1] == [TextBlock(text="c")]

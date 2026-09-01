@@ -159,12 +159,23 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
             return {"ok": False, "reason": "approval broker not configured"}
         # Phase 15 T1：仅任务发起者可决策（群聊其他成员点击无效）
         operator = payload.get("open_id", "")
-        owner = _doc_write_owner(app, payload.get("doc_write_id", ""))
-        if owner is not None and owner != operator:
-            logger.warning(
-                "research_writeback forbidden: doc_write_id=%s operator=%s owner=%s",
-                payload.get("doc_write_id", ""), operator, owner)
-            return {"ok": False, "status": "forbidden"}
+        row = _doc_write_row(app, payload.get("doc_write_id", ""))
+        if row is not None:
+            owner, row_status = row
+            if owner is not None and owner != operator:
+                logger.warning(
+                    "research_writeback forbidden: doc_write_id=%s operator=%s owner=%s",
+                    payload.get("doc_write_id", ""), operator, owner)
+                return {"ok": False, "status": "forbidden"}
+            # 持久化幂等兜底：broker wait 消费后内存条目已清，
+            # 行状态非 pending（approved/success/failed/cancelled）说明
+            # 该卡片已处理过（真机 2026-09-01：二次点击曾再返回 decided）
+            if row_status and row_status != "pending":
+                logger.info(
+                    "research_writeback dup on finished row: doc_write_id=%s status=%s",
+                    payload.get("doc_write_id", ""), row_status)
+                return {"ok": False, "status": "already_handled",
+                        "decision": ""}
         decision = payload.get("decision", "")
         decided = broker.decide(
             payload.get("doc_write_id", ""), decision, operator=operator,
@@ -178,8 +189,8 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
     return {"ok": True}
 
 
-def _doc_write_owner(app: FastAPI, doc_write_id: str) -> str | None:
-    """查 doc_writes.requested_by（发起者 open_id）；row 缺失返回 None（不拦截）。"""
+def _doc_write_row(app: FastAPI, doc_write_id: str) -> tuple[str | None, str] | None:
+    """查 doc_writes 行（发起者 open_id, status）；row 缺失返回 None（不拦截）。"""
     if not doc_write_id:
         return None
     if app.state.session_factory is not None:
@@ -192,11 +203,13 @@ def _doc_write_owner(app: FastAPI, doc_write_id: str) -> str | None:
         try:
             from persistence.repositories.doc_write_repo import DocWriteRepo
             row = DocWriteRepo(s).get(doc_write_id)
-            return getattr(row, "requested_by", None) if row else None
+            if row is None:
+                return None
+            return getattr(row, "requested_by", None), getattr(row, "status", "")
         finally:
             s.close()
     except Exception:
-        logger.exception("doc_write owner lookup failed (allow pass)")
+        logger.exception("doc_write row lookup failed (allow pass)")
         return None
 
 

@@ -40,10 +40,15 @@ def test_invalid_decision_rejected():
 
 
 def test_wait_cleans_up_after_decision():
-    """取走后条目清理：内部无残留，同 id 再 decide 是新决策。"""
+    """取走后条目清理：内部无残留；已消费 id 再 decide 被拒（终态）。
+
+    真机 2026-09-01：wait 消费后重复点击曾再次 decide 成功
+    （toast 显示 decided 而非 already_handled）——加 consumed 标记后
+    同 id 终身幂等。
+    """
     b = ApprovalBroker()
     b.decide("dw1", "approve", "ou_1")
     assert b.wait("dw1", timeout=0.1) == "approve"
     assert "dw1" not in b._decisions
     assert b._events == {}
-    assert b.decide("dw1", "deny", "ou_2") is True  # 新决策（非重复）
+    assert b.decide("dw1", "deny", "ou_2") is False  # 已消费：终态拒绝

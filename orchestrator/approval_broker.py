@@ -23,12 +23,18 @@ class ApprovalBroker:
         self._events: dict[str, threading.Event] = {}
         # doc_write_id -> (decision, operator)：先决策后等待时暂存
         self._decisions: dict[str, tuple[str, str]] = {}
+        # 已被 wait() 消费的 id（有序去重集，容量截断防泄漏）：
+        # wait 取走后条目即清，重复点击 decide 若无此标记会再次生效
+        # （真机 2026-09-01：二次点击返回 decided 而非 already_handled）
+        self._consumed: dict[str, None] = {}
+        self._consumed_cap = 4096
 
     def wait(self, doc_write_id: str, timeout: float) -> str | None:
         """阻塞等待决策：返回 "approve"/"deny"，超时返回 None。"""
         with self._lock:
             # 决策先于 wait 到达（发卡片后用户秒点）：直接取走
             if doc_write_id in self._decisions:
+                self._mark_consumed(doc_write_id)
                 return self._decisions.pop(doc_write_id)[0]
             ev = threading.Event()
             self._events[doc_write_id] = ev
@@ -37,10 +43,12 @@ class ApprovalBroker:
                 self._events.pop(doc_write_id, None)
                 # 超时瞬间决策到达：以决策为准
                 if doc_write_id in self._decisions:
+                    self._mark_consumed(doc_write_id)
                     return self._decisions.pop(doc_write_id)[0]
             return None
         with self._lock:
             self._events.pop(doc_write_id, None)
+            self._mark_consumed(doc_write_id)
             decision, operator = self._decisions.pop(doc_write_id)
         logger.info(
             "approval decided: doc_write_id=%s decision=%s operator=%s",
@@ -56,8 +64,17 @@ class ApprovalBroker:
         with self._lock:
             if doc_write_id in self._decisions:
                 return False  # 已决策：幂等拒绝（重复点击不二次生效）
+            if doc_write_id in self._consumed:
+                return False  # 已被 wait 消费：终态，重复点击不再生效
             self._decisions[doc_write_id] = (decision, operator)
             ev = self._events.get(doc_write_id)
         if ev is not None:
             ev.set()
         return True
+
+    def _mark_consumed(self, doc_write_id: str) -> None:
+        """记录已消费 id（调用方需持锁）；超容量丢弃最旧条目。"""
+        self._consumed[doc_write_id] = None
+        while len(self._consumed) > self._consumed_cap:
+            oldest = next(iter(self._consumed))
+            del self._consumed[oldest]

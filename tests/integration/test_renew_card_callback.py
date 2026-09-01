@@ -139,6 +139,35 @@ def test_research_writeback_duplicate_click_rejected(client_with_broker):
     assert broker.wait("dw1", timeout=0.1) == "approve"
 
 
+def test_research_writeback_click_after_finish_already_handled(
+        client_with_broker):
+    """持久化幂等兜底：决策被 wait 消费且行已终态 → already_handled。
+
+    真机 2026-09-01：broker 条目被 wait 取走后二次点击曾再返回 decided。
+    gateway 查 doc_writes.status 非 pending 时直接拦截。
+    """
+    client, broker = client_with_broker
+    # 模拟首轮完整流程：点击 → wait 消费 → 行转终态
+    _post_card(client, {"action": "research_writeback", "doc_write_id": "dw1",
+                        "decision": "approve", "open_id": "ou_1"})
+    assert broker.wait("dw1", timeout=0.1) == "approve"
+    from persistence.repositories.doc_write_repo import DocWriteRepo
+    app = client.app
+    s = app.state.session_factory()
+    try:
+        DocWriteRepo(s).mark_success("dw1", anchor_block_id="blk_1")
+        s.commit()
+    finally:
+        s.close()
+    # 二次点击：行状态 success ≠ pending → already_handled（不再进 broker）
+    resp = _post_card(client, {
+        "action": "research_writeback", "doc_write_id": "dw1",
+        "decision": "approve", "open_id": "ou_1",
+    })
+    assert resp.json() == {"ok": False, "status": "already_handled",
+                           "decision": ""}
+
+
 def test_research_writeback_non_owner_forbidden(client_with_broker):
     """Phase 15 T1：非发起者点击 → forbidden，决策不进 broker。"""
     client, broker = client_with_broker

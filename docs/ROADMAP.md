@@ -8,7 +8,7 @@
 
 ---
 
-## Phase 15：写回审批体验优化（spec 已定稿，待实施）
+## Phase 15：写回审批体验优化 — 已实施（b1dbc1d），真机验收：单聊通过，群聊 2 场景顺延
 
 spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase15-ux-polish-design.md`
 
@@ -21,12 +21,12 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase15-ux-polis
 - [x] 单测：forbidden/decided/already_handled/unknown-id 四分支、toast 映射 4 例、卡片 elements 内容
 - [x] 回归：card_confirm 全流程（approve/deny/timeout/bind 失效/无 broker 降级）不回归；全量 691 passed（+7）
 
-### 真机验收（4 场景）
+### 真机验收（2026-09-01 批量轮）
 
-- [ ] 单聊同意 → toast + IM 回执 + 文档写入（回归）
-- [ ] 单聊重复点击 → toast「该卡片已处理过」
-- [ ] 群聊非发起者点击 → toast「仅任务发起者可操作」，文档不写
-- [ ] 群聊发起者点击 → 正常写入
+- [x] 单聊同意 → toast + IM 回执 + 文档写入（回归通过，card_confirm → success）
+- [x] 单聊重复点击 → toast「该卡片已处理过」（本轮修复 broker 终态幂等 + gateway 持久化兜底后通过）
+- [ ] 群聊非发起者点击 → toast「仅任务发起者可操作」，文档不写（顺延：需测试群 + 第二账号）
+- [ ] 群聊发起者点击 → 正常写入（顺延：同上）
 
 ---
 
@@ -49,7 +49,7 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase15-ux-polis
 
 ---
 
-## Phase 17：节点级 L2 审批（架构级）— 已实施（10c32dc），待真机验收
+## Phase 17：节点级 L2 审批（架构级）— 已实施（10c32dc），真机验收通过（2026-09-01）
 
 spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase17-node-l2-approval-design.md`
 
@@ -61,11 +61,12 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase17-node-l2-
 - [x] 任务中断恢复：cancel_stale_pending 扩展覆盖 node_l2 模式孤儿清扫
 - [x] 防双写：plan 含 write_doc 节点时 Runner 收尾跳过自动写回
 - [x] 单测：挂起/拒绝/放行/下游 skip/回调 forbidden
-- [ ] 真机：DAG 中段写文档节点触发卡片审批，deny 后下游分支走 skip 路径
+- [x] 真机：write_doc 节点审批 approve → success 写入；deny（跳过）→ cancelled 不写
+  （验收时暴露并修复 write_doc 工具路径 append_blocks 残留 + blocks repr 字符串解析，详见测试总结）
 
 ---
 
-## Phase 18：评论与协作补全 — 已实施（ef97168），待真机验收
+## Phase 18：评论与协作补全 — 已实施（ef97168），真机验收通过（2026-09-01）
 
 spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase18-comment-collab-design.md`
 
@@ -75,11 +76,12 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase18-comment-
 - [x] LLM 评论问答：评论 `/ask 问题`（或含 @agent）→ 绑定文档上下文作答 → reply 回写（processed_at 幂等）
 - [x] 评论删除/编辑处理：sync 拉取后本地对账（远端消失评论本地清除；编辑由 upsert 覆盖）
 - [x] webhook 事件订阅通道：/webhook/lark 支持 url_verification challenge + comment_add_v1 分流（飞书后台配置需人工）
-- [ ] 真机：分页拉取、/ask 问答、删除评论后状态同步
+- [x] 真机：/ask 问答命中（回复 BRCA1 文档摘要）、普通评论不误答、
+  删除评论后本地对账清除、分页拉到 4 天前旧评论（详见测试总结）
 
 ---
 
-## Phase 19：检索与模板升级 — 已实施（5914b65，裁剪版），待真机验收
+## Phase 19：检索与模板升级 — 已实施（5914b65，裁剪版），真机验收通过（2026-09-01）
 
 spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase19-template-upgrade-design.md`
 
@@ -87,24 +89,38 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase19-template
 
 - [x] 范围决策：ES / zhparser 拼音检索**砍**（无瓶颈证据，trigram + search_v2 够用）；模板 merge/branch **砍**（fork 无使用数据，按裁剪原则不做）
 - [x] 模板标签推荐：TagRecommendService（共现打分 + 热度兜底）+ GET /templates/{id}/tag-suggestions
-- [ ] 真机：标签推荐效果抽查
+- [x] 真机：`scripts/verify_p19_tag_recommend.py` 连真实 PG 验证 5 项行为
+  （共现优先 / 热度兜底 / limit 截断 / 排除无交集 / 404），事务回滚不污染数据
 
 ---
 
-## Phase 20：生物工具扩展
+## Phase 20：单细胞转录组分析 — 已实施（fc9a7d8），真机验收通过（2026-09-01）
 
-来源：Phase 7/9 不做项
+方向调整：原 BLAST+/AlphaFold 方向取消（2026-09-01 用户决策，转入远期池），
+改为单细胞转录组分析；空间转录组为后续扩展。
+
+spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase20-scrna-analysis-design.md`
 
 ### 实施清单
 
-- [ ] 本地 BLAST+（容器化，脱离 NCBI API 限流）
-- [ ] AlphaFold 结构预测接入
-- [ ] 真机：本地 blast 比对一条序列 + AlphaFold 预测结果写回文档
+- [x] bio.Dockerfile（scanpy 栈 CPU 镜像）+ sc_tools 5 参数化脚本（load/qc/process/markers/plot）
+- [x] BioRunner：短命容器（-i stdin / --network none / 资源限额）、路径白名单、dataset_id 幂等
+- [x] sc_* 5 工具注册（L1_compute）+ settings bio_* 配置组
+- [x] 真机：toy 10x 数据 6 轮全链路（含 IM 图片回传、文档图片三步插入、
+  分析正确性 3 群还原/marker 命中），详见测试总结
+
+### 后续扩展（优先级降序）
+
+- [ ] 空间转录组 st_* 工具链（复用 bio 容器架构 + squidpy）
+- [ ] bio_workspace 磁盘治理（dataset_ref LRU / 按任务保留期清理）
+- [ ] GPU 镜像 bio:gpu-latest（rapids-singlecell，大规模数据）
 
 ---
 
 ## 持续项（随手做，不占 Phase）
 
+- [ ] bind-doc 存在性校验：bind() 时调 docx get 验证 doc_id 真实存在（2026-09-01 nzb/nkb 一字之差踩坑）
+- [ ] 双 ws_client 防复发：启动时 pidfile + 存量连接互斥（两次真机轮均出现双实例）
 - [ ] FastAPI `on_event` → lifespan 迁移（剩余 8 条弃用警告，下次动 gateway/app.py 时顺手带上）
 - [ ] 模板/评论命令 IM 路由 vs REST API 集成验证（需人工参与）
 - [ ] 幂等重传手动测试（飞书事件重发，需人工触发）
@@ -112,11 +128,12 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase19-template
 
 ## 远期池（默认不做，出现真实需求再捞）
 
-- GPU 节点 / rapids 加速
+- GPU 节点 / rapids 加速（注：bio 容器 GPU 镜像已在 Phase 20 后续扩展中排期，此处指研究沙箱整体）
 - gRPC 拆分、工具热加载
 - 分布式锁、多实例部署、K8s
 - CI（远端）、mypy 严格化、uv/poetry 迁移
 - 群聊共享 session、用户身份订阅
+- 本地 BLAST+、AlphaFold 结构预测（原 Phase 20 方向，2026-09-01 取消）
 
 ---
 
@@ -126,3 +143,4 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase19-template
 |---|---|
 | 2026-09-01 | 初版：由 17 份 spec 待办汇总生成，Phase 15-20 + 持续项 + 远期池 |
 | 2026-09-01 | Phase 15-19 批量实施完成（真机验收统一推迟）：P16 部分完成（网络白名单/产物回收未做），P17=10c32dc，P18=ef97168，P19 裁剪版=5914b65（ES/merge 砍掉） |
+| 2026-09-01 | Phase 20 方向调整 + 实施：BLAST+/AlphaFold → 单细胞转录组（fc9a7d8），真机验收通过；P17/P18/P19 真机验收通过，P15 单聊通过（群聊 2 场景顺延）；write_doc 工具路径修复（append_blocks→render_blocks + parse_blocks）+ 审批卡终态幂等双保险 |

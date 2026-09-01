@@ -36,6 +36,30 @@ def json_to_blocks(s: str) -> list[AnyBlock]:
     return [_parse_block(b) for b in data]
 
 
+def parse_blocks(raw) -> list[AnyBlock]:
+    """宽松解析 blocks 参数：JSON/Python repr 字符串、dict、list[dict] → list[Block]。
+
+    planner 生成的工具 inputs 统一 str() 强转，经 scheduler 引用替换后
+    blocks 是 repr 风格字符串（单引号，非合法 JSON）——write_doc 节点
+    路径由此收敛（真机 2026-09-01：append_blocks 不存在 + 字符串形态）。
+    """
+    import ast
+
+    if isinstance(raw, str):
+        s = raw.strip()
+        if not s:
+            return []
+        try:
+            data = json.loads(s)
+        except ValueError:
+            data = ast.literal_eval(s)
+    elif isinstance(raw, dict):
+        data = [raw]
+    else:
+        data = raw or []
+    return [_parse_block(b if isinstance(b, dict) else dict(b)) for b in data]
+
+
 def _parse_block(d: dict[str, Any]) -> AnyBlock:
     t = d.get("type")
     match t:
