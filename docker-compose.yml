@@ -11,8 +11,15 @@ services:
       POSTGRES_DB: agent
     ports:
       - "5433:5432"
+    volumes:
+      # named volume 持久化（2026-09-01 事故加固：匿名卷曾因容器误删险些丢库）
+      - feishu-agent-pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agent -d agent"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+volumes:
+  feishu-agent-pgdata:
+    external: true
