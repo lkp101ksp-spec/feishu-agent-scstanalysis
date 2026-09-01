@@ -127,6 +127,17 @@ class Orchestrator:
                     memory=settings.bio_memory,
                 )
                 register_l3_singlecell(self.registry, bio_runner)
+                # === Phase 21: 空间转录组 st_* 工具（st 镜像 + /opt/st_tools） ===
+                from orchestrator.tools.builtin.l3_spatial import (
+                    register_l3_spatial,
+                )
+                register_l3_spatial(
+                    self.registry, bio_runner,
+                    st_image=settings.bio_st_image)
+                logger.info(
+                    "Phase 21 st_* tools registered: image=%s",
+                    settings.bio_st_image,
+                )
                 logger.info(
                     "Phase 20 sc_* tools registered: image=%s roots=%s "
                     "workspace=%s",

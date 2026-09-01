@@ -94,6 +94,8 @@ class Settings:
     # === Phase 20: 单细胞分析（bio 容器） ===
     # bio 镜像 tag（GPU 后续换 bio:gpu-latest，spec §8）
     bio_image: str = "feishu-research-agent/bio:cpu-latest"
+    # Phase 21: st 空间转录组镜像（run 时覆盖 image + script_dir=/opt/st_tools）
+    bio_st_image: str = "feishu-research-agent/bio:st-cpu-latest"
     # dataset workspace 根目录（h5ad 中间产物/图落此处，主机路径）
     bio_workspace_root: str = "./bio_workspace"
     # 数据白名单根目录（逗号分隔；sc_load 的 path 必须位于其一之内）
@@ -193,6 +195,8 @@ def load_settings() -> Settings:
         # Phase 20：bio 容器（单细胞分析）
         bio_image=os.environ.get(
             "BIO_IMAGE", "feishu-research-agent/bio:cpu-latest"),
+        bio_st_image=os.environ.get(
+            "BIO_ST_IMAGE", "feishu-research-agent/bio:st-cpu-latest"),
         bio_workspace_root=os.environ.get(
             "BIO_WORKSPACE_ROOT", "./bio_workspace"),
         bio_data_roots=os.environ.get("BIO_DATA_ROOTS", ""),
