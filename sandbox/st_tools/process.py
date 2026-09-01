@@ -44,12 +44,12 @@ def main() -> None:
     domain_sizes = adata.obs["spatial_domain"].value_counts().to_dict()
 
     ds_dir = WS_ROOT / args["dataset_id"]
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    sc.pl.umap(adata, color="spatial_domain", ax=axes[0], show=False)
-    sq.pl.spatial_scatter(adata, color="spatial_domain", ax=axes[1], show=False)
-    fig.tight_layout()
-    fig.savefig(ds_dir / "spatial_domains.png", dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    # squidpy>=1.8 spatial_scatter 无 show/return_fig 参数（透传会触发
+    # PatchCollection.set() TypeError），需 return_ax=True 才返回 Axes
+    ax = sq.pl.spatial_scatter(adata, color="spatial_domain", return_ax=True)
+    ax.figure.savefig(ds_dir / "spatial_domains.png", dpi=150,
+                      bbox_inches="tight")
+    plt.close("all")
 
     fig = sc.pl.umap(adata, color="spatial_domain", show=False,
                      return_fig=True)

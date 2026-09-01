@@ -15,7 +15,8 @@ def main() -> None:
     genes = list(args.get("genes") or [])
     color_by = args.get("color_by", "")
 
-    adata = load_adata({"dataset_id": args["dataset_id"]})
+    adata = load_adata({"dataset_id": args["dataset_id"],
+                        "file": "processed"})
     ensure_spatial(adata)
 
     import matplotlib.pyplot as plt
@@ -32,10 +33,11 @@ def main() -> None:
                  f"({adata.n_vars} genes)")
             raise SystemExit(1)
         for g in valid:
-            fig = sq.pl.spatial_scatter(adata, color=g, show=False,
-                                        return_fig=True)
-            fig.savefig(ds_dir / f"{g}_spatial.png", dpi=150,
-                        bbox_inches="tight")
+            # squidpy>=1.8 spatial_scatter 无 show/return_fig 参数，需
+            # return_ax=True 才返回 Axes
+            ax = sq.pl.spatial_scatter(adata, color=g, return_ax=True)
+            ax.figure.savefig(ds_dir / f"{g}_spatial.png", dpi=150,
+                              bbox_inches="tight")
             plt.close("all")
             pngs.append(f"/ws/{args['dataset_id']}/{g}_spatial.png")
 
@@ -46,10 +48,9 @@ def main() -> None:
                  f"{list(adata.obs.columns)}; run st_process first "
                  "for spatial_domain")
             raise SystemExit(1)
-        fig = sq.pl.spatial_scatter(adata, color=color_by, show=False,
-                                    return_fig=True)
-        fig.savefig(ds_dir / f"{color_by}_spatial.png", dpi=150,
-                    bbox_inches="tight")
+        ax = sq.pl.spatial_scatter(adata, color=color_by, return_ax=True)
+        ax.figure.savefig(ds_dir / f"{color_by}_spatial.png", dpi=150,
+                          bbox_inches="tight")
         plt.close("all")
         pngs.append(f"/ws/{args['dataset_id']}/{color_by}_spatial.png")
 

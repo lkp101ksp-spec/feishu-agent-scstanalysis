@@ -21,6 +21,10 @@ matplotlib.use("Agg")
 DATA_ROOT = Path("/data")
 WS_ROOT = Path("/ws")
 
+# 真 stdout（squidpy 等 INFO 日志会污染 stdout，run() 期间 sys.stdout
+# 被替换为 stderr，emit 必须绕过替换直接写真 stdout）
+_REAL_STDOUT = sys.stdout
+
 
 def read_args() -> dict:
     """读 stdin JSON 参数；空 stdin 返回空 dict。"""
@@ -32,8 +36,9 @@ def read_args() -> dict:
 
 def emit(obj: dict) -> None:
     """结果 JSON 写 stdout（唯一 stdout 输出，图/日志走 stderr）。"""
-    json.dump(obj, sys.stdout, ensure_ascii=False)
-    sys.stdout.write("\n")
+    json.dump(obj, _REAL_STDOUT, ensure_ascii=False)
+    _REAL_STDOUT.write("\n")
+    _REAL_STDOUT.flush()
 
 
 def fail(error_code: str, error_message: str) -> None:
@@ -42,8 +47,14 @@ def fail(error_code: str, error_message: str) -> None:
 
 
 def run(main) -> None:
-    """脚本入口包装：异常吃掉转统一 JSON 错误（含 traceback 首 3 帧）。"""
+    """脚本入口包装：异常吃掉转统一 JSON 错误（含 traceback 首 3 帧）。
+
+    执行期间把 sys.stdout 替换为 stderr——squidpy 等库的 INFO 日志
+    默认打 stdout，会破坏“stdout 唯一 JSON”契约（BioRunner 侧
+    json.loads(stdout) 解析）；emit/fail 经 _REAL_STDOUT 直写不受影响。
+    """
     try:
+        sys.stdout = sys.stderr
         main()
     except SystemExit:
         raise
@@ -51,6 +62,8 @@ def run(main) -> None:
         tb = traceback.format_exc(limit=3)
         print(tb, file=sys.stderr)
         fail("SCRIPT_ERROR", f"{type(e).__name__}: {e}")
+    finally:
+        sys.stdout = _REAL_STDOUT
 
 
 def ensure_spatial(adata) -> None:
@@ -74,10 +87,19 @@ def ensure_spatial(adata) -> None:
 
 
 def load_adata(input_ref: dict):
-    """按回退链读 AnnData：filtered.h5ad → raw.h5ad（st 与 sc 同模式）。"""
+    """按回退链读 AnnData：filtered.h5ad → raw.h5ad（st 与 sc 同模式）。
+
+    input_ref: {"dataset_id": str, "file": "filtered"|"raw"|"processed"}
+    """
     import anndata as ad
 
     ds_dir = WS_ROOT / input_ref["dataset_id"]
+    if input_ref.get("file") == "processed":
+        p = ds_dir / "processed.h5ad"
+        if not p.exists():
+            raise FileNotFoundError(
+                "processed.h5ad not found; run st_process first")
+        return ad.read_h5ad(p)
     for name in ("filtered", "raw"):
         p = ds_dir / f"{name}.h5ad"
         if p.exists():

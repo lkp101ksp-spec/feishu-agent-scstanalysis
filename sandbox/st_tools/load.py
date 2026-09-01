@@ -22,7 +22,9 @@ def _read_visium(p):
         raise SystemExit(1)
     import squidpy as sq
 
-    return sq.read.visium(p, count_file=h5.name, library_id="st")
+    # squidpy>=1.8 参数名 counts_file（旧名 count_file 会被 **kwargs 透传
+    # 给 scanpy.read_10x_h5 导致 TypeError）
+    return sq.read.visium(p, counts_file=h5.name, library_id="st")
 
 
 def _read_h5ad(p):

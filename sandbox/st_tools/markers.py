@@ -14,7 +14,8 @@ def main() -> None:
     method = args.get("method", "wilcoxon")
     top_n = int(args.get("top_n", 10))
 
-    adata = load_adata({"dataset_id": args["dataset_id"]})
+    adata = load_adata({"dataset_id": args["dataset_id"],
+                        "file": "processed"})
     if "spatial_domain" not in adata.obs:
         fail("ST_STATE_INVALID",
              "spatial_domain not found; run st_process first")
