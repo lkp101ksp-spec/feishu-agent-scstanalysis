@@ -1,0 +1,26 @@
+# Phase 20 bio 镜像：scanpy 单细胞分析栈（spec 2026-09-01 phase20 §3.1）
+# 构建：docker build -t feishu-research-agent/bio:cpu-latest sandbox -f sandbox/bio.Dockerfile
+# GPU 预留：后续 rapids-singlecell 栈另建 bio:gpu-latest tag，settings.bio_image 可切
+FROM python:3.12-slim
+
+# 清华源装单细胞栈（项目惯例：pip 默认走清华源）
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    numpy pandas scipy matplotlib h5py \
+    anndata scanpy leidenalg igraph
+
+# 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
+RUN useradd -u 1000 -m bio \
+    && mkdir -p /ws /data /tmp/mpl \
+    && chown -R bio /ws /tmp/mpl
+
+# matplotlib 无头模式 + 缓存目录指向可写 tmp
+ENV MPLCONFIGDIR=/tmp/mpl PYTHONUNBUFFERED=1
+
+WORKDIR /ws
+
+# 固化参数化脚本（BioRunner 调 python /opt/sc_tools/<name>.py）
+COPY sc_tools/ /opt/sc_tools/
+
+# 短命容器：跑完即退（--rm），无 CMD 保活需求
+CMD ["python", "/opt/sc_tools/load.py"]

@@ -230,6 +230,34 @@ def test_outputs_digest_list_anti_spam():
     assert "记录 0" in rec_line  # 首条可见
 
 
+def test_outputs_digest_later_nodes_not_starved():
+    """每节点限 4 行 + 总限 16：前置节点概要不得挤掉后置节点核心输出
+    （真机 2026-09-01：n1/n2 概要把 n3 n_clusters/n4 markers 全截掉）。"""
+    def _h(nid, outputs):
+        return TaskHandle(
+            execution_id=nid, task_id="t", node_id=nid,
+            state=ExecutionState.SUCCESS,
+            started_at=datetime.now(UTC), finished_at=datetime.now(UTC),
+            outputs=outputs,
+        )
+
+    sch = SimpleNamespace(_handles={
+        # n1/n2 各 6 个字段（旧逻辑 5+6=11 行 > 10，n3/n4 全没）
+        "n1": _h("n1", {f"k{i}": f"v{i}" for i in range(6)}),
+        "n2": _h("n2", {f"k{i}": f"v{i}" for i in range(6)}),
+        "n3": _h("n3", {"n_clusters": 3, "umap_png": "/ws/ds/umap.png"}),
+        "n4": _h("n4", {"markers": {"0": [{"gene": "MARKER_A00"}]},
+                        "dotplot_png": "/ws/ds/dotplot.png"}),
+    })
+    lines = ResearchRunner._outputs_digest(sch)
+    joined = "\n".join(lines)
+    assert "[n3.n_clusters] 3" in joined       # 后置节点核心输出可见
+    assert "MARKER_A00" in joined              # markers 可见
+    assert "umap.png" not in joined            # 图片路径不刷屏
+    assert "dotplot.png" not in joined
+    assert len(lines) <= 16
+
+
 # === Phase 14：card_confirm 卡片确认写回 ===
 
 def _wait_card_sent(im, timeout: float = 10.0) -> dict:
@@ -508,3 +536,210 @@ def test_node_l2_timeout_denies_node(db):
     assert _latest_doc_write(db).status == "cancelled"
     # has_write_node 短路：自动写回也不触发
     orch.doc_adapter.render_blocks.assert_not_called()
+
+
+# === Phase 20：sc_* 分析图 IM 回传 + 超时放大 ===
+
+def _sc_plan():
+    """单节点 sc_process 计划。"""
+    return DAGPlan(
+        plan_id="plan_sc", task_id="t1", session_id="s1",
+        nodes=[
+            DAGNode(node_id="n1", kind="tool", tool_name="sc_process",
+                    inputs={"dataset_ref": "ds"}),
+        ],
+        entry_node_ids=["n1"],
+    )
+
+
+def _wait_image_sent(im, count: int = 1, timeout: float = 5.0) -> bool:
+    """轮询等待后台线程完成指定次数的 send_image。"""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if im.send_image.call_count >= count:
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_sc_plan_sends_umap_image_to_im(db, tmp_path):
+    """sc_* 节点成功：umap.png 上传 + 图片消息发送（/ws 路径映射回主机）。"""
+    orch = _orch(db)
+    orch.planner.plan.return_value = _sc_plan()
+    orch.executor = _FakeExecutor(outputs={
+        "dataset_ref": "ds", "n_clusters": 5,
+        "umap_png": "/ws/ds/umap.png",
+    })
+    orch.settings.bio_workspace_root = str(tmp_path)
+    orch.im.upload_image.return_value = "img_v2_001"
+
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 单细胞分析"))
+
+    assert _wait_reply_count(orch.im, 2)
+    assert _wait_image_sent(orch.im)
+    host = str((tmp_path / "ds" / "umap.png").resolve())
+    orch.im.upload_image.assert_called_once_with(host)
+    orch.im.send_image.assert_called_once_with("oc_r", "img_v2_001")
+
+
+def test_sc_images_not_sent_without_workspace_root(db):
+    """未配置 bio_workspace_root（非 sc 部署）：跳过发图不报错。"""
+    orch = _orch(db)
+    orch.planner.plan.return_value = _sc_plan()
+    orch.executor = _FakeExecutor(outputs={
+        "dataset_ref": "ds", "umap_png": "/ws/ds/umap.png"})
+    # settings 无 bio_workspace_root（getattr 默认 ""）
+
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 单细胞分析"))
+
+    assert _wait_reply_count(orch.im, 2)
+    orch.im.upload_image.assert_not_called()
+    orch.im.send_image.assert_not_called()
+
+
+def test_send_sc_images_collects_all_png_fields(tmp_path):
+    """umap_png/dotplot_png/pngs 三类字段全收集；单图失败不中断。"""
+    orch = SimpleNamespace(
+        settings=SimpleNamespace(bio_workspace_root=str(tmp_path)),
+        im=MagicMock(),
+    )
+    orch.im.upload_image.side_effect = ["k1", RuntimeError("net"), "k3"]
+    plan = _sc_plan()
+    sch = SimpleNamespace(_handles={
+        "n1": TaskHandle(
+            execution_id="e1", task_id="t", node_id="n1",
+            state=ExecutionState.SUCCESS,
+            started_at=datetime.now(UTC), finished_at=datetime.now(UTC),
+            outputs={
+                "umap_png": "/ws/ds/umap.png",
+                "dotplot_png": "/ws/ds/dotplot.png",
+                "pngs": ["/ws/ds/CD3D_violin.png"],
+                "dataset_ref": "ds",
+            },
+        ),
+    })
+    runner = ResearchRunner(orchestrator=orch, session_factory=MagicMock())
+    sent = runner._send_sc_images(_incoming(), plan, sch)
+
+    assert sent == 2  # 第 2 张上传失败被跳过，第 3 张仍发送
+    keys = [c.args[1] for c in orch.im.send_image.call_args_list]
+    assert keys == ["k1", "k3"]
+
+
+def test_send_sc_images_ignores_non_sc_tools(tmp_path):
+    """非 sc_* 工具输出同名字段：不发送。"""
+    plan = DAGPlan(
+        plan_id="p", task_id="t", session_id="s",
+        nodes=[DAGNode(node_id="n1", kind="tool", tool_name="blast_search",
+                       inputs={})],
+        entry_node_ids=["n1"],
+    )
+    orch = SimpleNamespace(
+        settings=SimpleNamespace(bio_workspace_root=str(tmp_path)),
+        im=MagicMock(),
+    )
+    sch = SimpleNamespace(_handles={
+        "n1": TaskHandle(
+            execution_id="e", task_id="t", node_id="n1",
+            state=ExecutionState.SUCCESS,
+            started_at=datetime.now(UTC), finished_at=datetime.now(UTC),
+            outputs={"umap_png": "/ws/ds/umap.png"},
+        ),
+    })
+    runner = ResearchRunner(orchestrator=orch, session_factory=MagicMock())
+    assert runner._send_sc_images(_incoming(), plan, sch) == 0
+    orch.im.upload_image.assert_not_called()
+
+
+def test_container_to_host_path_mapping():
+    """容器 /ws 前缀剥离 + 非 /ws 路径返回 None。"""
+    assert ResearchRunner._container_to_host_path(
+        "/ws/ds/umap.png", "D:/bio_ws") == r"D:\bio_ws\ds\umap.png"
+    assert ResearchRunner._container_to_host_path(
+        "ws/ds/x.png", "D:/bio_ws") == r"D:\bio_ws\ds\x.png"
+    assert ResearchRunner._container_to_host_path(
+        "/etc/passwd", "D:/bio_ws") is None
+
+
+def test_sc_plan_extends_wall_timeout(db, monkeypatch):
+    """含 sc_* 节点：wall-clock 放大到 research_sc_timeout_sec。"""
+    import asyncio
+
+    orch = _orch(db)
+    orch.settings.research_sc_timeout_sec = 3600
+    orch.planner.plan.return_value = _sc_plan()
+    captured: dict = {}
+    real_wait_for = asyncio.wait_for
+
+    def _spy(coro, timeout=None):
+        captured["timeout"] = timeout
+        return real_wait_for(coro, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", _spy)
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 单细胞分析"))
+
+    assert _wait_reply_count(orch.im, 2)
+    assert captured["timeout"] == 3600
+
+
+def test_non_sc_plan_keeps_default_timeout(db, monkeypatch):
+    """纯检索任务：维持原超时（回归基线）。"""
+    import asyncio
+
+    orch = _orch(db)  # 默认 plan：summarize_text，30s
+    captured: dict = {}
+    real_wait_for = asyncio.wait_for
+
+    def _spy(coro, timeout=None):
+        captured["timeout"] = timeout
+        return real_wait_for(coro, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", _spy)
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    assert captured["timeout"] == 30
+
+
+# === Phase 20：sc 分析图写入绑定文档（三步插入，path 模式） ===
+
+def test_sc_images_appended_to_writeback_blocks(db, tmp_path):
+    """bind_scope 写回：blocks 尾部追加 ImageBlock(path)（三步插入由
+    DocAdapter 渲染时执行）。"""
+    orch = _orch(db, bound_doc="doccnR1")  # bind_scope 默认直写
+    orch.planner.plan.return_value = _sc_plan()
+    orch.executor = _FakeExecutor(outputs={
+        "dataset_ref": "ds", "n_clusters": 3,
+        "umap_png": "/ws/ds/umap.png",
+    })
+    orch.settings.bio_workspace_root = str(tmp_path)
+
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 单细胞分析"))
+
+    assert _wait_reply_count(orch.im, 2)
+    host = str((tmp_path / "ds" / "umap.png").resolve())
+    written = orch.doc_adapter.render_blocks.call_args.args[1]
+    img = written[-1]
+    assert img.type == "image" and img.path == host
+    # 文档写回成功结论不受影响
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "结果已写入绑定文档" in final
+
+
+def test_sc_images_not_injected_with_write_doc_node(db, tmp_path):
+    """write_doc 节点路径：写回内容由节点 blocks 决定，不自动注入图片。"""
+    orch = _orch_with_broker(db, plan=_write_plan())  # 含 write_doc 节点
+    orch.settings.bio_workspace_root = str(tmp_path)
+
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 把结论写入文档"))
+
+    value = _wait_card_sent(orch.im)
+    assert orch.approval_broker.decide(value["doc_write_id"], "approve", "ou_r")
+    assert _wait_reply_count(orch.im, 2)
+    # write_doc 节点提交执行（blocks 为模型规划内容，无自动图片注入）

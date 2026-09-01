@@ -59,3 +59,21 @@ def test_list_block_minimal():
 def test_image_block_minimal():
     i = ImageBlock(url="https://example.com/x.png", alt="x")
     assert i.type == "image"
+
+
+def test_image_block_file_token_only():
+    """path 图片块（本地文件，Phase 20）：无 url 也合法。"""
+    i = ImageBlock(path=r"D:\bio_ws\ds\umap.png", alt="umap")
+    assert i.type == "image" and i.url == ""
+
+
+def test_image_block_requires_url_or_token():
+    """url/path 均空：校验失败。"""
+    with pytest.raises(ValidationError):
+        ImageBlock(alt="empty")
+
+
+def test_image_block_rejects_non_http_url():
+    """url 非 http(s)：校验失败。"""
+    with pytest.raises(ValidationError):
+        ImageBlock(url="ftp://x/y.png")

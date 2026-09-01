@@ -46,6 +46,71 @@ class DocAdapter:
         result = self.cli.run(["docx", "block", "list", "--doc-id", doc_id])
         return result.get("blocks", [])
 
+    def upload_doc_image(self, doc_id: str, image_path: str) -> str:
+        """上传图片素材 → file_token（parent_node 需为 image block_id）。
+
+        POST /open-apis/drive/v1/medias/upload（parent_type=docx_image）；
+        仅 SDK 路径，需 drive:file:upload 权限。一般不单独调用——
+        用 insert_doc_image 走完整三步流程。
+        """
+        import os
+
+        if self.sdk_client is None:
+            raise LarkCLIError("upload_doc_image requires sdk_client")
+        size = os.path.getsize(image_path)
+        with open(image_path, "rb") as f:
+            request = (lark.drive.v1.UploadAllMediaRequest.builder()
+                       .request_body(
+                           lark.drive.v1.UploadAllMediaRequestBody.builder()
+                           .file_name(os.path.basename(image_path))
+                           .parent_type("docx_image")
+                           .parent_node(doc_id)
+                           .size(size)
+                           .file(f)
+                           .build())
+                       .build())
+            resp = self.sdk_client.drive.v1.media.upload_all(request)
+        if not resp.success():
+            raise LarkCLIError(
+                f"docx image upload failed: code={resp.code} msg={resp.msg}")
+        return resp.data.file_token or ""
+
+    def insert_doc_image(self, doc_id: str, image_path: str,
+                         *, index: int = -1) -> str:
+        """本地图片插入文档（官方 FAQ 三步流程，Phase 20）。
+
+        ① 建空 image block（children 接口，image 必须为空对象——
+          带 token 会 1770001 invalid param，真机 2026-09-01）
+        ② drive medias 上传（parent_type=docx_image，parent_node=
+          ① 的 block_id——用 doc_id 会被拒）→ file_token
+        ③ PATCH 该 block replace_image(token)
+        返回 image block_id；任一步失败抛 LarkCLIError。
+        """
+        import logging as _logging
+
+        log = _logging.getLogger(__name__)
+        # ① 空 image block
+        children = self._sdk_create_children(
+            doc_id, [{"block_type": 27, "image": {}}], index=index)
+        if not children:
+            raise LarkCLIError("create empty image block returned nothing")
+        block_id = children[0].get("block_id", "")
+        if not block_id:
+            raise LarkCLIError("create empty image block returned no block_id")
+        # ② 上传素材（parent_node = image block_id）
+        file_token = self.upload_doc_image(block_id, image_path)
+        if not file_token:
+            raise LarkCLIError("image upload returned empty file_token")
+        # ③ replace_image
+        self._sdk_request(
+            lark.HttpMethod.PATCH,
+            f"/open-apis/docx/v1/documents/{doc_id}/blocks/{block_id}",
+            body={"replace_image": {"token": file_token}},
+        )
+        log.info("doc image inserted: doc=%s block=%s file=%s",
+                 doc_id, block_id, image_path)
+        return block_id
+
     def append_plain_text(self, doc_id: str, text: str,
                           index: int = -1) -> str:
         """追加一段纯文本块。返回新 block_id。
@@ -218,21 +283,40 @@ class DocAdapter:
         """SDK 路径：逐块展开批量追加到文档末尾；返回最后写入块的 id。
 
         返回值供锚点续写跟随定位（Phase 14 后续：anchor_block_id 补齐）。
+        本地图片块（ImageBlock.path）无法进批量 children——需三步插入
+        （官方 FAQ），遇则先 flush 当前批再单独插入，保持块序；
+        单图失败仅记日志跳过（文本写回不受影响）。
         """
+        import logging as _logging
+
+        log = _logging.getLogger(__name__)
         last_block_id = None
         batch: list[dict] = []
-        for block in blocks:
-            self._rate_limiter.wait()
-            batch.extend(self._to_sdk_blocks(block))
-            if len(batch) >= 50:  # children 单批上限 50
+
+        def _flush() -> None:
+            nonlocal last_block_id, batch
+            if batch:
                 created = self._sdk_create_children(doc_id, batch)
                 if created:
                     last_block_id = created[-1].get("block_id")
                 batch = []
-        if batch:
-            created = self._sdk_create_children(doc_id, batch)
-            if created:
-                last_block_id = created[-1].get("block_id")
+
+        for block in blocks:
+            self._rate_limiter.wait()
+            if (getattr(block, "type", "") == "image"
+                    and getattr(block, "path", "")):
+                _flush()
+                try:
+                    last_block_id = self.insert_doc_image(
+                        doc_id, block.path)
+                except Exception as e:
+                    log.warning("insert doc image failed (%s): %s",
+                                getattr(block, "path", ""), e)
+                continue
+            batch.extend(self._to_sdk_blocks(block))
+            if len(batch) >= 50:  # children 单批上限 50
+                _flush()
+        _flush()
         return last_block_id
 
     # === Phase 5 ===

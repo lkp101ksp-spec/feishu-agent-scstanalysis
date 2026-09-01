@@ -11,6 +11,8 @@ Phase 2 增量：保留 process() Phase 1 路径；新增 process_phase2() 走 P
 from __future__ import annotations
 
 import asyncio
+import logging
+from pathlib import Path
 from typing import Optional
 
 from feishu_adapter.im_adapter import IMAdapter
@@ -31,6 +33,8 @@ from shared.errors import BindDocInvalidError, DocWriteError, FeishuAgentError, 
 from shared.schemas import ChatMessage, IncomingMessage
 
 SYSTEM_PROMPT = "你是飞书科研助手。请用简洁中文回答，不超过 200 字。"
+
+logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -101,6 +105,34 @@ class Orchestrator:
             # === Phase 4 MVP: L3 领域工具 ===
             from orchestrator.tools.builtin.l3_bio import register_l3_bio
             register_l3_bio(self.registry)
+            # === Phase 20: 单细胞 sc_* 工具（bio 容器） ===
+            # 白名单为空则不注册（sc_load 无合法数据路径，注册无意义）
+            from orchestrator.tools.bio.bio_runner import BioRunner
+            from orchestrator.tools.builtin.l3_singlecell import (
+                register_l3_singlecell,
+            )
+            bio_data_roots = [
+                r.strip() for r in (settings.bio_data_roots or "").split(",")
+                if r.strip()
+            ]
+            if bio_data_roots:
+                Path(settings.bio_workspace_root).mkdir(
+                    parents=True, exist_ok=True)
+                bio_runner = BioRunner(
+                    image=settings.bio_image,
+                    workspace_root=settings.bio_workspace_root,
+                    data_roots=bio_data_roots,
+                    timeout_sec=settings.bio_script_timeout_sec,
+                    cpus=settings.bio_cpus,
+                    memory=settings.bio_memory,
+                )
+                register_l3_singlecell(self.registry, bio_runner)
+                logger.info(
+                    "Phase 20 sc_* tools registered: image=%s roots=%s "
+                    "workspace=%s",
+                    settings.bio_image, bio_data_roots,
+                    settings.bio_workspace_root,
+                )
             self.tool_handler = ToolHandler(
                 registry=self.registry,
                 settings=settings,  # Phase 16 ACL：执行层禁用名单兜底

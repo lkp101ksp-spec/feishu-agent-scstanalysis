@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, Union
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class HeadingBlock(BaseModel):
@@ -61,11 +61,27 @@ class ListBlock(BaseModel):
 
 
 class ImageBlock(BaseModel):
+    """图片块：url（远程图）或 path（本地文件路径）二选一。
+
+    path：本地图片（如 sc 分析图），由 DocAdapter 按官方三步流程
+    插入文档（空 image block → drive 上传 parent_node=block_id →
+    PATCH replace_image，Phase 20 真机 2026-09-01 验证）。
+    """
     type: Literal["image"] = "image"
-    url: str = Field(pattern=r"^https?://")
+    url: str = ""
+    path: str = ""
     alt: str = ""
     width: int | None = None
     height: int | None = None
+
+    @model_validator(mode="after")
+    def check_url_or_path(self) -> "ImageBlock":
+        """url 与 path 至少一个；url 非空时必须是 http(s)。"""
+        if not self.url and not self.path:
+            raise ValueError("image block requires url or path")
+        if self.url and not self.url.startswith(("http://", "https://")):
+            raise ValueError(f"image url must be http(s): {self.url!r}")
+        return self
 
 
 AnyBlock = Union[HeadingBlock, TextBlock, CodeBlock, QuoteBlock,

@@ -10,6 +10,7 @@ import asyncio
 import logging
 import threading
 from datetime import datetime
+from pathlib import Path
 
 from orchestrator.planner.scheduler import Scheduler
 from orchestrator.tools.tool_registry import parse_disabled_tools
@@ -223,20 +224,29 @@ class ResearchRunner:
             l2_gate=l2_gate,
         )
         loop = asyncio.new_event_loop()
+        # Phase 20：plan 含 sc_* 节点时放宽 wall-clock（单细胞分析单节点
+        # 可达数百秒；纯检索任务维持原超时不受影响）
+        wall_timeout = self.timeout_sec
+        if any(n.kind == "tool" and (n.tool_name or "").startswith("sc_")
+               for n in plan.nodes):
+            wall_timeout = max(
+                self.timeout_sec,
+                getattr(self.orch.settings, "research_sc_timeout_sec", 3600),
+            )
         try:
             result = loop.run_until_complete(
                 asyncio.wait_for(
-                    scheduler.run_until_done(), timeout=self.timeout_sec
+                    scheduler.run_until_done(), timeout=wall_timeout
                 )
             )
         except asyncio.TimeoutError:
             task_service.mark_failed(
                 task_id=task_id, error_code="RESEARCH_TIMEOUT",
-                error_message=f"exceeded {self.timeout_sec}s",
+                error_message=f"exceeded {wall_timeout}s",
             )
             self.im.reply(
                 incoming.chat_id,
-                f"[超时] 研究任务超过 {self.timeout_sec}s 未完成，已终止。"
+                f"[超时] 研究任务超过 {wall_timeout}s 未完成，已终止。"
                 "可尝试拆小任务后重试。",
             )
             return {"status": "research_timeout", "task_id": task_id}
@@ -292,6 +302,10 @@ class ResearchRunner:
                     "已跳过自动写回"
                 )
         elif bound_doc:
+            # Phase 20：sc 分析图上传 drive 后追加 ImageBlock
+            # （card_confirm 审批预览与 bind_scope 直写均可见）
+            self._inject_sc_image_blocks(
+                blocks, plan, scheduler, bound_doc, has_write_node)
             broker = getattr(self.orch, "approval_broker", None)
             if self.writeback_mode == "card_confirm" and broker is not None:
                 doc_written, writeback_note = self._writeback_with_confirm(
@@ -329,6 +343,9 @@ class ResearchRunner:
             reply_lines.append(f"结果已写入绑定文档 {bound_doc}")
         self.im.reply(incoming.chat_id, "\n".join(reply_lines))
 
+        # 5.5 Phase 20：sc_* 节点产图回传（umap/dotplot/violin → IM 图片消息）
+        images_sent = self._send_sc_images(incoming, plan, scheduler)
+
         # 6. task 收尾
         task_service.mark_success(
             task_id=task_id, reply_text="\n".join(reply_lines[:20])
@@ -340,7 +357,93 @@ class ResearchRunner:
             "plan_id": plan.plan_id,
             "node_states": {k: v.value for k, v in result.node_states.items()},
             "doc_written": doc_written,
+            "images_sent": images_sent,
         }
+
+    # === Phase 20：sc_* 分析图 IM 回传 ===
+
+    def _sc_image_host_paths(self, plan, scheduler, ws_root: str) -> list[str]:
+        """收集成功 sc_* 节点输出的图片主机路径（umap/dotplot/plot，有序）。
+
+        容器内 /ws/... 路径映射回 bio_workspace_root；非法路径跳过。
+        IM 发图与文档写回共用本收集逻辑。
+        """
+        tool_names = {
+            n.node_id: n.tool_name
+            for n in plan.nodes if n.kind == "tool"
+        }
+        paths: list[str] = []
+        for node_id, handle in scheduler._handles.items():
+            if handle.state != ExecutionState.SUCCESS or not handle.outputs:
+                continue
+            if not (tool_names.get(node_id) or "").startswith("sc_"):
+                continue
+            raw: list[str] = []
+            for key in ("umap_png", "dotplot_png"):
+                if handle.outputs.get(key):
+                    raw.append(handle.outputs[key])
+            raw.extend(p for p in (handle.outputs.get("pngs") or [])
+                       if isinstance(p, str))
+            for p in raw:
+                host = self._container_to_host_path(p, ws_root)
+                if host is None:
+                    logger.warning("sc image path not under /ws: %s", p)
+                    continue
+                paths.append(host)
+        return paths
+
+    def _send_sc_images(self, incoming: IncomingMessage, plan, scheduler) -> int:
+        """成功 sc_* 节点的分析图逐张上传发送到 IM。
+
+        附属动作：单图失败只记日志，不影响研究任务本身的
+        success 结论。返回成功发送张数。
+        """
+        ws_root = getattr(self.orch.settings, "bio_workspace_root", "")
+        if not ws_root:
+            return 0
+        sent = 0
+        for host in self._sc_image_host_paths(plan, scheduler, ws_root):
+            try:
+                image_key = self.im.upload_image(host)
+                self.im.send_image(incoming.chat_id, image_key)
+                sent += 1
+            except Exception as e:
+                logger.warning("sc image send failed (%s): %s", host, e)
+        return sent
+
+    def _inject_sc_image_blocks(self, blocks: list, plan, scheduler,
+                                bound_doc: str | None,
+                                has_write_node: bool) -> None:
+        """写回 blocks 尾部追加 sc 分析图 ImageBlock（path 模式，Phase 20）。
+
+        实际三步插入（空块→drive 上传→replace_image）由 DocAdapter
+        渲染时执行。仅自动写回路径注入；write_doc 节点路径不注入
+        （写回内容由该节点 blocks 决定）。
+        """
+        if has_write_node or not bound_doc:
+            return
+        from orchestrator.blocks.schemas import ImageBlock
+
+        ws_root = getattr(self.orch.settings, "bio_workspace_root", "")
+        if not ws_root:
+            return
+        for host in self._sc_image_host_paths(plan, scheduler, ws_root):
+            blocks.append(ImageBlock(path=host, alt=Path(host).stem))
+
+    @staticmethod
+    def _container_to_host_path(container_path: str, ws_root: str) -> str | None:
+        """bio 容器内图片路径 → 主机路径（/ws/<rel> → ws_root/<rel>）。
+
+        非 /ws 前缀路径返回 None（调用方记日志跳过）。
+        """
+        p = str(container_path).replace("\\", "/")
+        if p.startswith("/ws/"):
+            rel = p[len("/ws/"):]
+        elif p.startswith("ws/"):
+            rel = p[len("ws/"):]
+        else:
+            return None
+        return str(Path(ws_root).resolve() / rel)
 
     # === Phase 17：节点级 L2 审批（write_doc 卡片确认） ===
 
@@ -637,6 +740,9 @@ class ResearchRunner:
         否则关键结果根本不出现在回复里（真机 2026-08-30）。
         多项 list 只展示「N 项 + 首条摘要」：5 条 GenBank 记录即近
         800 字，全量展示反而淹没真正的关键输出（真机 2026-08-31）。
+        每节点限 4 行 + 总限 16 行：n1/n2 的概要字段曾把 n3/n4 的
+        n_clusters/markers 全挤掉（真机 2026-09-01 Phase 20）；
+        图片路径字段跳过——图已单独发 IM，路径文本无信息量。
         """
         import json
 
@@ -644,8 +750,13 @@ class ResearchRunner:
         for node_id, handle in scheduler._handles.items():
             if handle.state != ExecutionState.SUCCESS or not handle.outputs:
                 continue
+            node_lines = 0
             for key, val in handle.outputs.items():
-                if key in ("ast_notices",) or val in (None, "", [], {}):
+                if node_lines >= 4:
+                    break
+                if (key in ("ast_notices", "umap_png", "dotplot_png",
+                            "pngs", "workspace")
+                        or val in (None, "", [], {})):
                     continue
                 if isinstance(val, list) and len(val) > 2:
                     head = json.dumps(val[0], ensure_ascii=False, default=str)
@@ -654,4 +765,5 @@ class ResearchRunner:
                     val = json.dumps(val, ensure_ascii=False, default=str)
                 text = val if len(val) <= max_chars else val[:max_chars] + "…"
                 lines.append(f"[{node_id}.{key}] {text}")
-        return lines[:10]
+                node_lines += 1
+        return lines[:16]

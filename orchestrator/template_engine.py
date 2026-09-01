@@ -161,7 +161,11 @@ class TemplateEngine:
                     else:
                         lines.append(f"- {item}")
             elif t == "image":
-                lines.append(f"![{b.alt}]({b.url})")
+                # file_token 图片（drive 素材）无 URL 可展示，预览给占位符
+                if getattr(b, "url", ""):
+                    lines.append(f"![{b.alt}]({b.url})")
+                else:
+                    lines.append(f"[图片: {b.alt or 'sc-plot'}]")
             # === Phase 6: 8 类增量 ===
             elif t == "embed":
                 lines.append(f"[embed: {b.title}]({b.url})")

@@ -153,6 +153,69 @@ def test_doc_render_blocks_sdk_fallback_for_media():
     assert "http://x/y.png" in child["text"]["elements"][0]["text_run"]["content"]
 
 
+def test_doc_render_blocks_sdk_image_path_uses_insert_flow():
+    """path 图片块走三步插入（空块→上传→replace），不进批量 children。"""
+    from unittest.mock import patch
+
+    sdk = _doc_sdk({"code": 0, "data": {"children": []}})
+    adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,
+                         rate_limiter=NoWaitLimiter())
+    with patch.object(adapter, "insert_doc_image",
+                      return_value="blk_img_1") as ins:
+        adapter.render_blocks("doc_x", [
+            TextBlock(text="before"),
+            ImageBlock(path=r"D:\ws\umap.png", alt="umap"),
+            TextBlock(text="after"),
+        ])
+    ins.assert_called_once_with("doc_x", r"D:\ws\umap.png")
+    # 文本块照常批量 children（分两批：image 前 flush + 末批）
+    all_types = [
+        b["block_type"]
+        for c in sdk.request.call_args_list
+        for b in c.args[0].body["children"]
+    ]
+    assert all_types == [2, 2]  # before/after 两个文本块
+
+
+def test_doc_render_blocks_sdk_image_insert_failure_not_fatal():
+    """单图插入失败：记日志跳过，文本写回不受影响。"""
+    from unittest.mock import patch
+
+    sdk = _doc_sdk({"code": 0, "data": {"children": []}})
+    adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,
+                         rate_limiter=NoWaitLimiter())
+    with patch.object(adapter, "insert_doc_image",
+                      side_effect=RuntimeError("drive down")):
+        adapter.render_blocks("doc_x", [
+            TextBlock(text="t1"),
+            ImageBlock(path=r"D:\ws\umap.png"),
+        ])
+    sdk.request.assert_called_once()  # 仅文本批，未因图失败中断
+
+
+def test_doc_insert_doc_image_three_steps():
+    """insert_doc_image 三步：空 image block → 上传(parent=block) → PATCH。"""
+    from unittest.mock import patch
+
+    sdk = _doc_sdk({"code": 0, "data": {
+        "children": [{"block_id": "blk_img_9", "block_type": 27}]}})
+    adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,
+                         rate_limiter=NoWaitLimiter())
+    with patch.object(adapter, "upload_doc_image",
+                      return_value="boxbckFT1") as up:
+        block_id = adapter.insert_doc_image("doc_x", r"D:\ws\umap.png")
+    assert block_id == "blk_img_9"
+    # ② 上传 parent_node = 空 image block 的 block_id（非 doc_id）
+    up.assert_called_once_with("blk_img_9", r"D:\ws\umap.png")
+    # ① 空 image 块（image 必须空对象——带 token 会 1770001）
+    first_req = sdk.request.call_args_list[0].args[0]
+    assert first_req.body["children"] == [{"block_type": 27, "image": {}}]
+    # ③ 最后一次调用是 PATCH replace_image(token)
+    last_req = sdk.request.call_args.args[0]
+    assert "PATCH" in str(last_req.http_method)
+    assert last_req.body == {"replace_image": {"token": "boxbckFT1"}}
+
+
 def test_doc_render_blocks_sdk_batches_over_50():
     sdk = _doc_sdk({"code": 0, "data": {"children": []}})
     adapter = DocAdapter(cli=MagicMock(), sdk_client=sdk,

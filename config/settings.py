@@ -91,6 +91,19 @@ class Settings:
     kernel_sweep_interval_sec: int = 300
     # 工具禁用名单（逗号分隔，如 "blast_search,run_python"；planner 不可见 + 执行层拒绝）
     disabled_tools: str = ""
+    # === Phase 20: 单细胞分析（bio 容器） ===
+    # bio 镜像 tag（GPU 后续换 bio:gpu-latest，spec §8）
+    bio_image: str = "feishu-research-agent/bio:cpu-latest"
+    # dataset workspace 根目录（h5ad 中间产物/图落此处，主机路径）
+    bio_workspace_root: str = "./bio_workspace"
+    # 数据白名单根目录（逗号分隔；sc_load 的 path 必须位于其一之内）
+    bio_data_roots: str = ""
+    # bio 脚本容器超时（秒）；plan 含 sc_* 时 research wall-clock 放大到 research_sc_timeout_sec
+    bio_script_timeout_sec: int = 900
+    research_sc_timeout_sec: int = 3600
+    # bio 容器资源限额（docker --cpus/--memory）
+    bio_cpus: str = "4"
+    bio_memory: str = "16g"
 
 
 def _load_yaml(path: str) -> dict:
@@ -177,4 +190,16 @@ def load_settings() -> Settings:
         kernel_sweep_interval_sec=int(
             os.environ.get("KERNEL_SWEEP_INTERVAL_SEC", "300")),
         disabled_tools=os.environ.get("DISABLED_TOOLS", ""),
+        # Phase 20：bio 容器（单细胞分析）
+        bio_image=os.environ.get(
+            "BIO_IMAGE", "feishu-research-agent/bio:cpu-latest"),
+        bio_workspace_root=os.environ.get(
+            "BIO_WORKSPACE_ROOT", "./bio_workspace"),
+        bio_data_roots=os.environ.get("BIO_DATA_ROOTS", ""),
+        bio_script_timeout_sec=int(
+            os.environ.get("BIO_SCRIPT_TIMEOUT_SEC", "900")),
+        research_sc_timeout_sec=int(
+            os.environ.get("RESEARCH_SC_TIMEOUT_SEC", "3600")),
+        bio_cpus=os.environ.get("BIO_CPUS", "4"),
+        bio_memory=os.environ.get("BIO_MEMORY", "16g"),
     )

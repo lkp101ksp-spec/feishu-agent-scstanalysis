@@ -47,6 +47,37 @@ class IMAdapter:
         ])
         return result.get("message_id", "")
 
+    def upload_image(self, image_path: str) -> str:
+        """上传本地图片 → image_key（Phase 20：sc 分析图 IM 回传）。
+
+        POST /open-apis/im/v1/images（image_type=message）；仅 SDK 路径，
+        CLI 路径抛 NotImplementedError（现部署均走 SDK）。
+        """
+        import lark_oapi as lark
+
+        if self.sdk_client is None:
+            raise NotImplementedError(
+                "upload_image requires sdk_client")
+        with open(image_path, "rb") as f:
+            request = (lark.im.v1.CreateImageRequest.builder()
+                       .request_body(
+                           lark.im.v1.CreateImageRequestBody.builder()
+                           .image_type("message")
+                           .image(f)
+                           .build())
+                       .build())
+            resp = self.sdk_client.im.v1.image.create(request)
+        if not resp.success():
+            raise LarkCLIError(
+                f"image upload failed: code={resp.code} msg={resp.msg}")
+        # 上传接口返回的是 image_key（非 image_id，真机 2026-09-01 验证）
+        return resp.data.image_key or ""
+
+    def send_image(self, chat_id: str, image_key: str) -> str:
+        """按 image_key 发送图片消息到 chat_id（Phase 20：sc 分析图回传）。"""
+        return self.send(chat_id, "chat_id", "image",
+                         json.dumps({"image_key": image_key}))
+
     def send_card(self, chat_id: str, card: dict) -> str:
         """发送交互卡片。card 为简化结构 {header, elements}，此处补齐为合法卡片 JSON。"""
         card_json = json.dumps({

@@ -47,3 +47,10 @@ backup/
 # Local scratch
 paragraphs.txt
 dev.db
+
+# Bio 分析运行时数据（测试输入 + 中间产物）
+bio_test_data/
+bio_workspace/
+
+# 临时提交信息
+_commit_msg.txt
