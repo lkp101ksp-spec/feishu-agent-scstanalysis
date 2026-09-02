@@ -27,6 +27,9 @@ def main() -> None:
 
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
+    # raw 快照：normalized log 表达（非负）——COMMOT 等下游需非 scale 数据
+    # （scale 后 X 含负值不可用；批① T7 遗留建议第 3 条一并解决）
+    adata.raw = adata
     sc.pp.highly_variable_genes(adata, n_top_genes=min(2000, adata.n_vars),
                                 flavor="seurat")
     sc.pp.scale(adata, max_value=10)
