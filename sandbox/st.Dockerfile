@@ -4,10 +4,13 @@
 FROM python:3.12-slim
 
 # 清华源装空间转录组栈（项目惯例：pip 默认走清华源）
+# commot 0.0.3 用 np.Inf（NumPy 2 已移除，包内仅 _usot.py 一处）→ 装后 sed 修补
 RUN pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
     numpy pandas scipy matplotlib h5py \
-    anndata scanpy leidenalg igraph squidpy
+    anndata scanpy leidenalg igraph squidpy commot \
+    && sed -i 's/np\.Inf\b/np.inf/g' \
+        /usr/local/lib/python3.12/site-packages/commot/_optimal_transport/_usot.py
 
 # 非 root 用户 + 可写目录（与 bio:cpu 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
