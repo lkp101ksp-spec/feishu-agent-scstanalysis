@@ -105,3 +105,51 @@ def test_bind_doc_accepts_alphanumeric_and_dash():
 
     service.bind(session_id="s1", owner_open_id="ou_x", doc_id="doccn_ABC-123")
     session_svc.bind_doc.assert_called_once()
+
+
+# === Phase 22：存在性探活 ===
+@pytest.fixture
+def doc_adapter_probe():
+    """doc_adapter 探活替身：spec 限定 DocAdapter 方法面。"""
+    return MagicMock(spec=["list_root_children", "resolve_wiki_token"])
+
+
+def test_bind_doc_rejects_missing_document(doc_adapter_probe):
+    """doc_adapter 探活失败（文档不存在）→ BindDocInvalidError 含 not found。
+
+    nzb/nkb 一字之差真机踩坑（P15）：绑定时发现远早于写回时。
+    """
+    session_svc = MagicMock()
+    session_svc.bind_doc.return_value = datetime(2026, 9, 2, 12, 0, 0)
+    service = BindDocService(
+        session_service=session_svc, audit_repo=MagicMock(),
+        ttl_sec=1800, doc_adapter=doc_adapter_probe)
+    doc_adapter_probe.list_root_children.side_effect = \
+        RuntimeError("1770002 not found")
+    with pytest.raises(BindDocInvalidError, match="not found"):
+        service.bind(session_id="s1", owner_open_id="ou_x",
+                     doc_id="L9AXd9xmdoZuSgx75mccKB82")
+
+
+def test_bind_doc_passes_when_document_exists(doc_adapter_probe):
+    """文档存在 → 绑定照常（探活调用过一次）。"""
+    session_svc = MagicMock()
+    session_svc.bind_doc.return_value = datetime(2026, 9, 2, 12, 0, 0)
+    service = BindDocService(
+        session_service=session_svc, audit_repo=MagicMock(),
+        ttl_sec=1800, doc_adapter=doc_adapter_probe)
+    expires = service.bind(session_id="s1", owner_open_id="ou_x",
+                           doc_id="L9AXd9xmdoZuSgx75mccKB82")
+    assert expires is not None
+    assert doc_adapter_probe.list_root_children.call_count == 1
+
+
+def test_bind_doc_skips_probe_without_adapter():
+    """doc_adapter 未配置（纯单测环境）→ 跳过探活保持现状。"""
+    session_svc = MagicMock()
+    session_svc.bind_doc.return_value = datetime(2026, 9, 2, 12, 0, 0)
+    service = BindDocService(
+        session_service=session_svc, audit_repo=MagicMock(), ttl_sec=1800)
+    expires = service.bind(session_id="s1", owner_open_id="ou_x",
+                           doc_id="L9AXd9xmdoZuSgx75mccKB82")
+    assert expires is not None

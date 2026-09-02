@@ -59,6 +59,16 @@ class BindDocService:
         if not doc_id or not _DOC_ID_RE.match(doc_id):
             raise BindDocInvalidError(f"invalid doc_id: {doc_id!r}")
 
+        # 存在性探活（Phase 22）：doc_adapter 可用即校验——绑定时发现
+        # 远早于写回时（P15 真机 nzb/nkb 一字之差 1770002 踩坑）
+        if self.doc_adapter is not None:
+            try:
+                self.doc_adapter.list_root_children(doc_id)
+            except Exception as e:
+                raise BindDocInvalidError(
+                    f"document not found: {doc_id}"
+                    "（请检查 doc_id 或链接是否正确）") from e
+
         expires_at = self.session_service.bind_doc(
             session_id=session_id, doc_id=doc_id, ttl_sec=self.ttl_sec,
             anchor=anchor,
