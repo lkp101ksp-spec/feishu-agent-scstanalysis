@@ -111,17 +111,41 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase20-scrna-an
 
 ### 后续扩展（优先级降序）
 
-- [ ] 空间转录组 st_* 工具链（复用 bio 容器架构 + squidpy）
+- [x] 空间转录组 st_* 工具链（Phase 21 完成，见下节）
 - [ ] bio_workspace 磁盘治理（dataset_ref LRU / 按任务保留期清理）
 - [ ] GPU 镜像 bio:gpu-latest（rapids-singlecell，大规模数据）
 
 ---
 
+## Phase 21：空间转录组分析 — 已实施，真机三批验收通过（2026-09-02）
+
+spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase21-spatial-transcriptomics-design.md`
+
+三批共 21 任务（Subagent-Driven 执行）：
+
+- 批①：st.Dockerfile（squidpy 栈）+ st_tools 5 脚本（load/qc/process/markers/plot）+ st_* 5 工具注册，真机一批验收
+- 批②：st_domains（banksy-lite 空间域）+ st_commot（配体受体通讯，COMMOT 0.0.3）+ raw 快照，真机 n1-n6 全 success（ARI=1.0、恰好检出造入的 3 对 LR）
+- 批③：st_deconvolve（cell2location 0.1.5 反卷积，双参考来源 + 独立超时 3600s）+ tiny scrna 参考，真机 n1-n7 全 success（含场景 A 串联 + 文档写回）
+- 累计 13 个 bio 工具（sc_* 5 + st_* 8）；全量回归 803 passed
+
+---
+
+## Phase 22：运维加固轮 — 已实施（2026-09-02）
+
+spec：`docs/superpowers/specs/2026-09-02-feishu-research-agent-phase22-ops-hardening-design.md`
+
+- [x] ws_client pidfile 单实例守卫（OpenProcess 探活 / stale 接管 / --force 杀旧，真机验证拒绝+接管通过）
+- [x] bind-doc 存在性探活（绑定时 list_root_children，远早于写回时发现）
+- [x] FastAPI `on_event` → lifespan + ToolSpec ConfigDict 迁移（弃用警告 8→3）+ sc_qc/st_qc 小数据 min_genes 调参指导
+- [x] st 镜像 torch 固定 2.14.0+cpu（SJTUG 镜像；7.17GB→3.19GB），冒烟 8 步 PASS（deconvolve 309s）
+
+---
+
 ## 持续项（随手做，不占 Phase）
 
-- [ ] bind-doc 存在性校验：bind() 时调 docx get 验证 doc_id 真实存在（2026-09-01 nzb/nkb 一字之差踩坑）
-- [ ] 双 ws_client 防复发：启动时 pidfile + 存量连接互斥（两次真机轮均出现双实例）
-- [ ] FastAPI `on_event` → lifespan 迁移（剩余 8 条弃用警告，下次动 gateway/app.py 时顺手带上）
+- [x] bind-doc 存在性校验（Phase 22 完成：bind() 时 list_root_children 探活，2026-09-01 nzb/nkb 一字之差踩坑闭环）
+- [x] 双 ws_client 防复发（Phase 22 完成：pidfile + OpenProcess 探活互斥；另查明历史"双实例"部分为 venv shim 父子进程对，非真双连接）
+- [x] FastAPI `on_event` → lifespan 迁移（Phase 22 完成，警告 8→3）
 - [ ] 模板/评论命令 IM 路由 vs REST API 集成验证（需人工参与）
 - [ ] 幂等重传手动测试（飞书事件重发，需人工触发）
 - [ ] fasta 长度回填使每次检索多一次 efetch 调用——如做批量检索再评估合并请求
@@ -144,3 +168,4 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase20-scrna-an
 | 2026-09-01 | 初版：由 17 份 spec 待办汇总生成，Phase 15-20 + 持续项 + 远期池 |
 | 2026-09-01 | Phase 15-19 批量实施完成（真机验收统一推迟）：P16 部分完成（网络白名单/产物回收未做），P17=10c32dc，P18=ef97168，P19 裁剪版=5914b65（ES/merge 砍掉） |
 | 2026-09-01 | Phase 20 方向调整 + 实施：BLAST+/AlphaFold → 单细胞转录组（fc9a7d8），真机验收通过；P17/P18/P19 真机验收通过，P15 单聊通过（群聊 2 场景顺延）；write_doc 工具路径修复（append_blocks→render_blocks + parse_blocks）+ 审批卡终态幂等双保险 |
+| 2026-09-02 | Phase 21 空间转录组三批收官（批① st_* 5 工具 / 批② domains+commot / 批③ deconvolve，真机三批验收）+ Phase 22 运维加固轮（pidfile 单实例守卫 / bind-doc 探活 / lifespan+ConfigDict / qc 调参指导 / st 镜像瘦身 7.17GB→3.19GB） |
