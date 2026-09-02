@@ -307,3 +307,19 @@ def test_run_touches_last_access(tmp_path, monkeypatch):
     monkeypatch.setattr(sp, "run", lambda *a, **k: _P())
     runner.run("qc", {"dataset_id": "abcdef123456"})
     assert (d / ".last_access").exists()
+
+
+# === Phase 25：--gpus 透传 ===
+
+def test_run_gpus_adds_flag(runner, fake_docker_ok):
+    """gpus=True → docker cmd 的 --rm 后紧跟 --gpus all。"""
+    runner.run("process", {"dataset_id": "abcdef123456"}, gpus=True)
+    cmd = fake_docker_ok.cmd
+    rm_idx = cmd.index("--rm")
+    assert cmd[rm_idx + 1: rm_idx + 3] == ["--gpus", "all"]
+
+
+def test_run_default_no_gpus(runner, fake_docker_ok):
+    """默认 gpus=False → cmd 不含 --gpus。"""
+    runner.run("qc", {"dataset_id": "abcdef123456"})
+    assert "--gpus" not in fake_docker_ok.cmd
