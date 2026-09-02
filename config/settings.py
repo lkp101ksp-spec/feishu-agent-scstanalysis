@@ -96,6 +96,9 @@ class Settings:
     bio_image: str = "feishu-research-agent/bio:cpu-latest"
     # Phase 21: st 空间转录组镜像（run 时覆盖 image + script_dir=/opt/st_tools）
     bio_st_image: str = "feishu-research-agent/bio:st-cpu-latest"
+    # === Phase 25：GPU 加速（bio:gpu-latest，需宿主 N 卡 + docker --gpus） ===
+    bio_use_gpu: bool = False       # env BIO_USE_GPU；True 时 sc_process/sc_markers 走 GPU 镜像
+    bio_gpu_image: str = "feishu-research-agent/bio:gpu-latest"  # env BIO_GPU_IMAGE
     # dataset workspace 根目录（h5ad 中间产物/图落此处，主机路径）
     bio_workspace_root: str = "./bio_workspace"
     # 数据白名单根目录（逗号分隔；sc_load 的 path 必须位于其一之内）
@@ -210,6 +213,11 @@ def load_settings() -> Settings:
             "BIO_IMAGE", "feishu-research-agent/bio:cpu-latest"),
         bio_st_image=os.environ.get(
             "BIO_ST_IMAGE", "feishu-research-agent/bio:st-cpu-latest"),
+        # Phase 25：GPU 加速开关（BIO_USE_GPU=1/true 开启，默认关）
+        bio_use_gpu=os.environ.get(
+            "BIO_USE_GPU", "0").lower() in ("1", "true", "yes"),
+        bio_gpu_image=os.environ.get(
+            "BIO_GPU_IMAGE", "feishu-research-agent/bio:gpu-latest"),
         bio_workspace_root=os.environ.get(
             "BIO_WORKSPACE_ROOT", "./bio_workspace"),
         bio_data_roots=os.environ.get("BIO_DATA_ROOTS", ""),

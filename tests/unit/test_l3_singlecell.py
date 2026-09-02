@@ -90,3 +90,54 @@ def test_sc_plot_schema_limits_genes(tmp_path):
     assert props["genes"]["maxItems"] == 6
     assert set(reg.get("sc_plot").parameters["required"]) == {
         "dataset_ref", "genes"}
+
+
+# === Phase 25：GPU 镜像分流 ===
+
+def _gpu_registry(tmp_path, bio_use_gpu):
+    """带 GPU 开关的注册 fixture（本区用例专用）。"""
+    runner = SimpleNamespace(
+        run=MagicMock(return_value={
+            "ok": True, "dataset_ref": "abc123", "n_cells": 100}),
+        resolve_data_path=MagicMock(),
+    )
+    reg = ToolRegistry()
+    register_l3_singlecell(reg, runner, bio_use_gpu=bio_use_gpu,
+                           bio_gpu_image="bio:gpu-test")
+    return reg, runner
+
+
+def test_sc_process_uses_gpu_image_when_enabled(tmp_path):
+    """bio_use_gpu=True → sc_process 以 GPU 镜像 + gpus=True 调 BioRunner。"""
+    reg, runner = _gpu_registry(tmp_path, bio_use_gpu=True)
+    reg.get("sc_process").handler(dataset_ref="abc123")
+    kw = runner.run.call_args.kwargs
+    assert kw["image"] == "bio:gpu-test"
+    assert kw["gpus"] is True
+
+
+def test_sc_markers_uses_gpu_image_when_enabled(tmp_path):
+    """bio_use_gpu=True → sc_markers 同样走 GPU 镜像。"""
+    reg, runner = _gpu_registry(tmp_path, bio_use_gpu=True)
+    reg.get("sc_markers").handler(dataset_ref="abc123")
+    kw = runner.run.call_args.kwargs
+    assert kw["image"] == "bio:gpu-test"
+    assert kw["gpus"] is True
+
+
+def test_sc_process_default_cpu_when_disabled(tmp_path):
+    """bio_use_gpu=False（默认）→ image=None（用 runner 默认）+ gpus=False。"""
+    reg, runner = _gpu_registry(tmp_path, bio_use_gpu=False)
+    reg.get("sc_process").handler(dataset_ref="abc123")
+    kw = runner.run.call_args.kwargs
+    assert kw["image"] is None
+    assert kw["gpus"] is False
+
+
+def test_sc_qc_never_uses_gpu(tmp_path):
+    """sc_qc 不受 GPU 开关影响（I/O 型步骤无 GPU 收益）。"""
+    reg, runner = _gpu_registry(tmp_path, bio_use_gpu=True)
+    reg.get("sc_qc").handler(dataset_ref="abc123")
+    kw = runner.run.call_args.kwargs
+    assert kw.get("image") is None
+    assert kw.get("gpus") is False

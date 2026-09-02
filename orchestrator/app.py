@@ -126,7 +126,11 @@ class Orchestrator:
                     cpus=settings.bio_cpus,
                     memory=settings.bio_memory,
                 )
-                register_l3_singlecell(self.registry, bio_runner)
+                register_l3_singlecell(
+                    self.registry, bio_runner,
+                    bio_use_gpu=settings.bio_use_gpu,
+                    bio_gpu_image=settings.bio_gpu_image,
+                )
                 # === Phase 21: 空间转录组 st_* 工具（st 镜像 + /opt/st_tools） ===
                 from orchestrator.tools.builtin.l3_spatial import (
                     register_l3_spatial,

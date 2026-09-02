@@ -19,8 +19,24 @@ def _err(exc: BioRunError) -> dict:
     return {"error_code": exc.error_code, "error_message": str(exc)}
 
 
-def register_l3_singlecell(registry: ToolRegistry, runner: BioRunner) -> None:
-    """注册 sc_* 5 工具（runner 由 runtime 装配后传入）。"""
+def register_l3_singlecell(
+    registry: ToolRegistry,
+    runner: BioRunner,
+    *,
+    bio_use_gpu: bool = False,
+    bio_gpu_image: str = "feishu-research-agent/bio:gpu-latest",
+) -> None:
+    """注册 sc_* 5 工具（runner 由 runtime 装配后传入）。
+
+    bio_use_gpu=True 时 sc_process/sc_markers 切 GPU 镜像 + --gpus all
+    （Phase 25，spec 2026-09-02-bio-gpu-image-design §1.5）。
+    """
+
+    def _accel() -> tuple[str | None, bool]:
+        """GPU 开关分流：开→(gpu_image, True)；关→(None=runner 默认镜像, False)。"""
+        if bio_use_gpu:
+            return bio_gpu_image, True
+        return None, False
 
     def sc_load(*, path: str, format: str = "auto") -> dict:  # noqa: A002
         """读入本地单细胞数据 → dataset_ref + 概要统计。"""
@@ -45,7 +61,7 @@ def register_l3_singlecell(registry: ToolRegistry, runner: BioRunner) -> None:
                 "dataset_id": dataset_ref,
                 "min_genes": min_genes, "min_cells": min_cells,
                 "max_mt_pct": max_mt_pct,
-            })
+            }, image=None, gpus=False)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -55,12 +71,13 @@ def register_l3_singlecell(registry: ToolRegistry, runner: BioRunner) -> None:
                    n_pcs: int = 50, n_neighbors: int = 15,
                    resolution: float = 1.0) -> dict:
         """标准流程（归一化→HVG→PCA→UMAP→Leiden）→ processed.h5ad + umap.png。"""
+        image, gpus = _accel()
         try:
             out = runner.run("process", {
                 "dataset_id": dataset_ref,
                 "n_top_hvg": n_top_hvg, "n_pcs": n_pcs,
                 "n_neighbors": n_neighbors, "resolution": resolution,
-            })
+            }, image=image, gpus=gpus)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -69,11 +86,12 @@ def register_l3_singlecell(registry: ToolRegistry, runner: BioRunner) -> None:
     def sc_markers(*, dataset_ref: str, method: str = "wilcoxon",
                    top_n: int = 10) -> dict:
         """每簇差异基因 → markers JSON + dotplot.png。"""
+        image, gpus = _accel()
         try:
             out = runner.run("markers", {
                 "dataset_id": dataset_ref, "method": method,
                 "top_n": top_n,
-            })
+            }, image=image, gpus=gpus)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
