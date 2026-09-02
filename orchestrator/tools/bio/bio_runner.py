@@ -59,6 +59,30 @@ def compute_dataset_id_dir(abs_dir: str) -> str:
     return digest[:12]
 
 
+def parse_gene_list(genes) -> list[str]:
+    """宽松解析 genes 参数：接受 list / repr 字符串 / 单基因名字符串。
+
+    planner 偶发把 list 参数序列化成 Python repr 串（"['A', 'B']"，
+    Phase 21 真机发现，与 write_doc blocks 同源问题）——literal_eval 还原；
+    纯字符串视为单基因名包装为 list；其他类型原样返回由 schema 校验兜底。
+    """
+    import ast
+
+    if genes is None:
+        return []
+    if isinstance(genes, list):
+        return genes
+    if isinstance(genes, str):
+        try:
+            v = ast.literal_eval(genes)
+            if isinstance(v, list):
+                return [str(x) for x in v]
+        except (ValueError, SyntaxError):
+            pass
+        return [genes] if genes.strip() else []
+    return genes
+
+
 class BioRunner:
     """短命 bio 容器执行（同步阻塞在工具 handler 内，与 BLAST 同模式）。"""
 
@@ -131,6 +155,22 @@ class BioRunner:
                 "SC_TIMEOUT", f"bio script {script} exceeded {timeout}s"
             ) from None
         if proc.returncode != 0:
+            # 脚本 fail() 的输出模式是 stdout JSON + exit 1——先尝试解析
+            # stdout 的脚本级错误（透传 error_code），失败才归为执行崩溃
+            # （Phase 21 真机发现：此前 fail() 错误被吞成空 message）
+            try:
+                out = json.loads(proc.stdout)
+            except (json.JSONDecodeError, TypeError):
+                out = None
+            if isinstance(out, dict) and out.get("ok") is False \
+                    and out.get("error_code"):
+                logger.warning(
+                    "bio script %s failed rc=%s: %s %s",
+                    script, proc.returncode,
+                    out.get("error_code"), out.get("error_message", ""))
+                raise BioRunError(
+                    str(out.get("error_code")),
+                    str(out.get("error_message", "unknown script error")))
             stderr_tail = (proc.stderr or "").strip()[-500:]
             logger.warning("bio script %s failed rc=%s: %s",
                            script, proc.returncode, stderr_tail)

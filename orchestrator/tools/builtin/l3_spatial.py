@@ -9,6 +9,7 @@ from orchestrator.tools.bio.bio_runner import (
     BioRunner,
     BioRunError,
     compute_dataset_id_dir,
+    parse_gene_list,
 )
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
@@ -90,7 +91,7 @@ def register_l3_spatial(
             out = runner.run(
                 "plot", {
                     "dataset_id": dataset_ref,
-                    "genes": genes or [], "color_by": color_by,
+                    "genes": parse_gene_list(genes), "color_by": color_by,
                 }, image=st_image, script_dir=_ST_SCRIPT_DIR)
         except BioRunError as e:
             return _err(e)

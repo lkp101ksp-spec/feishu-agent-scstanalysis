@@ -89,3 +89,18 @@ def test_st_plot_genes_max_six(reg):
     spec = reg.get("st_plot")
     genes_prop = spec.parameters["properties"]["genes"]
     assert genes_prop["maxItems"] == 6
+
+
+def test_st_plot_genes_repr_string_parsed(runner, reg):
+    """planner 把 genes 序列化成 repr 串时宽松解析（真机发现）。"""
+    reg.get("st_plot").handler(dataset_ref="abc123",
+                               genes="['MARKER_D1_0', 'MARKER_D2_1']")
+    args, _ = runner.run.call_args
+    assert args[1]["genes"] == ["MARKER_D1_0", "MARKER_D2_1"]
+
+
+def test_st_plot_genes_plain_string_wraps_list(runner, reg):
+    """纯字符串基因名包装为单元素 list（宽容单基因场景）。"""
+    reg.get("st_plot").handler(dataset_ref="abc123", genes="MARKER_D1_0")
+    args, _ = runner.run.call_args
+    assert args[1]["genes"] == ["MARKER_D1_0"]

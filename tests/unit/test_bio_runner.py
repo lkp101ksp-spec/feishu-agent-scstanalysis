@@ -133,6 +133,21 @@ def test_run_nonzero_exit(monkeypatch, roots, tmp_path):
     assert ei.value.error_code == "SC_SCRIPT_FAILED"
 
 
+def test_run_script_fail_json_passthrough_on_rc1(monkeypatch, roots, tmp_path):
+    """脚本 fail() JSON + exit 1：透传 error_code（Phase 21 真机发现）。"""
+    _fake_proc(
+        monkeypatch, rc=1,
+        stdout=json.dumps({"ok": False,
+                           "error_code": "ST_GENES_NOT_FOUND",
+                           "error_message": "none of genes found"}),
+        stderr="some warning lines")
+    r = _runner(roots, tmp_path)
+    with pytest.raises(BioRunError) as ei:
+        r.run("plot", {})
+    assert ei.value.error_code == "ST_GENES_NOT_FOUND"
+    assert "none of genes" in str(ei.value)
+
+
 def test_run_timeout(monkeypatch, roots, tmp_path):
     def _raise(*a, **k):
         raise subprocess.TimeoutExpired(cmd="docker", timeout=5)

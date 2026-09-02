@@ -9,6 +9,7 @@ from orchestrator.tools.bio.bio_runner import (
     BioRunner,
     BioRunError,
     compute_dataset_id,
+    parse_gene_list,
 )
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
@@ -83,7 +84,8 @@ def register_l3_singlecell(registry: ToolRegistry, runner: BioRunner) -> None:
         """指定基因画图（violin/umap_gene）→ png 路径列表。"""
         try:
             out = runner.run("plot", {
-                "dataset_id": dataset_ref, "genes": genes, "kind": kind,
+                "dataset_id": dataset_ref,
+                "genes": parse_gene_list(genes), "kind": kind,
             })
         except BioRunError as e:
             return _err(e)
