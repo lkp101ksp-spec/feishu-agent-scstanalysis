@@ -124,7 +124,9 @@ class Planner:
             f"可用工具：{tool_names}\n\n"
             f"工具契约（inputs 键必须严格取自对应工具的 parameters.properties，"
             f"不得发明字段）：\n{json.dumps(tools_schema, ensure_ascii=False)}\n\n"
-            "输出格式（严格遵循，只输出一个 JSON 对象，不要 markdown 围栏）：\n"
+            "输出格式（严格遵循，只输出一个 JSON 对象，不要 markdown 围栏；\n"
+            "inputs 中数组/对象类型参数必须输出真 JSON 数组/对象，"
+            "不要用字符串包裹的 Python repr）：\n"
             '{"nodes": [{"node_id": "n1", "kind": "tool", '
             '"tool_name": "<工具名>", "inputs": {…}, "depends_on": []}, …],\n'
             ' "entry_node_ids": ["n1"]}\n'

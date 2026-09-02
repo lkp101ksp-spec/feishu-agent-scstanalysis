@@ -152,6 +152,16 @@ spec：`docs/superpowers/specs/2026-09-02-bio-workspace-gc-design.md`
 
 ---
 
+## Phase 24：planner repr 串执行层纠正 — 已实施（2026-09-02）
+
+spec：`docs/superpowers/specs/2026-09-02-planner-repr-coercion-design.md`
+
+- [x] param_coerce 纯函数（array/object 声明 + str 值 → JSON/repr 双段还原，类型不匹配保留）
+- [x] ToolHandler.execute() 集成 + warning 日志（`param coerced from repr-string`，复发率观测点）
+- [x] planner prompt 源头减量指引（数组/对象参数必须输出真 JSON）
+
+---
+
 ## 持续项（随手做，不占 Phase）
 
 - [x] bind-doc 存在性校验（Phase 22 完成：bind() 时 list_root_children 探活，2026-09-01 nzb/nkb 一字之差踩坑闭环）
@@ -181,3 +191,4 @@ spec：`docs/superpowers/specs/2026-09-02-bio-workspace-gc-design.md`
 | 2026-09-01 | Phase 20 方向调整 + 实施：BLAST+/AlphaFold → 单细胞转录组（fc9a7d8），真机验收通过；P17/P18/P19 真机验收通过，P15 单聊通过（群聊 2 场景顺延）；write_doc 工具路径修复（append_blocks→render_blocks + parse_blocks）+ 审批卡终态幂等双保险 |
 | 2026-09-02 | Phase 21 空间转录组三批收官（批① st_* 5 工具 / 批② domains+commot / 批③ deconvolve，真机三批验收）+ Phase 22 运维加固轮（pidfile 单实例守卫 / bind-doc 探活 / lifespan+ConfigDict / qc 调参指导 / st 镜像瘦身 7.17GB→3.19GB） |
 | 2026-09-02 | Phase 23 bio_workspace 磁盘治理（TTL 7d + LRU 10GB + 宽限期 2h 周期清理；.last_access 打点防误删；sweeper 线程；真机验证通过） |
+| 2026-09-02 | Phase 24 planner repr 串长期方案：执行层 schema 驱动纠正（param_coerce + execute 集成 + warning 日志）+ prompt 源头减量 |
