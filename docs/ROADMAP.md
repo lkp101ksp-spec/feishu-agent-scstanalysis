@@ -187,7 +187,7 @@ spec：`docs/superpowers/specs/2026-09-02-planner-repr-coercion-design.md`
 | 日期 | 变更 |
 |---|---|
 | 2026-09-01 | 初版：由 17 份 spec 待办汇总生成，Phase 15-20 + 持续项 + 远期池 |
-| 2026-09-01 | Phase 15-19 批量实施完成（真机验收统一推迟）：P16 部分完成（网络白名单/产物回收未做），P17=10c32dc，P18=ef97168，P19 裁剪版=5914b65（ES/merge 砍掉） |
+| 2026-09-01 | Phase 15-19 批量实施完成（真机验收统一推迟）：P16 安全加固实施（网络白名单/产物回收经 spec §1 评估**决策不做**——沙箱默认断网 docker_network_mode=none + workspace 为容器内 tmpfs 随容器销毁，已是最严姿态，非欠债），P17=10c32dc，P18=ef97168，P19 裁剪版=5914b65（ES/merge 砍掉） |
 | 2026-09-01 | Phase 20 方向调整 + 实施：BLAST+/AlphaFold → 单细胞转录组（fc9a7d8），真机验收通过；P17/P18/P19 真机验收通过，P15 单聊通过（群聊 2 场景顺延）；write_doc 工具路径修复（append_blocks→render_blocks + parse_blocks）+ 审批卡终态幂等双保险 |
 | 2026-09-02 | Phase 21 空间转录组三批收官（批① st_* 5 工具 / 批② domains+commot / 批③ deconvolve，真机三批验收）+ Phase 22 运维加固轮（pidfile 单实例守卫 / bind-doc 探活 / lifespan+ConfigDict / qc 调参指导 / st 镜像瘦身 7.17GB→3.19GB） |
 | 2026-09-02 | Phase 23 bio_workspace 磁盘治理（TTL 7d + LRU 10GB + 宽限期 2h 周期清理；.last_access 打点防误删；sweeper 线程；真机验证通过） |
