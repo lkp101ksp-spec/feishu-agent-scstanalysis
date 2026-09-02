@@ -24,8 +24,13 @@ def _err(exc: BioRunError) -> dict:
 def register_l3_spatial(
     registry: ToolRegistry, runner: BioRunner,
     *, st_image: str = "feishu-research-agent/bio:st-cpu-latest",
+    st_deconvolve_timeout: int = 3600,
 ) -> None:
-    """注册 st_* 7 工具（runner 由 runtime 装配后传入）。"""
+    """注册 st_* 8 工具（runner 由 runtime 装配后传入）。
+
+    st_deconvolve_timeout：cell2location 反卷积独立超时（训练耗时，
+    由 settings.st_deconvolve_timeout_sec 注入覆盖）。
+    """
 
     def st_load(*, path: str) -> dict:
         """读入空间转录组数据（visium/h5ad/mtx+coords）→ dataset_ref + 概要。"""
@@ -121,6 +126,41 @@ def register_l3_spatial(
                     "dataset_id": dataset_ref, "species": species,
                     "dis_thr": dis_thr,
                 }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_deconvolve(*, dataset_ref: str, sc_ref: str,
+                      max_epochs: int = 30000,
+                      n_cells_per_location: float = 8.0,
+                      detection_alpha: float = 20.0,
+                      ref_label_col: str = "",
+                      deconv_timeout: int = st_deconvolve_timeout) -> dict:
+        """cell2location 反卷积：sc_ref 为 sc 产物 dataset_ref（12hex）或
+        白名单内参考 h5ad 路径。"""
+        import re as _re
+        try:
+            if _re.fullmatch(r"[0-9a-f]{12}", sc_ref):
+                args = {"dataset_id": dataset_ref,
+                        "sc_ref_dataset": sc_ref,
+                        "ref_label_col": ref_label_col,
+                        "max_epochs": max_epochs,
+                        "n_cells_per_location": n_cells_per_location,
+                        "detection_alpha": detection_alpha}
+                mounts = None
+            else:
+                mount_root, rel, _ = runner.resolve_data_path(sc_ref)
+                args = {"dataset_id": dataset_ref,
+                        "sc_ref_path": rel,
+                        "ref_label_col": ref_label_col,
+                        "max_epochs": max_epochs,
+                        "n_cells_per_location": n_cells_per_location,
+                        "detection_alpha": detection_alpha}
+                mounts = [(mount_root, "/data")]
+            out = runner.run("deconvolve", args, mounts=mounts,
+                             image=st_image, script_dir=_ST_SCRIPT_DIR,
+                             timeout_sec=deconv_timeout)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -273,4 +313,36 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_commot,
         timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="st_deconvolve",
+        description=(
+            "cell2location 细胞类型反卷积：估算每个 spot 的各细胞类型丰度，"
+            "输出 n_cell_types、cell_types、mean_abundance 与各细胞类型空间"
+            "分布图。sc_ref 双来源——同任务 sc_process 输出的 dataset_ref"
+            "（12 位十六进制，复用其 leiden 注释），或白名单内参考 h5ad 路径"
+            "（注释列可用 ref_label_col 指定，留空自动探测 cell_type/leiden/"
+            "cluster 等）。需先跑 st_qc/st_process；参考为 workspace 数据集时"
+            "需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_load 输出的 dataset_ref"},
+                "sc_ref": {"type": "string",
+                           "description": "sc 参考数据集 id（12 位 hex，"
+                                          "sc_process 输出）或白名单内 h5ad 路径"},
+                "max_epochs": {"type": "integer", "default": 30000},
+                "n_cells_per_location": {"type": "number", "default": 8},
+                "detection_alpha": {"type": "number", "default": 20},
+                "ref_label_col": {"type": "string", "default": "",
+                                  "description": "参考 h5ad 的细胞类型注释列"
+                                                 "（留空自动探测）"},
+            },
+            "required": ["dataset_ref", "sc_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_deconvolve,
+        timeout_sec=st_deconvolve_timeout,
     ))

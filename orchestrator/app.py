@@ -133,7 +133,8 @@ class Orchestrator:
                 )
                 register_l3_spatial(
                     self.registry, bio_runner,
-                    st_image=settings.bio_st_image)
+                    st_image=settings.bio_st_image,
+                    st_deconvolve_timeout=settings.st_deconvolve_timeout_sec)
                 logger.info(
                     "Phase 21 st_* tools registered: image=%s",
                     settings.bio_st_image,

@@ -103,6 +103,8 @@ class Settings:
     # bio 脚本容器超时（秒）；plan 含 sc_* 时 research wall-clock 放大到 research_sc_timeout_sec
     bio_script_timeout_sec: int = 900
     research_sc_timeout_sec: int = 3600
+    # Phase 21 批③：st_deconvolve 独立超时（秒）——cell2location 双模型训练耗时
+    st_deconvolve_timeout_sec: int = 3600
     # bio 容器资源限额（docker --cpus/--memory）
     bio_cpus: str = "4"
     bio_memory: str = "16g"
@@ -204,6 +206,9 @@ def load_settings() -> Settings:
             os.environ.get("BIO_SCRIPT_TIMEOUT_SEC", "900")),
         research_sc_timeout_sec=int(
             os.environ.get("RESEARCH_SC_TIMEOUT_SEC", "3600")),
+        # Phase 21 批③：st_deconvolve 独立超时（BIO_ST_DECONVOLVE_TIMEOUT 覆盖）
+        st_deconvolve_timeout_sec=int(
+            os.environ.get("BIO_ST_DECONVOLVE_TIMEOUT", "3600")),
         bio_cpus=os.environ.get("BIO_CPUS", "4"),
         bio_memory=os.environ.get("BIO_MEMORY", "16g"),
     )
