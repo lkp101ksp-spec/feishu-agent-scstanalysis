@@ -36,6 +36,22 @@ def main() -> None:
         rows = domains == d
         X[np.ix_(rows, np.arange(n_marker * 3)[cols])] += \
             rng.poisson(8.0, (rows.sum(), n_marker)).astype(np.float32)
+    # 3 对 CellChat human LR 基因（批② COMMOT 用；环形方向性通讯：
+    # 配体高表达域 → 受体高表达域：D1→D2、D2→D3、D3→D1）
+    lr_pairs = [("CXCL12", 0, "CXCR4", 1),
+                ("VEGFA", 1, "KDR", 2),
+                ("CSF1", 2, "CSF1R", 0)]
+    lr_cols = []  # (lr_mat 内列号, 高表达域)——列号与 genes 追加顺序一致
+    for lig, ld, rec, rd in lr_pairs:
+        lr_cols.append((len(lr_cols), ld))
+        genes.append(lig)
+        lr_cols.append((len(lr_cols), rd))
+        genes.append(rec)
+    lr_mat = rng.poisson(0.3, (len(spots), len(lr_pairs) * 2)).astype(np.float32)
+    for col, dom in lr_cols:
+        lr_mat[domains == dom, col] += rng.poisson(
+            6.0, int((domains == dom).sum())).astype(np.float32)
+    X = np.hstack([X, lr_mat])
     # 4 个 MT 基因（QC 用）
     genes += [f"MT-{i}" for i in range(1, 5)]
     mt = rng.poisson(1.0, (len(spots), 4)).astype(np.float32)
