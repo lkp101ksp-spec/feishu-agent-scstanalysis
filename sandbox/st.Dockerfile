@@ -12,6 +12,22 @@ RUN pip install --no-cache-dir \
     && sed -i 's/np\.Inf\b/np.inf/g' \
         /usr/local/lib/python3.12/site-packages/commot/_optimal_transport/_usot.py
 
+# 批③：torch CPU wheel（清华 pytorch-wheels find-links 优先取 +cpu 版，无匹配自动回退普通 torch）
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    -f https://mirrors.tuna.tsinghua.edu.cn/pytorch-wheels/cpu/ \
+    torch --prefer-binary \
+    || pip install --no-cache-dir \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple torch
+
+# 批③：cell2location（scvi-tools/pyro 栈）；numpy2 已移除 np.Inf，包内引用用
+# find 递归 sed 修补（sh 无 globstar，** glob 不可靠），python import 验证兜底
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple cell2location \
+    && find /usr/local/lib/python3.12/site-packages/cell2location -name '*.py' \
+        -exec sed -i 's/np\.Inf\b/np.inf/g' {} +; \
+    python -c "import cell2location; print('cell2location', cell2location.__version__)"
+
 # 非 root 用户 + 可写目录（与 bio:cpu 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
