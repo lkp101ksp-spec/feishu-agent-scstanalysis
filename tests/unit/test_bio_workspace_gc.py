@@ -108,3 +108,26 @@ def test_delete_failure_continues(tmp_path, monkeypatch):
     assert bad.exists()
     assert not good.exists()
     assert r["ttl_deleted"] == ["111111111111"]
+
+
+def test_gc_settings_fields_exist():
+    """Phase 23 五个配置字段存在且默认值符合 spec §3。"""
+    from config.settings import Settings
+    fields = Settings.__dataclass_fields__
+    assert fields["bio_workspace_ttl_sec"].default == 604800
+    assert fields["bio_workspace_cap_gb"].default == 10
+    assert fields["bio_workspace_grace_sec"].default == 7200
+    assert fields["bio_workspace_gc_interval_sec"].default == 3600
+    assert fields["bio_workspace_gc_enabled"].default is True
+
+
+def test_gc_settings_env_override(monkeypatch):
+    """env 覆盖生效（BIO_WORKSPACE_GC_ENABLED=false 语义关闭）。"""
+    from config.settings import load_settings
+    monkeypatch.setenv("BIO_WORKSPACE_TTL_SEC", "3600")
+    monkeypatch.setenv("BIO_WORKSPACE_CAP_GB", "5")
+    monkeypatch.setenv("BIO_WORKSPACE_GC_ENABLED", "false")
+    s = load_settings()
+    assert s.bio_workspace_ttl_sec == 3600
+    assert s.bio_workspace_cap_gb == 5
+    assert s.bio_workspace_gc_enabled is False

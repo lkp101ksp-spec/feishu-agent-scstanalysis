@@ -108,6 +108,17 @@ class Settings:
     # bio 容器资源限额（docker --cpus/--memory）
     bio_cpus: str = "4"
     bio_memory: str = "16g"
+    # === Phase 23: bio_workspace 磁盘治理（TTL+LRU 周期清理，spec §3） ===
+    # 数据集保留期（秒，默认 7d）：last_used 早于此即整目录删除
+    bio_workspace_ttl_sec: int = 604800
+    # workspace 总量上限（GB）：TTL 后仍超则按 last_used 升序 LRU 驱逐
+    bio_workspace_cap_gb: int = 10
+    # 宽限期（秒，默认 2h）：窗口内动过的目录一律不删（活动任务保护）
+    bio_workspace_grace_sec: int = 7200
+    # GC 扫描线程间隔（秒，0 不启动线程）
+    bio_workspace_gc_interval_sec: int = 3600
+    # GC 总开关（env "false"/"0" 关闭 sweeper 线程）
+    bio_workspace_gc_enabled: bool = True
 
 
 def _load_yaml(path: str) -> dict:
@@ -211,4 +222,15 @@ def load_settings() -> Settings:
             os.environ.get("BIO_ST_DECONVOLVE_TIMEOUT", "3600")),
         bio_cpus=os.environ.get("BIO_CPUS", "4"),
         bio_memory=os.environ.get("BIO_MEMORY", "16g"),
+        # Phase 23：bio_workspace 磁盘治理
+        bio_workspace_ttl_sec=int(
+            os.environ.get("BIO_WORKSPACE_TTL_SEC", "604800")),
+        bio_workspace_cap_gb=int(
+            os.environ.get("BIO_WORKSPACE_CAP_GB", "10")),
+        bio_workspace_grace_sec=int(
+            os.environ.get("BIO_WORKSPACE_GRACE_SEC", "7200")),
+        bio_workspace_gc_interval_sec=int(
+            os.environ.get("BIO_WORKSPACE_GC_INTERVAL_SEC", "3600")),
+        bio_workspace_gc_enabled=os.environ.get(
+            "BIO_WORKSPACE_GC_ENABLED", "true").lower() not in ("false", "0"),
     )
