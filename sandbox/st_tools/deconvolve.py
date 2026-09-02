@@ -86,15 +86,18 @@ def _load_ref(args: dict):
 
 
 def _strip_mt(adata) -> None:
-    """剔除 MT- 基因并把其计数快照存 obsm["MT"]（官方建议存档）。"""
+    """剔除 MT- 基因并把其计数快照存 obsm["MT"]（官方建议存档）。
+
+    Index.str.startswith 返回 ndarray（非 Series），不可再 .values。
+    """
     import numpy as np
 
-    mt = adata.var_names.str.upper().str.startswith("MT-")
+    mt = np.asarray(adata.var_names.str.upper().str.startswith("MT-"))
     if mt.any():
-        x = adata[:, mt.values].X
+        x = adata[:, mt].X
         x = x.toarray() if hasattr(x, "toarray") else np.asarray(x)
         adata.obsm["MT"] = np.asarray(x, dtype="float32")
-    adata._inplace_subset_var(~mt.values)
+    adata._inplace_subset_var(~mt)
 
 
 def main() -> None:
@@ -127,9 +130,11 @@ def main() -> None:
     ref = ref[:, ref.var_names.isin(sp.var_names)].copy()
     _strip_mt(sp)
     _strip_mt(ref)
-    sel = filter_genes(ref, cell_count_cutoff=5, cell_percentage_cutoff2=0.03,
-                       nonz_mean_cutoff=1.12)
-    shared = ref.var_names[sel].intersection(sp.var_names)
+    # 0.1.5 实测：filter_genes 返回基因名 Index（非 bool mask，docstring
+    # "a list of selected var_names"），直接 intersection 不再套 var_names[sel]
+    keep = filter_genes(ref, cell_count_cutoff=5, cell_percentage_cutoff2=0.03,
+                        nonz_mean_cutoff=1.12)
+    shared = keep.intersection(sp.var_names)
     if len(shared) < 20:
         fail("ST_REF_INVALID",
              f"only {len(shared)} shared genes after filtering")
