@@ -80,16 +80,37 @@ def main() -> None:
         if not key.startswith("commot-cellchat-") or key.count("-") < 3:
             continue
         lr = key[len("commot-cellchat-"):]
+        if lr == "total-total":  # 总通讯量键非 LR 对，不进 top 列表
+            continue
         lig, _, rec = lr.rpartition("-")
         scores.append((lig, rec, float(expr.obsp[key].sum())))
     scores.sort(key=lambda t: -t[2])
     top_lr = [{"ligand": l, "receptor": r, "score": round(s, 4)}
               for l, r, s in scores[:10]]
-    df_sender = expr.uns["commot-cellchat-sum-sender"]
-    top_path = str(df_sender.sum(axis=0).idxmax())
+    # COMMOT 0.0.3：sender/receiver 边际和存 obsm（列带 s-/r- 前缀，
+    # 含每 LR 对列 + total-total + pathway_sum=True 时的通路级列），
+    # 非旧教程示例的 uns 键（真机 KeyError: sum-sender 修正点）
+    df_sender = expr.obsm["commot-cellchat-sum-sender"]
+    df_receiver = expr.obsm["commot-cellchat-sum-receiver"]
+    # 通路级列（通路名不含 "-"）：top pathway 只在通路级里选，
+    # 避免落到 LR 对级列（communication_direction 只认通路名）
+    path_cols = [c[2:] for c in df_sender.columns
+                 if c.startswith("s-") and c != "s-total-total"
+                 and "-" not in c[2:]]
+    totals = {p: float(df_sender["s-" + p].sum()
+                       + df_receiver["r-" + p].sum()) for p in path_cols}
+    top_path = max(totals, key=totals.get) if totals else "total-total"
 
     ds_dir = WS_ROOT / args["dataset_id"]
     pngs = []
+    # COMMOT 0.0.3 + pandas 2.2 兼容：plot_cell_signaling 内
+    # ndcolor[idx]（argsort 位置数组）对 str 型 obs_names 的 Series 走
+    # .loc 严格匹配 → KeyError；sum DataFrame index 重置为 int 位置
+    # （label 恰等价位置，通用修复，不依赖 barcode 格式），
+    # 写盘前再恢复 obs_names 保持对象干净
+    for _key in ("commot-cellchat-sum-sender",
+                 "commot-cellchat-sum-receiver"):
+        expr.obsm[_key].index = np.arange(expr.n_obs)
     # top 通路方向图（sender / receiver）
     ct.tl.communication_direction(
         expr, database_name="cellchat", pathway_name=top_path, k=5)
@@ -109,11 +130,13 @@ def main() -> None:
     # domain × pathway 平均通讯强度热图（sender/receiver）
     if "spatial_domain" in expr.obs:
         grp = expr.obs["spatial_domain"].values
-        top_paths = df_sender.sum(axis=0).sort_values(
-            ascending=False).index[:12]
-        send = df_sender.groupby(grp).mean()[top_paths]
-        recv = expr.uns["commot-cellchat-sum-receiver"].groupby(
-            grp).mean()[top_paths]
+        top_paths = sorted(path_cols, key=lambda p: -totals[p])[:12]
+        send = df_sender[["s-" + p for p in top_paths]].groupby(
+            grp).mean()
+        send.columns = top_paths
+        recv = df_receiver[["r-" + p for p in top_paths]].groupby(
+            grp).mean()
+        recv.columns = top_paths
         mat = np.vstack([send.values, recv.values])
         fig, ax = plt.subplots(figsize=(1 + 0.5 * len(top_paths), 4))
         im = ax.imshow(mat, aspect="auto", cmap="viridis")
@@ -129,6 +152,9 @@ def main() -> None:
         plt.close(fig)
         pngs.append(f"/ws/{args['dataset_id']}/commot_heatmap.png")
 
+    for _key in ("commot-cellchat-sum-sender",
+                 "commot-cellchat-sum-receiver"):
+        expr.obsm[_key].index = expr.obs_names
     expr.write_h5ad(ds_dir / "commot.h5ad")
 
     emit({

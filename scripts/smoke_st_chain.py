@@ -53,17 +53,29 @@ def main() -> None:
     run_script("markers", {"dataset_id": ds, "top_n": 5}, data_mount)
     run_script("plot", {"dataset_id": ds, "genes": ["MARKER_D1_0"],
                         "color_by": "spatial_domain"}, data_mount)
+    out = run_script("domains", {"dataset_id": ds, "method": "banksy"},
+                     data_mount)
+    ari = out.get("ari_vs_leiden")
+    out = run_script("commot", {"dataset_id": ds, "species": "human",
+                                "dis_thr": 200}, data_mount)
+    top_path = out.get("top_pathway")
+    n_lr = out.get("n_lr_pairs")
 
     for name in ("raw.h5ad", "filtered.h5ad", "processed.h5ad",
                  "umap.png", "spatial_domains.png", "dotplot.png",
-                 "MARKER_D1_0_spatial.png", "spatial_domain_spatial.png"):
+                 "MARKER_D1_0_spatial.png", "spatial_domain_spatial.png",
+                 "domains.h5ad", "banksy_domains.png", "compare_leiden.png",
+                 "commot.h5ad", "commot_heatmap.png",
+                 f"commot_{top_path}_sender.png",
+                 f"commot_{top_path}_receiver.png"):
         p = WS / ds / name  # 工具约定产物落 /ws/<dataset_id>/ 子目录
         ok = p.exists() and p.stat().st_size > 0
         size = p.stat().st_size if p.exists() else 0
         print(f"{'OK' if ok else 'MISSING'} {name} ({size} B)")
         if not ok:
             sys.exit(1)
-    print(f"SMOKE PASS (n_domains={domains})")
+    print(f"SMOKE PASS (n_domains={domains}, ari={ari}, "
+          f"top_path={top_path}, n_lr={n_lr})")
 
 
 if __name__ == "__main__":
