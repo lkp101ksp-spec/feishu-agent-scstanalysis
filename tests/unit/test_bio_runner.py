@@ -3,7 +3,10 @@
 docker subprocess 全部 mock，不起真实容器。
 """
 import json
+import os
 import subprocess
+import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +15,7 @@ from orchestrator.tools.bio.bio_runner import (
     BioRunError,
     BioRunner,
     compute_dataset_id,
+    touch_last_access,
 )
 
 
@@ -242,3 +246,64 @@ def test_run_default_image_and_script_dir(runner, fake_docker_ok):
     cmd = fake_docker_ok.cmd
     assert "bio:test" in cmd  # runner fixture 默认镜像（同 _runner）
     assert "/opt/sc_tools/load.py" in cmd
+
+
+# === Phase 23：GC .last_access 打点 ===
+
+def test_touch_last_access_creates_marker(tmp_path):
+    """目录存在时创建 .last_access 打点文件。"""
+    d = tmp_path / "abcdef123456"
+    d.mkdir()
+    touch_last_access(str(tmp_path), "abcdef123456")
+    assert (d / ".last_access").exists()
+
+
+def test_touch_last_access_updates_mtime(tmp_path):
+    """已有打点文件时刷新 mtime（LRU 的"最近使用"依据）。"""
+    d = tmp_path / "abcdef123456"
+    d.mkdir()
+    marker = d / ".last_access"
+    marker.touch()
+    old = time.time() - 3600
+    os.utime(marker, (old, old))
+    touch_last_access(str(tmp_path), "abcdef123456")
+    assert marker.stat().st_mtime > old
+
+
+def test_touch_last_access_skips_invalid(tmp_path):
+    """None / 非 12hex（路径穿越防护）/ 目录不存在 → 静默跳过。"""
+    touch_last_access(str(tmp_path), None)
+    touch_last_access(str(tmp_path), "../escape")
+    touch_last_access(str(tmp_path), "0123456789ab")  # 合法 hex 但目录不存在
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_touch_last_access_failure_non_blocking(tmp_path, monkeypatch):
+    """打点 IO 异常不抛（best-effort，宁可漏打点不可挂任务）。"""
+    d = tmp_path / "abcdef123456"
+    d.mkdir()
+
+    def boom(*a, **k):
+        raise OSError("read-only fs")
+
+    monkeypatch.setattr(Path, "touch", boom)
+    touch_last_access(str(tmp_path), "abcdef123456")  # 不抛即通过
+
+
+def test_run_touches_last_access(tmp_path, monkeypatch):
+    """run() 开头对 args.dataset_id 对应目录打点（docker 调用 mock 掉）。"""
+    import subprocess as sp
+
+    ws = tmp_path / "ws"
+    d = ws / "abcdef123456"
+    d.mkdir(parents=True)
+    runner = BioRunner(image="img", workspace_root=str(ws), data_roots=[])
+
+    class _P:
+        returncode = 0
+        stdout = '{"ok": true}'
+        stderr = ""
+
+    monkeypatch.setattr(sp, "run", lambda *a, **k: _P())
+    runner.run("qc", {"dataset_id": "abcdef123456"})
+    assert (d / ".last_access").exists()

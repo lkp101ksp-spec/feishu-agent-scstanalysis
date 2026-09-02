@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -83,6 +84,23 @@ def parse_gene_list(genes) -> list[str]:
     return genes
 
 
+def touch_last_access(workspace_root: str, dataset_id) -> None:
+    """Phase 23：GC 打点——更新 <workspace_root>/<dataset_id>/.last_access。
+
+    best-effort：dataset_id 为空或非 12hex（dataset_ref 来自 LLM/planner，
+    正则校验挡路径穿越）、目录不存在（load 首跑目录由容器内脚本新建）、
+    IO 异常均仅 warning/静默，绝不阻断任务。
+    """
+    if not dataset_id or not re.fullmatch(r"[0-9a-f]{12}", str(dataset_id)):
+        return
+    try:
+        d = Path(workspace_root) / str(dataset_id)
+        if d.is_dir():
+            (d / ".last_access").touch()
+    except OSError as e:
+        logger.warning("gc touch failed for %s: %s", dataset_id, e)
+
+
 class BioRunner:
     """短命 bio 容器执行（同步阻塞在工具 handler 内，与 BLAST 同模式）。"""
 
@@ -138,6 +156,8 @@ class BioRunner:
         工具传 image=st 镜像 + script_dir=/opt/st_tools（Phase 21 spec §3）。
         超时/非零退出/JSON 解析失败 → BioRunError。
         """
+        # Phase 23：GC 打点（best-effort，读引用也算"最近使用"）
+        touch_last_access(self.workspace_root, args.get("dataset_id"))
         cmd = ["docker", "run", "--rm", "-i", "--network", "none",
                "--cpus", self.cpus, "--memory", self.memory,
                "-v", f"{self.workspace_root}:/ws"]
