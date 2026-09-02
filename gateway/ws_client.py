@@ -9,11 +9,16 @@
 """
 from __future__ import annotations
 
+import atexit
 import asyncio
+import ctypes
 import logging
+import os
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
@@ -263,12 +268,79 @@ def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
     )
 
 
+_PIDFILE = Path(__file__).resolve().parent.parent / ".ws_client.pid"
+_KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_ERROR_INVALID_PARAMETER = 87
+
+
+def _pid_alive(pid: int) -> bool:
+    """Windows 探活：OpenProcess 可打开即活着。
+
+    仅探 pid 存活不校验 cmdline——pid 复用误判概率低（守卫目标是防
+    人为双启，不是安全边界）；GetLastError==87（INVALID_PARAMETER）
+    意味 pid 不存在判死，其余失败（权限等）一律按活着保守处理。
+    """
+    SYNCHRONIZE = 0x00100000
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    h = _KERNEL32.OpenProcess(
+        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return ctypes.get_last_error() != _ERROR_INVALID_PARAMETER
+    _KERNEL32.CloseHandle(h)
+    return True
+
+
+def _terminate(pid: int) -> None:
+    """--force 杀旧进程并等待退出（0.5s 轮询，上限 5s）。"""
+    h = _KERNEL32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+    if h:
+        _KERNEL32.TerminateProcess(h, 1)
+        _KERNEL32.CloseHandle(h)
+    for _ in range(10):
+        if not _pid_alive(pid):
+            return
+        time.sleep(0.5)
+
+
+def _release_pidfile() -> None:
+    """退出清理：仅当 pidfile 内容仍是本进程 pid（不误删接管者）。"""
+    try:
+        if _PIDFILE.read_text().strip() == str(os.getpid()):
+            _PIDFILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def acquire_single_instance(force: bool = False) -> None:
+    """单实例守卫（Phase 22）：活实例拒绝（--force 杀旧接管），stale 接管。"""
+    if _PIDFILE.exists():
+        try:
+            old_pid = int(_PIDFILE.read_text().strip())
+        except (ValueError, OSError):
+            old_pid = 0
+        if old_pid and old_pid != os.getpid() and _pid_alive(old_pid):
+            if not force:
+                logger.error(
+                    "ws_client already running (pid=%s); "
+                    "use --force to replace", old_pid)
+                raise SystemExit(1)
+            logger.warning("--force: terminating old ws_client (pid=%s)",
+                           old_pid)
+            _terminate(old_pid)
+        elif old_pid != os.getpid():
+            logger.warning("stale pidfile (pid=%s) -> take over", old_pid)
+    _PIDFILE.write_text(str(os.getpid()))
+    atexit.register(_release_pidfile)
+
+
 def main() -> None:
     """长连接进程入口：组装 runtime → 建 ws client → 阻塞接收。"""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
+    # Phase 22：单实例守卫（四轮真机双实例复发；--force 显式替换）
+    acquire_single_instance(force="--force" in sys.argv)
     rt = build_runtime()
     start_renew_scanner(rt)
     start_auto_sync_scanner(

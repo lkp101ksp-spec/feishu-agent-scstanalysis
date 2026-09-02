@@ -54,3 +54,6 @@ bio_workspace/
 
 # 临时提交信息
 _commit_msg.txt
+
+# ws_client 单实例守卫 pidfile（Phase 22）
+.ws_client.pid
