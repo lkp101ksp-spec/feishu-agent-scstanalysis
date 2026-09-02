@@ -28,11 +28,11 @@ def reg(runner):
     return registry
 
 
-def test_st_registers_five_tools(reg):
-    """st_* 5 工具全部注册为 L1_compute。"""
+def test_st_registers_seven_tools(reg):
+    """st_* 7 工具全部注册为 L1_compute（批② +domains/commot）。"""
     names = sorted(t.name for t in reg.list())
-    assert names == ["st_load", "st_markers", "st_plot", "st_process",
-                     "st_qc"]
+    assert names == ["st_commot", "st_domains", "st_load", "st_markers",
+                     "st_plot", "st_process", "st_qc"]
     for t in reg.list():
         assert t.risk_level == "L1_compute"
 
@@ -104,3 +104,33 @@ def test_st_plot_genes_plain_string_wraps_list(runner, reg):
     reg.get("st_plot").handler(dataset_ref="abc123", genes="MARKER_D1_0")
     args, _ = runner.run.call_args
     assert args[1]["genes"] == ["MARKER_D1_0"]
+
+
+def test_register_seven_st_tools(reg):
+    """批②后 st_* 共 7 工具（5 基础 + domains + commot）。"""
+    names = [t.name for t in reg.list() if t.name.startswith("st_")]
+    assert sorted(names) == [
+        "st_commot", "st_domains", "st_load", "st_markers",
+        "st_plot", "st_process", "st_qc"]
+
+
+def test_st_domains_forwards_params(runner, reg):
+    """method/resolution 透传 + st 镜像 + /opt/st_tools。"""
+    reg.get("st_domains").handler(dataset_ref="abc123",
+                                  method="banksy", resolution=0.8)
+    args, kw = runner.run.call_args
+    assert args[0] == "domains"
+    assert args[1] == {"dataset_id": "abc123", "method": "banksy",
+                       "resolution": 0.8}
+    assert kw["image"].endswith("st-cpu-latest")
+    assert kw["script_dir"] == "/opt/st_tools"
+
+
+def test_st_commot_forwards_params(runner, reg):
+    """species/dis_thr 透传（默认 human/200）。"""
+    reg.get("st_commot").handler(dataset_ref="abc123")
+    args, kw = runner.run.call_args
+    assert args[0] == "commot"
+    assert args[1]["species"] == "human"
+    assert args[1]["dis_thr"] == 200
+    assert kw["script_dir"] == "/opt/st_tools"

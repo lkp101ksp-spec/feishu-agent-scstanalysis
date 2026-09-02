@@ -1,4 +1,4 @@
-"""Phase 21：空间转录组 st_* 工具注册（spec §2.2，5 个 L1_compute 工具）。
+"""Phase 21：空间转录组 st_* 工具注册（spec §2.2，7 个 L1_compute 工具）。
 
 与 l3_singlecell 同模式：runner 由 runtime 组装注入；st 脚本走 st 镜像
 （run 时覆盖 image/script_dir）；handler 捕获 BioRunError 转错误输出。
@@ -25,7 +25,7 @@ def register_l3_spatial(
     registry: ToolRegistry, runner: BioRunner,
     *, st_image: str = "feishu-research-agent/bio:st-cpu-latest",
 ) -> None:
-    """注册 st_* 5 工具（runner 由 runtime 装配后传入）。"""
+    """注册 st_* 7 工具（runner 由 runtime 装配后传入）。"""
 
     def st_load(*, path: str) -> dict:
         """读入空间转录组数据（visium/h5ad/mtx+coords）→ dataset_ref + 概要。"""
@@ -92,6 +92,34 @@ def register_l3_spatial(
                 "plot", {
                     "dataset_id": dataset_ref,
                     "genes": parse_gene_list(genes), "color_by": color_by,
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_domains(*, dataset_ref: str, method: str = "banksy",
+                   resolution: float = 1.0) -> dict:
+        """空间域细分（banksy-lite 邻域均值特征 / leiden）→ 新域 + ARI 对比。"""
+        try:
+            out = runner.run(
+                "domains", {
+                    "dataset_id": dataset_ref, "method": method,
+                    "resolution": resolution,
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_commot(*, dataset_ref: str, species: str = "human",
+                  dis_thr: float = 200.0) -> dict:
+        """配体受体空间通讯（COMMOT + CellChat 库）→ 通讯图 + top LR 对。"""
+        try:
+            out = runner.run(
+                "commot", {
+                    "dataset_id": dataset_ref, "species": species,
+                    "dis_thr": dis_thr,
                 }, image=st_image, script_dir=_ST_SCRIPT_DIR)
         except BioRunError as e:
             return _err(e)
@@ -202,4 +230,47 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_plot,
         timeout_sec=600,
+    ))
+    registry.register(ToolSpec(
+        name="st_domains",
+        description=(
+            "空间域细分：banksy 方法（邻域均值特征增强的空间感知 Leiden，"
+            "Banksy-lite）或 leiden 重聚类，输出新空间域着色图、与既有 "
+            "leiden 域的 ARI 一致性与对比图。需先跑 st_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string"},
+                "method": {"type": "string", "enum": ["banksy", "leiden"],
+                           "default": "banksy"},
+                "resolution": {"type": "number", "default": 1.0},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_domains,
+        timeout_sec=1200,
+    ))
+    registry.register(ToolSpec(
+        name="st_commot",
+        description=(
+            "配体受体空间通讯分析（COMMOT 最优传输 + CellChat 库）：输出 "
+            "top 通讯通路的方向图（sender/receiver）、空间域×通路通讯强度"
+            "热图与 top 配体受体对。species 选 human/mouse；dis_thr 通讯"
+            "距离阈值（单位同空间坐标，visium 默认 200）。需先跑 st_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string"},
+                "species": {"type": "string", "enum": ["human", "mouse"],
+                            "default": "human"},
+                "dis_thr": {"type": "number", "default": 200},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_commot,
+        timeout_sec=1800,
     ))

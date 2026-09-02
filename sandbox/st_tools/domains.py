@@ -21,7 +21,7 @@ def main() -> None:
     resolution = float(args.get("resolution", 1.0))
     if method not in ("banksy", "leiden"):
         fail("INVALID_INPUT", f"method must be banksy|leiden, got {method!r}")
-        return
+        raise SystemExit(1)
 
     adata = load_adata({"dataset_id": args["dataset_id"], "file": "processed"})
     ensure_spatial(adata)
