@@ -32,6 +32,7 @@ from lark_oapi.event.custom import CustomizedEvent
 from gateway.app import process_card_payload, run_im_pipeline
 from gateway.normalizer import NormalizeError
 from gateway.runtime import Runtime, build_runtime
+from orchestrator.bio_workspace_gc import sweep
 from shared.errors import FeishuAgentError, RateLimitExceededError
 
 logger = logging.getLogger(__name__)
@@ -109,6 +110,49 @@ def start_kernel_idle_sweeper(kernel_pool, interval_sec: int = 300):
     t = threading.Thread(target=loop, daemon=True, name="kernel-idle-sweeper")
     t.start()
     logger.info("kernel idle sweeper started (interval=%ss)", interval_sec)
+    return t
+
+
+def _bio_gc_sweep_once(settings) -> dict:
+    """单轮 bio_workspace GC（线程内同步直调；异常由线程 loop 吃掉）。"""
+    return sweep(
+        settings.bio_workspace_root,
+        ttl_sec=settings.bio_workspace_ttl_sec,
+        cap_bytes=settings.bio_workspace_cap_gb * (1024 ** 3),
+        grace_sec=settings.bio_workspace_grace_sec,
+    )
+
+
+def start_bio_workspace_gc_sweeper(settings):
+    """Phase 23：bio_workspace 磁盘治理守护线程（每 interval 秒 sweep 一轮）。
+
+    enabled=False 或 interval=0 → 不启动返回 None；单轮异常吃掉保线程。
+    """
+    if not getattr(settings, "bio_workspace_gc_enabled", True):
+        return None
+    interval = getattr(settings, "bio_workspace_gc_interval_sec", 3600)
+    if not interval:
+        return None
+
+    def loop() -> None:
+        while True:
+            time.sleep(interval)
+            try:
+                result = _bio_gc_sweep_once(settings)
+                if result["ttl_deleted"] or result["lru_deleted"]:
+                    logger.info(
+                        "bio workspace gc: ttl=%s lru=%s freed=%d bytes",
+                        result["ttl_deleted"], result["lru_deleted"],
+                        result["freed_bytes"])
+            except Exception:
+                logger.exception("bio workspace gc sweep failed")
+
+    t = threading.Thread(target=loop, daemon=True, name="bio-workspace-gc")
+    t.start()
+    logger.info(
+        "bio workspace gc sweeper started (interval=%ss, ttl=%ss, cap=%sGB)",
+        interval, getattr(settings, "bio_workspace_ttl_sec", "?"),
+        getattr(settings, "bio_workspace_cap_gb", "?"))
     return t
 
 
@@ -352,6 +396,8 @@ def main() -> None:
         getattr(rt.orchestrator, "kernel_pool", None),
         interval_sec=getattr(rt.settings, "kernel_sweep_interval_sec", 300),
     )
+    # Phase 23：bio_workspace 磁盘治理（TTL+LRU 周期清理）
+    start_bio_workspace_gc_sweeper(rt.settings)
     client = lark.ws.Client(
         rt.settings.feishu.app_id,
         rt.settings.feishu.app_secret,
