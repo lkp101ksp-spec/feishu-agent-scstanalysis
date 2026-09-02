@@ -191,6 +191,9 @@ def register_l3_spatial(
         description=(
             "spot 级质控过滤（每 spot 最小/最大基因数、最大线粒体比例%）→ "
             "filtered.h5ad。输出过滤前后 spot/基因数与剔除数。"
+            "注意：小规模/测试数据每细胞（spot）基因数可能仅几十，min_genes 过大会"
+            "全滤光——若失败，错误消息含 genes/cell 分布（median/p90/max），请按"
+            "median 以下调低 min_genes 重试。"
         ),
         parameters={
             "type": "object",

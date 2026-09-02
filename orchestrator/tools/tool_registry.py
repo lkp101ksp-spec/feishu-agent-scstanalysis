@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Callable, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from shared.errors import ToolNotFoundError
 
@@ -40,8 +40,9 @@ class ToolSpec(BaseModel):
     # Phase 12 板块④）；热加载/直调不受影响
     visible_to_planner: bool = True
 
-    class Config:
-        arbitrary_types_allowed = True
+    # Phase 22：class-based Config 弃用 → ConfigDict（原 Config 仅含
+    # arbitrary_types_allowed=True，字段等价搬移）
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def to_openai_function(self) -> dict:
         """转 OpenAI function calling 格式。"""

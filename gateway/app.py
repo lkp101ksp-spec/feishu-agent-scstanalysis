@@ -14,6 +14,7 @@
 """
 import json
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 from fastapi import FastAPI, HTTPException, Request
@@ -275,7 +276,16 @@ def create_app(
     - session_factory: 可调用对象，返回 Session；用于幂等表读写。
       不传则每次请求内即时从 persistence.engine.get_engine() 创建。
     """
-    app = FastAPI(title="Feishu Research Agent — Phase 1")
+    # Phase 22：on_event 弃用 → lifespan（行为等价迁移；Phase 9 auto_sync
+    # 后台轮询逻辑不变，ADR-0024）
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        if auto_sync_worker is not None:
+            auto_sync_worker.start_async()
+        yield
+
+    app = FastAPI(title="Feishu Research Agent — Phase 1",
+                  lifespan=_lifespan)
 
     def _factory():
         if session_factory is not None:
@@ -309,12 +319,6 @@ def create_app(
         comment_event_service=comment_event_service,
         tag_recommend_service=tag_recommend_service,
     )
-
-    # === Phase 9: 评论自动同步后台轮询（可选注入，ADR-0024）===
-    if auto_sync_worker is not None:
-        @app.on_event("startup")
-        def _start_auto_sync_worker():
-            auto_sync_worker.start_async()
 
     @app.get("/health")
     def health():
