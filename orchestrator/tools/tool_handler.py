@@ -8,6 +8,7 @@ import logging
 from dataclasses import dataclass
 
 from orchestrator.tools.ast_guard import ASTGuard
+from orchestrator.tools.param_coerce import coerce_params
 from orchestrator.tools.tool_registry import ToolRegistry, parse_disabled_tools
 from shared.errors import ToolBlockedError
 
@@ -78,6 +79,16 @@ class ToolHandler:
                 {"level": n[0], "message": n[1], "line": n[2]}
                 for n in ast_report.notices
             ]
+        # Phase 24：planner repr 串执行层纠正（array/object 参数收到 str
+        # 时按 schema 还原；coerce 自身异常不阻断执行，用原 inputs 继续）
+        try:
+            inputs, coerced = coerce_params(spec.parameters, inputs)
+            if coerced:
+                logger.warning(
+                    "tool %s param coerced from repr-string: %s",
+                    tool_name, coerced)
+        except Exception:
+            logger.exception("param coerce failed for %s", tool_name)
         # L2 审批：Phase 17 起由 scheduler 层 l2_gate 负责（research 链路
         # write_doc 节点卡片确认）；原 Phase 2 approval stub（request_sync
         # mock，bind 不覆盖恒 deny）已删除——L2 均不可直呼时该分支不可达

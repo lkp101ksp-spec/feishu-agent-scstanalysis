@@ -52,3 +52,30 @@ def test_tool_handler_blocks_parse_failure_degrades():
     assert result.error_code is None  # 工具本体不失败
     assert result.outputs == {"data": "y"}
     assert result.blocks is None
+
+
+def test_tool_handler_coerces_repr_string_params(caplog):
+    """Phase 24：repr 串参数在 execute() 被 schema 驱动纠正 + warning 日志。"""
+    import logging
+
+    seen = {}
+
+    def handler(**kwargs):
+        seen.update(kwargs)
+        return {"ok": True}
+
+    reg = MagicMock()
+    reg.get.return_value = ToolSpec(
+        name="x", description="d",
+        parameters={"type": "object",
+                    "properties": {"genes": {"type": "array"}}},
+        risk_level="L0_read",
+        handler=handler,
+    )
+    th = ToolHandler(registry=reg)
+    with caplog.at_level(logging.WARNING):
+        result = th.execute("x", {"genes": "['A', 'B']"},
+                            actor_open_id="ou_1", session_id="s1")
+    assert result.error_code is None
+    assert seen["genes"] == ["A", "B"]
+    assert "coerced from repr-string" in caplog.text
