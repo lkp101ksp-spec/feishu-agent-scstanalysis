@@ -192,3 +192,4 @@ spec：`docs/superpowers/specs/2026-09-02-planner-repr-coercion-design.md`
 | 2026-09-02 | Phase 21 空间转录组三批收官（批① st_* 5 工具 / 批② domains+commot / 批③ deconvolve，真机三批验收）+ Phase 22 运维加固轮（pidfile 单实例守卫 / bind-doc 探活 / lifespan+ConfigDict / qc 调参指导 / st 镜像瘦身 7.17GB→3.19GB） |
 | 2026-09-02 | Phase 23 bio_workspace 磁盘治理（TTL 7d + LRU 10GB + 宽限期 2h 周期清理；.last_access 打点防误删；sweeper 线程；真机验证通过） |
 | 2026-09-02 | Phase 24 planner repr 串长期方案：执行层 schema 驱动纠正（param_coerce + execute 集成 + warning 日志）+ prompt 源头减量 |
+| 2026-09-03 | Phase 25 GPU 镜像 bio:gpu-latest：BioRunner --gpus 透传 + bio_use_gpu 开关 + sc_tools 双栈自适应（rapids-singlecell），RTX 3090 双链对照通过（markers 重合 100%） |
