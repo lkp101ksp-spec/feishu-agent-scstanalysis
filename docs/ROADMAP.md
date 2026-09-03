@@ -113,7 +113,7 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase20-scrna-an
 
 - [x] 空间转录组 st_* 工具链（Phase 21 完成，见下节）
 - [x] bio_workspace 磁盘治理（Phase 23 完成，见下节）
-- [ ] GPU 镜像 bio:gpu-latest（rapids-singlecell，大规模数据）
+- [x] GPU 镜像 bio:gpu-latest（rapids-singlecell，大规模数据）（Phase 25 完成，见下节）
 
 ---
 
@@ -162,6 +162,18 @@ spec：`docs/superpowers/specs/2026-09-02-planner-repr-coercion-design.md`
 
 ---
 
+## Phase 25：GPU 镜像 bio:gpu-latest — 已实施，真机验收通过（2026-09-03）
+
+spec：`docs/superpowers/specs/2026-09-02-bio-gpu-image-design.md`
+
+- [x] BioRunner `--gpus` 透传（2ef7da8）+ `bio_use_gpu`/`bio_gpu_image` 开关（默认关，env BIO_USE_GPU/BIO_GPU_IMAGE）
+- [x] bio:gpu-latest 镜像（fe5e611，10.3GB；rapids-singlecell==0.14.1 + RAPIDS cu12 <26 上限；Docker Desktop 4.28→4.89 升级排障后容器内 cuda True）
+- [x] sc_tools 双栈自适应（af03144）：import 探测 rapids_singlecell 分流，emit 加 accelerator 字段；anndata nullable string 兼容修复
+- [x] 双链对照（tiny）：n_clusters 3=3 一致、top10 markers 重合度 100%、GPU 链 accelerator=gpu
+- [x] 大队列真机验收（2026-09-03）：93665 细胞 10x 合并全链 5m46s success；期间修复 WSL2 pinned-host 限制致 leiden OOM（GPU 链 leiden 回 CPU igraph，81fd2c8）
+
+---
+
 ## 持续项（随手做，不占 Phase）
 
 - [x] bind-doc 存在性校验（Phase 22 完成：bind() 时 list_root_children 探活，2026-09-01 nzb/nkb 一字之差踩坑闭环）
@@ -173,7 +185,7 @@ spec：`docs/superpowers/specs/2026-09-02-planner-repr-coercion-design.md`
 
 ## 远期池（默认不做，出现真实需求再捞）
 
-- GPU 节点 / rapids 加速（注：bio 容器 GPU 镜像已在 Phase 20 后续扩展中排期，此处指研究沙箱整体）
+- GPU 节点 / rapids 加速（注：bio 容器 GPU 镜像已在 Phase 25 交付 bio:gpu-latest，此处指研究沙箱整体）
 - gRPC 拆分、工具热加载
 - 分布式锁、多实例部署、K8s
 - CI（远端）、mypy 严格化、uv/poetry 迁移
