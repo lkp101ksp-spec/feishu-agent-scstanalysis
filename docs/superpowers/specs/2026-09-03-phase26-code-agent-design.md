@@ -155,7 +155,7 @@ INIT → THINK ⇄ ACT → FINAL → DONE
 ## §6 交互形态
 
 - **受理卡**：任务摘要 + 授权按钮（approve/deny）
-- **过程卡**：单张卡节流更新（≤1 次/10s），显示最近 5 步动作摘要（`write analysis.py (84 行)` / `run pytest → 12 passed 3 failed` / `read umap.png`）+ 当前步数/预算余量；内嵌"终止"按钮
+- **过程反馈**：v1 节流文本消息（每 5 步或遇审批时一条短摘要：`write analysis.py (84 行)` / `run pytest → 12 passed 3 failed`），卡片原地更新（IMAdapter.update_card）留 v2
 - **结果卡**：结论文本 + 产物文件清单（可下载路径）+ 图片直传（复用现有图片回传通道）+ 提示语（`好用的话说"固化成工具"`）
 - 写回文档：复用 bind-doc（session 绑定文档时结果文本写入）
 
