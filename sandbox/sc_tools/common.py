@@ -17,6 +17,16 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+# 新版 anndata（GPU 镜像 ≥0.11）默认拒绝写 nullable string 列；
+# 显式回退 anndata<0.11 旧格式，保证 CPU/GPU 镜像产物互相可读。
+# 旧版 anndata 无此设置项，赋值无害。
+try:
+    import anndata as _ad
+
+    _ad.settings.allow_write_nullable_strings = False
+except Exception:  # noqa: BLE001 —— 旧版无该设置时跳过
+    pass
+
 DATA_ROOT = Path("/data")
 WS_ROOT = Path("/ws")
 

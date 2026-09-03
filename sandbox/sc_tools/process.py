@@ -1,8 +1,10 @@
-"""sc_process：归一化→HVG→scale→PCA→邻居→UMAP→Leiden（Phase 20）。
+"""sc_process：归一化→HVG→scale→PCA→邻居→UMAP→Leiden（Phase 20/25）。
 
 stdin: {"dataset_id": ..., "n_top_hvg": 2000, "n_pcs": 50,
         "n_neighbors": 15, "resolution": 1.0}
 产出 processed.h5ad + umap.png；无 filtered.h5ad 时用 raw.h5ad 内置默认过滤。
+Phase 25：import 探测 rapids_singlecell——GPU 镜像走 rsc 加速分支
+（PCA/neighbors/UMAP/leiden），CPU 镜像行为与 Phase 20 完全一致。
 """
 from __future__ import annotations
 
@@ -10,8 +12,16 @@ from common import WS_ROOT, emit, load_adata, run, read_args
 
 
 def main() -> None:
+    """主流程：import 探测 rapids_singlecell 决定 GPU/CPU 分支。"""
     import matplotlib.pyplot as plt
     import scanpy as sc
+
+    try:
+        import rapids_singlecell as rsc
+        gpu = True
+    except ImportError:
+        rsc = None
+        gpu = False
 
     args = read_args()
     n_top_hvg = int(args.get("n_top_hvg", 2000))
@@ -28,19 +38,27 @@ def main() -> None:
         sc.pp.filter_cells(adata, min_genes=600)
         sc.pp.filter_genes(adata, min_cells=3)
 
-    # 标准流程（spec §3：归一化→HVG→scale→PCA→邻居→UMAP→Leiden 一体）
+    # 标准流程（归一化→HVG 两路径一致；scale 起分栈）
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
     sc.pp.highly_variable_genes(adata, n_top_genes=n_top_hvg, flavor="seurat")
     adata.raw = adata
     adata = adata[:, adata.var["highly_variable"]].copy()
-    sc.pp.scale(adata, max_value=10)
-    sc.tl.pca(adata, n_comps=min(n_pcs, adata.n_vars - 1, adata.n_obs - 1),
-              svd_solver="arpack")
-    sc.pp.neighbors(adata, n_neighbors=n_neighbors)
-    sc.tl.umap(adata)
-    sc.tl.leiden(adata, resolution=resolution, flavor="igraph",
-                 n_iterations=2, directed=False)
+    n_comps = min(n_pcs, adata.n_vars - 1, adata.n_obs - 1)
+    if gpu:
+        # GPU 分支：rmm 不手动配置、scale 不带 max_value（skill 实战记录）
+        sc.pp.scale(adata)
+        rsc.pp.pca(adata, n_comps=n_comps)
+        rsc.pp.neighbors(adata, n_neighbors=n_neighbors)
+        rsc.tl.umap(adata)
+        rsc.tl.leiden(adata, resolution=resolution)
+    else:
+        sc.pp.scale(adata, max_value=10)
+        sc.tl.pca(adata, n_comps=n_comps, svd_solver="arpack")
+        sc.pp.neighbors(adata, n_neighbors=n_neighbors)
+        sc.tl.umap(adata)
+        sc.tl.leiden(adata, resolution=resolution, flavor="igraph",
+                     n_iterations=2, directed=False)
 
     n_clusters = int(adata.obs["leiden"].nunique())
     cluster_sizes = adata.obs["leiden"].value_counts().to_dict()
@@ -62,6 +80,7 @@ def main() -> None:
         "n_clusters": n_clusters,
         "cluster_sizes": {str(k): int(v) for k, v in cluster_sizes.items()},
         "used_input": "filtered" if had_filtered else "raw(default_qc)",
+        "accelerator": "gpu" if gpu else "cpu",
         "umap_png": str(umap_png),
     })
 
