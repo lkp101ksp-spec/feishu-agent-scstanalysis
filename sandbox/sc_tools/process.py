@@ -51,7 +51,12 @@ def main() -> None:
         rsc.pp.pca(adata, n_comps=n_comps)
         rsc.pp.neighbors(adata, n_neighbors=n_neighbors)
         rsc.tl.umap(adata)
-        rsc.tl.leiden(adata, resolution=resolution)
+        # leiden 回 CPU：WSL2 下 rsc.tl.leiden 构造 cudf.DataFrame 触发 RMM
+        # pinned-host 池扩容（cudaHostAlloc 100MiB 失败，实测 59900 细胞
+        # 2026-09-03）；graph 已由 GPU neighbors 产出，CPU igraph 数秒完成
+        rsc.get.anndata_to_CPU(adata)
+        sc.tl.leiden(adata, resolution=resolution, flavor="igraph",
+                     n_iterations=2, directed=False)
     else:
         sc.pp.scale(adata, max_value=10)
         sc.tl.pca(adata, n_comps=n_comps, svd_solver="arpack")
