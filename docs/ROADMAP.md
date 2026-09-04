@@ -193,8 +193,24 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - 过程反馈 v1 为节流文本；卡片原地更新留 v2（IMAdapter 无 update_card）
 - skill 知识面 v1 词元匹配（命中 ≤3 全文注入）；语义检索（embedding）留远期
 - registry 白名单默认 `sc_*`（settings `code_registry_tools` 可调），更细粒度配置化留后续；skill 子进程本机直跑无容器隔离；审批不落库无审计回溯
-- sc_load 对不存在路径报 WinError 2（错误信息误导，待优化为 SC_PATH_NOT_FOUND）
+- ~~sc_load 对不存在路径报 WinError 2~~（2026-09-04 已修：compute_dataset_id 单文件版补 isfile 检查抛 SC_FILE_NOT_FOUND，对齐目录版）
 - 真机验收已完成 5/5（fib / curl 审批 / skill 冒烟 / clear / /research 回归）；「他人不可批」需群聊环境暂缓
+
+## Phase 26 补充：生信 skill 沉淀 — 已收官（2026-09-04）
+
+**目标**：把 Phase 25 大队列验收流程（10x 合并 → 预处理 → markers）沉淀为 3 个可复用 skill，/code 直接调用。
+
+**交付物**：
+
+- [x] `skills/bio_10x_merge/`：10x 多样本合并（read_10x_mtx → concat → batch 列 → 去重 → h5ad）
+- [x] `skills/bio_preprocess/`：标准预处理（QC/归一化/HVG/PCA/UMAP/leiden，CPU 栈 scanpy）
+- [x] `skills/bio_markers/`：leiden 簇 wilcoxon 差异分析 → 每簇 top10 markers + dotplot
+- [x] 宿主依赖：scanpy 1.12.4 + igraph 1.1.2 + leidenalg（清华源装宿主 venv，skill 直跑宿主 python）
+- [x] 本地冒烟：93665 细胞 10 样本 → 59899 细胞 27 簇 → markers（Col1a1 成纤维/Cd79a B 细胞/Cd3g T 细胞等生物学合理）
+- [x] 真机验收：/code 用 3 个 skill 全链跑通（9 次工具调用全成功，数字与本地一致，产物 4.35GB）
+- [x] 全量回归 **930 passed**（基线 927 + 新增 3）
+
+**限制与后续**：skill 子进程直跑宿主 python（需装包），容器隔离留后续；Phase 27 skill 失败诊断（Recuris 思想提炼：轨迹分析→改进建议→审批写回）已写计划，后续再做。
 
 ---
 
@@ -230,3 +246,4 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 | 2026-09-02 | Phase 24 planner repr 串长期方案：执行层 schema 驱动纠正（param_coerce + execute 集成 + warning 日志）+ prompt 源头减量 |
 | 2026-09-03 | Phase 25 GPU 镜像 bio:gpu-latest：BioRunner --gpus 透传 + bio_use_gpu 开关 + sc_tools 双栈自适应（rapids-singlecell），RTX 3090 双链对照通过（markers 重合 100%） |
 | 2026-09-04 | Phase 26 /code agentic coding agent 全链落地（T1-T8）：orchestrator/coding 五件 + LLMRouter.chat_with_tools + code_approval 回调 + build_runtime 装配；新增 81 用例，回归 927 全过；真机验收 5/5 收官（修 run_cmd 裸命令/字符串兼容 2 bug） |
+| 2026-09-04 | sc_load 不存在路径修复（compute_dataset_id 单文件版补 isfile 检查抛 SC_FILE_NOT_FOUND，618d41f）+ 生信 skill 三件套沉淀（bio_10x_merge/bio_preprocess/bio_markers，宿主 venv 装 scanpy+igraph 直跑，3608ca8）；真机 3-skill 全链验收通过（93665→59899 细胞→27 簇，产物 4.35GB）；Phase 27 skill 失败诊断计划落盘（42bdd55，暂缓开发）；回归 930 全过 |
