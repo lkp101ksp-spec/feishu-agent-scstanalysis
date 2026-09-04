@@ -94,6 +94,13 @@ class TestRunCmd:
         assert r["ok"] is True
         assert "curl" in r["stdout"].lower()
 
+    def test_shell_string_split_to_argv(self, tmp_path):
+        """模型不守 schema 传整串 shell 命令时，shlex.split 拆为数组后执行。"""
+        ws = WorkspaceManager(tmp_path / "ws4")
+        tools = CodeTools(ws, "s4", approve_fn=lambda info: True)
+        r = tools.dispatch("run_cmd", {"cmd": "curl --version"})
+        assert r["ok"] is True and "curl" in r["stdout"].lower()
+
 
 class TestDispatch:
     def test_arguments_as_json_string(self, tools):

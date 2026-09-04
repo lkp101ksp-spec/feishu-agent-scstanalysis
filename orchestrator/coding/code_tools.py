@@ -184,13 +184,22 @@ class CodeTools:
     # ------------------------------------------------------------------ #
     # 命令执行
     # ------------------------------------------------------------------ #
-    def _op_run_cmd(self, cmd: list[str]) -> dict:
+    def _op_run_cmd(self, cmd) -> dict:
         """三态执行：block 拒 / need_approval 走 approve_fn / allow 直跑。
 
         shell=False 下 Windows 不会对裸命令名做 PATH 解析（curl/git 等会
         FileNotFoundError）；审批判定用原始 cmd，执行前用 shutil.which 把
         首个元素解析为绝对路径（已是路径或解析失败则原样交给 subprocess 报错）。
+
+        兼容模型不守 schema 的情况：cmd 若被传成单个字符串（shell 命令行），
+        先用 shlex.split 拆分为参数数组再判定与执行。
         """
+        import shlex
+        if isinstance(cmd, str):
+            try:
+                cmd = shlex.split(cmd)
+            except ValueError:
+                return {"ok": False, "error": f"BAD_CMD: cannot parse shell string: {cmd[:100]!r}", "cmd": cmd}
         verdict, reason = CommandPolicy.verdict(cmd)
         if verdict == "block":
             logger.warning("run_cmd blocked: %r (%s)", cmd, reason)
