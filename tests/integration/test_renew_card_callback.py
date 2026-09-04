@@ -274,3 +274,115 @@ def test_code_approval_duplicate_click_idempotent(client_with_broker):
                                "decision": "deny", "open_id": "ou_1", "owner": "ou_1"})
     assert resp.json()["status"] == "already_handled"
     assert broker.wait("ca4", timeout=0.1) == "approve"
+
+
+# === Phase 27：skill_improve 分支 ===
+
+
+@pytest.fixture
+def client_with_skill_diagnoser(tmp_path):
+    """真 ApprovalBroker + 真 SkillDiagnoser（tmp 假 skill 目录）的卡片环境。"""
+    from types import SimpleNamespace
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from orchestrator.approval_broker import ApprovalBroker
+    from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+    from persistence.models import Base
+
+    skill_dir = tmp_path / "skills" / "reportgen"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: reportgen\ndescription: 生成报表\n---\n正文。\n",
+        encoding="utf-8")
+    (skill_dir / "tools.yaml").write_text(
+        "tools:\n  - name: run_report\n    timeout_sec: 60\n", encoding="utf-8")
+    diagnoser = SkillDiagnoser(llm=MagicMock(), skills_dir=tmp_path / "skills")
+    orch = SimpleNamespace(
+        coding_runner=SimpleNamespace(diagnoser=diagnoser))
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    broker = ApprovalBroker()
+    app = create_app(secret="phase2-secret", orchestrator=orch,
+                     approval_broker=broker)
+    app.state.session_factory = factory
+    return TestClient(app), broker, skill_dir
+
+
+def _skill_improve_payload(*, skill="reportgen", file_kind="SKILL.md",
+                           patch="### 失败排查\n先查 stderr。",
+                           decision="approve", owner="ou_1", open_id="ou_1",
+                           iid="si1"):
+    """构造 skill_improve 卡片回调 payload（suggestion 内嵌 JSON 字符串）。"""
+    suggestion = json.dumps(
+        {"skill": skill, "issue": "描述不清", "fix": "补充说明",
+         "file": file_kind, "patch": patch}, ensure_ascii=False)
+    return {"action": "skill_improve", "skill_improve_id": iid,
+            "decision": decision, "owner": owner, "open_id": open_id,
+            "suggestion": suggestion}
+
+
+def test_skill_improve_owner_mismatch_forbidden(client_with_skill_diagnoser):
+    """非发起者点击：forbidden，skill 文件不被改动。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    resp = _post_card(client, _skill_improve_payload(open_id="ou_other"))
+    assert resp.json() == {"ok": False, "status": "forbidden"}
+    md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert "改进记录" not in md
+
+
+def test_skill_improve_approve_applies_patch(client_with_skill_diagnoser):
+    """owner 批准：diagnoser.apply 写回 SKILL.md（追加改进段落 + .bak 备份）。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    resp = _post_card(client, _skill_improve_payload())
+    body = resp.json()
+    assert body["ok"] is True and body["status"] == "applied"
+    assert body["file"].endswith("SKILL.md")
+    md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert "## 改进记录" in md and "失败排查" in md
+    assert (skill_dir / "SKILL.md.bak").exists()
+
+
+def test_skill_improve_deny_does_not_apply(client_with_skill_diagnoser):
+    """拒绝：决策落 broker，但不执行写回。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    resp = _post_card(client, _skill_improve_payload(decision="deny", iid="si2"))
+    assert resp.json() == {"ok": True, "status": "decided", "decision": "deny"}
+    md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert "改进记录" not in md
+
+
+def test_skill_improve_apply_failure_reported(client_with_skill_diagnoser):
+    """apply 失败（skill 目录不存在）：返回 apply_failed + 错误原因。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    resp = _post_card(client, _skill_improve_payload(skill="ghost", iid="si3"))
+    body = resp.json()
+    assert body["ok"] is False and body["status"] == "apply_failed"
+    assert "ghost" in body["reason"]
+
+
+def test_skill_improve_duplicate_click_idempotent(client_with_skill_diagnoser):
+    """重复点击：第二次 already_handled，改进段落只写一次。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    _post_card(client, _skill_improve_payload(iid="si4"))
+    resp = _post_card(client, _skill_improve_payload(iid="si4"))
+    assert resp.json()["status"] == "already_handled"
+    md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert md.count("## 改进记录") == 1
+
+
+def test_skill_improve_diagnoser_not_configured(client_with_broker):
+    """orchestrator 无 diagnoser：批准已固化但返回 not configured 原因。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, _skill_improve_payload(iid="si5"))
+    body = resp.json()
+    assert body["ok"] is False and body["status"] == "decided"
+    assert body["reason"] == "skill diagnoser not configured"

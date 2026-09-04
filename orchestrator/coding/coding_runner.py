@@ -106,16 +106,61 @@ def _approval_card(approval_id: str, owner: str, info: list[str]) -> dict:
     }
 
 
+# 飞书按钮 value 长度保守上限：suggestion 各字段裁剪阈值（防回调 value 超限）
+_SUGGESTION_CAPS = {"skill": 100, "issue": 300, "fix": 300, "file": 20, "patch": 1500}
+
+
+def _cap_suggestion(suggestion: dict) -> dict:
+    """裁剪 suggestion 字段长度，保证按钮 value 内嵌 JSON 不超飞书长度限制。"""
+    return {k: str(suggestion.get(k, ""))[:cap]
+            for k, cap in _SUGGESTION_CAPS.items()}
+
+
+def _skill_improve_card(owner: str, suggestion: dict) -> dict:
+    """skill 改进审批卡（Phase 27）：value 内嵌 owner + suggestion JSON（回调不查库）。"""
+    improve_id = new_ulid()
+    capped = _cap_suggestion(suggestion)
+    patch_preview = capped["patch"][:200] + ("…" if len(capped["patch"]) > 200 else "")
+    lines = "\n".join([
+        f"- skill：**{capped['skill']}**",
+        f"- 问题：{capped['issue']}",
+        f"- 建议：{capped['fix']}",
+        f"- 目标文件：{capped['file']}",
+        f"- patch 预览：{patch_preview or '（空）'}",
+    ])
+    base_value = {"action": "skill_improve", "skill_improve_id": improve_id,
+                  "owner": owner,
+                  "suggestion": json.dumps(capped, ensure_ascii=False)}
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {"title": {"tag": "plain_text", "content": "/code skill 改进审批"}},
+        "elements": [
+            {"tag": "div", "text": {"tag": "lark_md", "content": lines}},
+            {"tag": "action", "actions": [
+                {"tag": "button", "text": {"tag": "plain_text", "content": "批准写回"},
+                 "type": "primary",
+                 "value": {**base_value, "decision": "approve"}},
+                {"tag": "button", "text": {"tag": "plain_text", "content": "忽略"},
+                 "type": "danger",
+                 "value": {**base_value, "decision": "deny"}},
+            ]},
+        ],
+    }
+
+
 class CodingRunner:
     """/code 指令入口：受理 + 后台线程驱动 AgentLoop。"""
 
     def __init__(self, *, llm, im, tool_handler: ToolHandler,
-                 registry: ToolRegistry, broker, settings=None) -> None:
+                 registry: ToolRegistry, broker, settings=None,
+                 diagnoser=None) -> None:
+        """diagnoser 为 Phase 27 SkillDiagnoser（可空，None 时跳过失败诊断）。"""
         self.llm = llm
         self.im = im
         self.tool_handler = tool_handler
         self.registry = registry
         self.broker = broker
+        self.diagnoser = diagnoser
         s = settings
         self.ws = WorkspaceManager(Path(getattr(s, "code_workspace_root", "./code_workspace")))
         self.skills_dir = Path(getattr(s, "code_skills_dir", "./skills"))
@@ -195,8 +240,28 @@ class CodingRunner:
             self.im.reply(incoming.chat_id, "[错误] coding 任务异常终止，详见服务端日志")
             return {"status": "error", "steps": 0, "final_text": ""}
         self.im.reply(incoming.chat_id, _render_result(result))
+        # Phase 27：任务失败时自动诊断 skill 并发出改进审批卡（纯增量，失败静默）
+        self._maybe_diagnose_skill(incoming, result, task_text)
         return {"status": result.status, "steps": result.steps,
                 "final_text": result.final_text}
+
+    # ------------------------------------------------------------------ #
+    def _maybe_diagnose_skill(self, incoming, result: LoopResult,
+                              task_text: str) -> None:
+        """失败轨迹 → SkillDiagnoser 诊断 → 改进审批卡；任何异常只记日志。"""
+        if self.diagnoser is None or result.status == "final":
+            return
+        try:
+            suggestion = self.diagnoser.diagnose(result, task_text)
+            if not (suggestion.get("ok") and suggestion.get("skill")):
+                logger.info("skill diagnose skipped: %s",
+                            suggestion.get("reason", "no suggestion"))
+                return
+            self.im.send_card(
+                incoming.chat_id,
+                _skill_improve_card(incoming.sender_open_id, suggestion))
+        except Exception:  # noqa: BLE001 —— 诊断是附加能力，绝不影响主流程
+            logger.exception("skill diagnose/card failed (ignored)")
 
     # ------------------------------------------------------------------ #
     def _session_id(self, chat_id: str) -> str:

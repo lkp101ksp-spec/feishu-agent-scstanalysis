@@ -210,7 +210,24 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - [x] 真机验收：/code 用 3 个 skill 全链跑通（9 次工具调用全成功，数字与本地一致，产物 4.35GB）
 - [x] 全量回归 **930 passed**（基线 927 + 新增 3）
 
-**限制与后续**：skill 子进程直跑宿主 python（需装包），容器隔离留后续；Phase 27 skill 失败诊断（Recuris 思想提炼：轨迹分析→改进建议→审批写回）已写计划，后续再做。
+**限制与后续**：skill 子进程直跑宿主 python（需装包），容器隔离留后续；Phase 27 skill 失败诊断已实施（见下节）。
+
+---
+
+## Phase 27：Skill 失败诊断（半自动进化）— 已实施，真机验收待人工（2026-09-04）
+
+**目标**：/code 任务失败时自动分析轨迹、定位 skill 缺陷、生成改进建议，经人工审批卡写回 skill 文件（Recuris 思想提炼，不套框架）。
+
+**交付物**：
+
+- [x] `orchestrator/coding/skill_diagnoser.py`：SkillDiagnoser（diagnose 无 skill 短路不调 LLM / 失败事件压缩 / JSON 围栏剥离；apply 写回 SKILL.md 追加改进记录 或 tools.yaml 字段合并，均先备份 .bak）
+- [x] `coding_runner.py`：run_sync 末尾 status≠final 时 `_maybe_diagnose_skill` 诊断发卡（全程 try 静默不影响主流程）；`_cap_suggestion` 字段裁剪防按钮 value 超限
+- [x] `gateway/app.py`：`skill_improve` 回调分支（owner 内嵌比对 forbidden → broker 幂等 → approve 时 apply，结果 toast 返回）
+- [x] `runtime.py`：CodingRunner 装配注入 SkillDiagnoser（llm + code_skills_dir）
+- [x] 测试：新增 18 用例（diagnoser 单测 9 + e2e 3 + gateway 回调 6），全量回归 **948 passed**
+- [ ] 真机验收：构造 skill 失败任务 → 收「/code skill 改进审批」卡 → 批准写回验证 .bak + 改进记录段落
+
+**已知限制**：LoopResult.tool_events 仅 {step,name,ok} 无观察细节（Phase 28 可补失败观察摘要）；ToolHandler 对 handler 返回 ToolResult 非 dict 时包装丢 error_code（Phase 26 既有怪癖，skill 子进程 SCRIPT_ERROR 会被 AgentLoop 误判成功，建议后续修透传）；skill_improve 审批不落库无审计。
 
 ---
 
@@ -247,3 +264,4 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 | 2026-09-03 | Phase 25 GPU 镜像 bio:gpu-latest：BioRunner --gpus 透传 + bio_use_gpu 开关 + sc_tools 双栈自适应（rapids-singlecell），RTX 3090 双链对照通过（markers 重合 100%） |
 | 2026-09-04 | Phase 26 /code agentic coding agent 全链落地（T1-T8）：orchestrator/coding 五件 + LLMRouter.chat_with_tools + code_approval 回调 + build_runtime 装配；新增 81 用例，回归 927 全过；真机验收 5/5 收官（修 run_cmd 裸命令/字符串兼容 2 bug） |
 | 2026-09-04 | sc_load 不存在路径修复（compute_dataset_id 单文件版补 isfile 检查抛 SC_FILE_NOT_FOUND，618d41f）+ 生信 skill 三件套沉淀（bio_10x_merge/bio_preprocess/bio_markers，宿主 venv 装 scanpy+igraph 直跑，3608ca8）；真机 3-skill 全链验收通过（93665→59899 细胞→27 簇，产物 4.35GB）；Phase 27 skill 失败诊断计划落盘（42bdd55，暂缓开发）；回归 930 全过 |
+| 2026-09-04 | Phase 27 skill 失败诊断实施（T1-T4）：SkillDiagnoser（diagnose/apply/.bak 写回）+ coding_runner 诊断发卡 + gateway skill_improve 回调 + runtime 装配；新增 18 用例，全量回归 948 全过；真机验收待人工 |

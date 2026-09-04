@@ -323,10 +323,18 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     )
     # Phase 26：/code agentic coding 链路（CodingRunner 三层工具面拼装；
     # tool_handler/registry 复用 Orchestrator.__init__ 已装配的实例）
+    # Phase 27：注入 SkillDiagnoser（任务失败时诊断 skill 并发改进审批卡；
+    # gateway 回调经 orch.coding_runner.diagnoser 取同实例执行 apply）
+    from pathlib import Path
+
     from orchestrator.coding.coding_runner import CodingRunner
+    from orchestrator.coding.skill_diagnoser import SkillDiagnoser
     orch.coding_runner = CodingRunner(
         llm=llm, im=im, tool_handler=orch.tool_handler,
         registry=orch.registry, broker=approval_broker, settings=settings,
+        diagnoser=SkillDiagnoser(
+            llm=llm,
+            skills_dir=Path(getattr(settings, "code_skills_dir", "./skills"))),
     )
     return Runtime(
         app=app, orchestrator=orch, settings=settings,

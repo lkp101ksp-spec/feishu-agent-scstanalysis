@@ -16,16 +16,21 @@ from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
 
 class FakeLLM:
-    """脚本回放假 LLM。"""
+    """脚本回放假 LLM（chat_with_tools 驱动 loop；chat 供 SkillDiagnoser 诊断）。"""
 
-    def __init__(self, responses):
+    def __init__(self, responses, chat_response=""):
         self.responses = list(responses)
         self.calls = []
+        self.chat_response = chat_response
 
     def chat_with_tools(self, messages, tools, model=None):
         self.calls.append({"messages": json.loads(json.dumps(messages)),
                            "tools": json.loads(json.dumps(tools)), "model": model})
         return self.responses.pop(0)
+
+    def chat(self, messages, model=None):
+        """SkillDiagnoser 诊断调用：返回固定 JSON 字符串。"""
+        return self.chat_response
 
 
 def _call(name, args="{}", cid="c1"):
@@ -175,3 +180,91 @@ def test_e2e_clear_wipes_workspace(e2e):
     r = runner.handle(FakeIncoming("/code clear"))
     assert r["status"] == "coding_cleared"
     assert not (e2e["tmp"] / "code_ws" / sid).exists()
+
+
+# === Phase 27：skill 失败诊断 → 改进审批卡 → 批准写回 ===
+# 失败轨迹构造：LLM 连续以非法 JSON 参数调 skill 工具（BAD_ARGUMENTS_JSON，
+# 真实 ok=False 事件）→ 3 连败工具禁用 → 第 4 轮仍调工具 → no_tools。
+
+
+def _bad_args_skill_script(n=4):
+    """生成 n 轮「非法参数调 run_report」的 LLM 回放脚本。"""
+    return [{"role": "assistant", "content": "",
+             "tool_calls": [_call("run_report", "not-json{{", cid=f"c{i}")]}
+            for i in range(n)]
+
+
+def test_e2e_failed_skill_triggers_improve_card_and_apply(e2e):
+    """失败全链：skill 连败 → no_tools → 诊断发卡 → 模拟批准 → SKILL.md 写回。"""
+    from types import SimpleNamespace
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from gateway.app import create_app, process_card_payload
+    from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+    from persistence.models import Base
+
+    suggestion = {"skill": "reportgen", "issue": "参数说明不清导致模型传错 JSON",
+                  "fix": "在 SKILL.md 补充参数示例", "file": "SKILL.md",
+                  "patch": "### 参数示例\n`{\"tag\": \"daily\"}`"}
+    llm = FakeLLM(_bad_args_skill_script(),
+                  chat_response=json.dumps(suggestion, ensure_ascii=False))
+    runner = e2e["runner"]
+    runner.llm = llm
+    runner.diagnoser = SkillDiagnoser(llm=llm, skills_dir=e2e["tmp"] / "skills")
+
+    r = runner.run_sync(FakeIncoming("/code 生成报表"), "生成报表")
+
+    # 3 连败 → 工具禁用 → 仍调工具 → no_tools；诊断发出 skill_improve 卡
+    assert r["status"] == "no_tools"
+    cards = [c.args[1] for c in e2e["im"].send_card.call_args_list]
+    assert len(cards) == 1
+    value = cards[0]["elements"][-1]["actions"][0]["value"]
+    assert value["action"] == "skill_improve"
+    body = cards[0]["elements"][0]["text"]["content"]
+    assert "reportgen" in body and "SKILL.md" in body
+
+    # 模拟用户在飞书点「批准写回」：走真实 gateway 卡片管线
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    app = create_app(secret="s",
+                     orchestrator=SimpleNamespace(coding_runner=runner),
+                     approval_broker=e2e["broker"])
+    app.state.session_factory = sessionmaker(
+        bind=engine, expire_on_commit=False, autoflush=False)
+    resp = process_card_payload(app, {**value, "open_id": value["owner"]})
+
+    assert resp["ok"] is True and resp["status"] == "applied"
+    md = (e2e["tmp"] / "skills" / "reportgen" / "SKILL.md").read_text(encoding="utf-8")
+    assert "## 改进记录" in md and "参数示例" in md
+    assert (e2e["tmp"] / "skills" / "reportgen" / "SKILL.md.bak").exists()
+
+
+def test_e2e_final_status_skips_diagnose(e2e):
+    """任务成功（final）：已装配 diagnoser 也不触发诊断。"""
+    llm = FakeLLM([
+        {"role": "assistant", "content": "直接回答，无需工具", "tool_calls": None},
+    ])
+    runner = e2e["runner"]
+    runner.llm = llm
+    runner.diagnoser = MagicMock()
+    r = runner.run_sync(FakeIncoming("/code 聊一句"), "聊一句")
+    assert r["status"] == "final"
+    runner.diagnoser.diagnose.assert_not_called()
+    assert not e2e["im"].send_card.called
+
+
+def test_e2e_diagnose_exception_does_not_break_run(e2e):
+    """diagnoser 抛异常：run_sync 静默吞掉，主流程返回不受影响。"""
+    llm = FakeLLM(_bad_args_skill_script())
+    runner = e2e["runner"]
+    runner.llm = llm
+    runner.diagnoser = MagicMock()
+    runner.diagnoser.diagnose.side_effect = RuntimeError("boom")
+
+    r = runner.run_sync(FakeIncoming("/code 生成报表"), "生成报表")
+    assert r["status"] == "no_tools"     # 主流程照常返回
+    assert not e2e["im"].send_card.called   # 诊断失败 → 无 skill_improve 卡

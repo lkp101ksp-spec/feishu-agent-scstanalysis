@@ -206,6 +206,50 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         return {"ok": decided,
                 "status": "decided" if decided else "already_handled",
                 "decision": decision if decided else ""}
+    # Phase 27：skill_improve 分支（/code 失败后的 skill 改进审批）。
+    # owner 内嵌 value 比对 + broker 幂等；批准后立即执行 diagnoser.apply 写回
+    # skill 文件（无人 wait 该 id，broker 仅作首击固化/重复点击幂等）。
+    # 卡片无 update 能力，处理结果经响应 JSON 返回（飞书以 toast 展示）。
+    if action == "skill_improve":
+        broker = ctx.approval_broker
+        if broker is None:
+            logger.warning("skill_improve received but broker not configured")
+            return {"ok": False, "reason": "approval broker not configured"}
+        operator = payload.get("open_id", "")
+        owner = payload.get("owner", "")
+        if owner and operator and owner != operator:
+            logger.warning("skill_improve forbidden: operator=%s owner=%s",
+                           operator, owner)
+            return {"ok": False, "status": "forbidden"}
+        decision = payload.get("decision", "")
+        decided = broker.decide(
+            payload.get("skill_improve_id", ""), decision, operator=operator)
+        if not decided:
+            return {"ok": False, "status": "already_handled", "decision": ""}
+        if decision != "approve":
+            return {"ok": True, "status": "decided", "decision": decision}
+        diagnoser = getattr(
+            getattr(ctx.orchestrator, "coding_runner", None), "diagnoser", None)
+        if diagnoser is None:
+            logger.warning("skill_improve approved but diagnoser not configured")
+            return {"ok": False, "status": "decided", "decision": decision,
+                    "reason": "skill diagnoser not configured"}
+        try:
+            suggestion = json.loads(payload.get("suggestion", "") or "{}")
+        except ValueError:
+            return {"ok": False, "status": "apply_failed",
+                    "reason": "bad suggestion json"}
+        try:
+            applied = diagnoser.apply(suggestion)
+        except Exception as e:  # noqa: BLE001 —— 写回异常转为卡片可见错误
+            logger.exception("skill_improve apply crashed")
+            return {"ok": False, "status": "apply_failed", "reason": str(e)}
+        if not applied.get("ok"):
+            return {"ok": False, "status": "apply_failed",
+                    "reason": applied.get("error", "")}
+        return {"ok": True, "status": "applied",
+                "file": applied.get("file", ""),
+                "backup": applied.get("backup", "")}
     return {"ok": True}
 
 
