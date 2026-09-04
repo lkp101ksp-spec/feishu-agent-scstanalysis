@@ -226,3 +226,51 @@ def test_node_l2_approval_non_owner_forbidden(client_with_broker):
     })
     assert resp.json() == {"ok": False, "status": "forbidden"}
     assert broker.wait("dw1", timeout=0.1) is None
+
+
+# === Phase 26：code_approval 分支 ===
+
+
+def test_code_approval_decide_reaches_broker(client_with_broker):
+    """owner 匹配：决策写入 broker，coding 线程 wait 能取到。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, {
+        "action": "code_approval", "code_approval_id": "ca1",
+        "decision": "approve", "open_id": "ou_1", "owner": "ou_1",
+    })
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True, "status": "decided",
+                           "decision": "approve"}
+    assert broker.wait("ca1", timeout=0.1) == "approve"
+
+
+def test_code_approval_owner_mismatch_forbidden(client_with_broker):
+    """非发起者点击：forbidden，不写 broker。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, {
+        "action": "code_approval", "code_approval_id": "ca2",
+        "decision": "approve", "open_id": "ou_2", "owner": "ou_1",
+    })
+    assert resp.json() == {"ok": False, "status": "forbidden"}
+    assert broker.wait("ca2", timeout=0.1) is None
+
+
+def test_code_approval_deny_propagates(client_with_broker):
+    """拒绝决策同样可达 coding 线程。"""
+    client, broker = client_with_broker
+    _post_card(client, {
+        "action": "code_approval", "code_approval_id": "ca3",
+        "decision": "deny", "open_id": "ou_1", "owner": "ou_1",
+    })
+    assert broker.wait("ca3", timeout=0.1) == "deny"
+
+
+def test_code_approval_duplicate_click_idempotent(client_with_broker):
+    """重复点击：幂等 already_handled，首决策不被覆盖。"""
+    client, broker = client_with_broker
+    _post_card(client, {"action": "code_approval", "code_approval_id": "ca4",
+                        "decision": "approve", "open_id": "ou_1", "owner": "ou_1"})
+    resp = _post_card(client, {"action": "code_approval", "code_approval_id": "ca4",
+                               "decision": "deny", "open_id": "ou_1", "owner": "ou_1"})
+    assert resp.json()["status"] == "already_handled"
+    assert broker.wait("ca4", timeout=0.1) == "approve"

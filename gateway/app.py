@@ -187,6 +187,25 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         return {"ok": decided,
                 "status": "decided" if decided else "already_handled",
                 "decision": decision if decided else ""}
+    # Phase 26：code_approval 分支（/code 命令与 skill L2 工具审批）。
+    # 审批项为会话级短生命周期、不落库：owner 由发卡时内嵌 value 比对
+    if action == "code_approval":
+        broker = ctx.approval_broker
+        if broker is None:
+            logger.warning("code_approval received but broker not configured")
+            return {"ok": False, "reason": "approval broker not configured"}
+        operator = payload.get("open_id", "")
+        owner = payload.get("owner", "")
+        if owner and operator and owner != operator:
+            logger.warning("code_approval forbidden: operator=%s owner=%s",
+                           operator, owner)
+            return {"ok": False, "status": "forbidden"}
+        decision = payload.get("decision", "")
+        decided = broker.decide(
+            payload.get("code_approval_id", ""), decision, operator=operator)
+        return {"ok": decided,
+                "status": "decided" if decided else "already_handled",
+                "decision": decision if decided else ""}
     return {"ok": True}
 
 

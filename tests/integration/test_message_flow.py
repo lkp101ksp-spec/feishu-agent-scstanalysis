@@ -474,3 +474,36 @@ def test_process_research_in_group_allowed(orch):
     ))
     assert result["status"] == "research_accepted"
     runner.handle.assert_called_once()
+
+
+# === Phase 26：/code 路由 ===
+
+
+def test_code_command_routes_to_coding_runner(orch):
+    """/code 指令进入 coding_runner.handle。"""
+    orch.coding_runner = MagicMock()
+    orch.coding_runner.handle.return_value = {"status": "coding_accepted"}
+    msg = IncomingMessage(message_id="m1", chat_id="c1", sender_open_id="u1",
+                          text="/code 写一个 hello.py 并运行")
+    result = orch.process(msg)
+    orch.coding_runner.handle.assert_called_once_with(msg)
+    assert result["status"] == "coding_accepted"
+
+
+def test_code_command_without_runner_replies_error(orch):
+    """coding_runner 未配置：回错误提示，不抛异常。"""
+    if hasattr(orch, "coding_runner"):
+        del orch.coding_runner
+    msg = IncomingMessage(message_id="m2", chat_id="c1", sender_open_id="u1",
+                          text="/code 任意任务")
+    result = orch.process(msg)
+    assert result["status"] == "coding_unavailable"
+
+
+def test_code_prefix_not_matched_by_plain_text(orch):
+    """普通文本（非 /code 开头）不进 coding 分支。"""
+    orch.coding_runner = MagicMock()
+    msg = IncomingMessage(message_id="m3", chat_id="c1", sender_open_id="u1",
+                          text="请帮我 /code 一下")   # 前缀不在行首
+    orch.process(msg)
+    orch.coding_runner.handle.assert_not_called()

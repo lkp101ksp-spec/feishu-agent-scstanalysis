@@ -41,7 +41,7 @@ class CommandPolicy:
         for b in cls.BLOCK_SUBSTR:
             if b in joined:
                 return "block", f"blacklisted pattern: {b!r}"
-        first = cmd[0].lower()
+        first = Path(cmd[0]).stem.lower()
         if first in cls.ALLOW_FIRST:
             return "allow", ""
         if first == "git":

@@ -123,6 +123,20 @@ class Settings:
     # GC 总开关（env "false"/"0" 关闭 sweeper 线程）
     bio_workspace_gc_enabled: bool = True
 
+    # === Phase 26: /code agentic coding ===
+    # 会话工作区根目录（主机路径；每会话一个子目录，跨任务持久）
+    code_workspace_root: str = "./code_workspace"
+    # skill 目录（skills/<name>/SKILL.md + tools.yaml）
+    code_skills_dir: str = "./skills"
+    # AgentLoop 三上限：步数 / token 预算 / 墙钟超时（秒）
+    code_max_steps: int = 25
+    code_token_budget: int = 200000
+    code_timeout_sec: int = 3600
+    # /code 专用模型（空 = 用 router 主模型）
+    code_model: str = ""
+    # registry 工具白名单（逗号分隔前缀通配；AgentLoop 额外可调的既有工具）
+    code_registry_tools: str = "sc_*"
+
 
 def _load_yaml(path: str) -> dict:
     with open(path) as f:
@@ -241,4 +255,11 @@ def load_settings() -> Settings:
             os.environ.get("BIO_WORKSPACE_GC_INTERVAL_SEC", "3600")),
         bio_workspace_gc_enabled=os.environ.get(
             "BIO_WORKSPACE_GC_ENABLED", "true").lower() not in ("false", "0"),
+        code_workspace_root=os.environ.get("CODE_WORKSPACE_ROOT", "./code_workspace"),
+        code_skills_dir=os.environ.get("CODE_SKILLS_DIR", "./skills"),
+        code_max_steps=int(os.environ.get("CODE_MAX_STEPS", "25")),
+        code_token_budget=int(os.environ.get("CODE_TOKEN_BUDGET", "200000")),
+        code_timeout_sec=int(os.environ.get("CODE_TIMEOUT_SEC", "3600")),
+        code_model=os.environ.get("CODE_MODEL", ""),
+        code_registry_tools=os.environ.get("CODE_REGISTRY_TOOLS", "sc_*"),
     )

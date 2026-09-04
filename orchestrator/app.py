@@ -205,6 +205,14 @@ class Orchestrator:
                 return {"status": "research_unavailable"}
             return runner.handle(incoming)
 
+        # 1.68 /code 指令：agentic coding 后台执行（Phase 26）
+        if stripped == "/code" or stripped.startswith("/code "):
+            runner = getattr(self, "coding_runner", None)
+            if runner is None:
+                self.im.reply(incoming.chat_id, "[错误] coding 引擎未配置")
+                return {"status": "coding_unavailable"}
+            return runner.handle(incoming)
+
         # 1.7 群聊门控：群聊只响应指令（/ 开头、#写到），闲聊静默忽略防刷屏；
         # 私聊（p2p）行为不变。指令此前已全部路由，走到这里的群消息即闲聊。
         if getattr(incoming, "chat_type", "") == "group" and not (
