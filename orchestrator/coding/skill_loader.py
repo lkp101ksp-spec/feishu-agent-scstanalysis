@@ -37,8 +37,15 @@ def _tokenize(text: str) -> set[str]:
     return {t.lower() for t in re.findall(r"[A-Za-z0-9_]+|[一-鿿]", text)}
 
 
-def _make_handler(command: list[str], cwd: Path, timeout_sec: int) -> Callable:
-    """把 skill 工具包装成 registry handler：子进程执行，参数 --k v 展开。"""
+def _make_handler(command: list[str], cwd: Path, timeout_sec: int,
+                  image: str | None = None) -> Callable:
+    """把 skill 工具包装成 registry handler。
+
+    本机模式：子进程执行（cwd=skill 目录），参数 --k v 展开。
+    容器模式（Phase 29 T1，tools.yaml 配 image）：docker run --rm 隔离——
+    网络禁用 + 资源限额 + skill 目录只读挂载 /skill；需写宿主路径的
+    skill 不适用容器模式（不配 image 即可）。
+    """
 
     def handler(**inputs) -> ToolResult:
         argv = list(command)
@@ -49,6 +56,13 @@ def _make_handler(command: list[str], cwd: Path, timeout_sec: int) -> Callable:
                 argv.extend(str(x) for x in val)
             else:
                 argv.extend([f"--{key}", str(val)])
+        if image:
+            host_dir = str(Path(cwd).resolve())
+            argv = ["docker", "run", "--rm", "-i",
+                    "--network", "none",
+                    "--cpus", "2", "--memory", "4g",
+                    "-v", f"{host_dir}:/skill:ro", "-w", "/skill",
+                    image] + argv
         try:
             proc = subprocess.run(
                 argv, cwd=str(cwd), capture_output=True, text=True,
@@ -140,7 +154,8 @@ class SkillLoader:
                     parameters=t.get("parameters") or {"type": "object", "properties": {}},
                     risk_level="L2_side_effect",
                     handler=_make_handler(list(t["command"]), skill.directory,
-                                          int(t.get("timeout_sec", 300))),
+                                          int(t.get("timeout_sec", 300)),
+                                          image=t.get("image")),
                     requires_approval=False,   # 审批由 AgentLoop risk_map 统一把关
                     timeout_sec=int(t.get("timeout_sec", 300)),
                 )
@@ -149,20 +164,75 @@ class SkillLoader:
         return count
 
     # ------------------------------------------------------------------ #
-    def build_system_knowledge(self, task_text: str, top: int = 3) -> str:
-        """知识面匹配 v1：任务词元 ∩ skill 词元打分，拼 top-N 提示块。"""
+    def build_system_knowledge(self, task_text: str, top: int = 3,
+                               llm=None) -> str:
+        """知识面注入：llm 提供时语义选择（Phase 29 T2），否则/失败回退词元 v1。
+
+        语义选择一次纯文本 LLM 调用（候选清单 → JSON name 列表），
+        幻觉 name 过滤、全空/异常/解析失败一律回退词元法，绝不抛出。
+        """
+        if not self.skills:
+            return ""
+        names: list[str] = []
+        if llm is not None:
+            names = self._select_semantic(task_text, top, llm)
+        if not names:
+            ranked = self._rank_by_tokens(task_text)
+            if not ranked:
+                return ""
+            names = [s.name for _, s in ranked[:top]]
+        by_name = {s.name: s for s in self.skills}
+        blocks = [f"## 可用 skill：{n}\n{by_name[n].description}\n"
+                  f"{by_name[n].body[:1500]}"
+                  for n in names if n in by_name]
+        return "\n\n".join(blocks)
+
+    def _rank_by_tokens(self, task_text: str) -> list[tuple[int, LoadedSkill]]:
+        """词元交集打分 v1（语义选择的 fallback）。"""
         toks = _tokenize(task_text)
         if not toks:
-            return ""
+            return []
         scored: list[tuple[int, LoadedSkill]] = []
         for s in self.skills:
             hay = _tokenize(f"{s.name} {s.description} {s.body}")
             score = len(toks & hay)
             if score > 0:
                 scored.append((score, s))
-        if not scored:
-            return ""
         scored.sort(key=lambda x: (-x[0], x[1].name))
-        blocks = [f"## 可用 skill：{s.name}\n{s.description}\n{s.body[:1500]}"
-                  for _, s in scored[:top]]
-        return "\n\n".join(blocks)
+        return scored
+
+    def _select_semantic(self, task_text: str, top: int,
+                         llm) -> list[str]:
+        """LLM 语义选择：候选清单 → 相关 name 列表（已过滤幻觉）。"""
+        import json as _json
+        import re as _re
+
+        from shared.schemas import ChatMessage
+
+        candidates = "\n".join(f"- {s.name}: {s.description}"
+                               for s in self.skills)
+        prompt = (
+            "从候选 skill 列表中选出与任务相关的 skill（最多 "
+            f"{top} 个，按相关度排序）。\n\n任务：{task_text[:500]}\n\n"
+            f"候选 skill：\n{candidates}\n\n"
+            '只返回 JSON：{"skills": ["name1", ...]}；name 必须来自候选'
+            '列表，不得虚构；都不相关返回 {"skills": []}'
+        )
+        try:
+            raw = llm.chat([ChatMessage(role="user", content=prompt)])
+        except Exception as exc:  # noqa: BLE001 —— 检索失败回退词元法
+            logger.warning("semantic skill select failed: %s", exc)
+            return []
+        text = _re.sub(r"```(?:json)?\s*", "", str(raw or "")).replace("```", "")
+        match = _re.search(r"\{.*\}", text, _re.DOTALL)
+        if not match:
+            return []
+        try:
+            obj = _json.loads(match.group(0))
+        except ValueError:
+            return []
+        valid = {s.name for s in self.skills}
+        picked = obj.get("skills") if isinstance(obj, dict) else None
+        if not isinstance(picked, list):
+            return []
+        return [str(n) for n in picked if str(n) in valid][:top]

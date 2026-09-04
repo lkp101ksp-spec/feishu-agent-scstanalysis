@@ -54,8 +54,11 @@ class TestTerminations:
         r = _loop(llm, dispatch).run("sys", "任务")
         assert r.status == "final" and r.steps == 2
         assert seen == [("t1", {})]                    # dict 参数原样传递
-        # 第二轮收到 4 条：system+user+assistant(tool_calls)+tool
-        assert len(llm.calls[1]["messages"]) == 4
+        # 第二轮收到 5 条：system+memory(成功段,Phase 29 T3)+user
+        # +assistant(tool_calls)+tool
+        msgs = llm.calls[1]["messages"]
+        assert len(msgs) == 5
+        assert "OK:" in msgs[1]["content"]             # 紧随 system 的记忆消息
 
     def test_max_steps_exhausted(self):
         resp = {"role": "assistant", "content": "", "tool_calls": [_call("t1", cid="cx")]}
@@ -195,13 +198,13 @@ class TestWorkingMemory:
         assert "t1" in mem[0]["content"] and "boom" in mem[0]["content"]
 
     def test_memory_rolls_at_five_lines(self):
-        """滚动窗口：超过 5 行只留最近 5（直接单测 _refresh_memory_message，
+        """滚动窗口：失败超 5 行只留最近 5（直测 _refresh_memory_message，
         run() 全链因连败禁用 3 次即停，到不了 6+ 次失败）。"""
         from orchestrator.coding.agent_loop import AgentLoop
         lines = [f"- step {i}: t1({{}}) → err-{i}" for i in range(7)]
         messages = [{"role": "system", "content": "sys"},
                     {"role": "user", "content": "任务"}]
-        AgentLoop._refresh_memory_message(messages, lines)
+        AgentLoop._refresh_memory_message(messages, lines, [])
         mem = next(m for m in messages
                    if str(m.get("content", "")).startswith("## 已试路径"))
         body = [ln for ln in mem["content"].splitlines() if ln.startswith("- ")]
@@ -209,20 +212,100 @@ class TestWorkingMemory:
         assert "err-6" in mem["content"]          # 最新失败在内
         assert "err-1" not in mem["content"]      # 最旧失败被滚出
         # 原地替换：再次刷新不新增消息条数
-        AgentLoop._refresh_memory_message(messages, lines)
+        AgentLoop._refresh_memory_message(messages, lines, [])
         assert len([m for m in messages
                     if str(m.get("content", "")).startswith("## 已试路径")]) == 1
 
     def test_no_memory_without_failure(self):
-        """无失败 → 不注入记忆消息。"""
+        """无失败但有成功调用 → 注入成功段（Phase 29 T3）；无任何工具事件才不注入。"""
         seq = [
             {"role": "assistant", "content": "", "tool_calls": [_call("t1", cid="c1")]},
             {"role": "assistant", "content": "done", "tool_calls": None},
         ]
         llm = FakeLLM(seq)
+        _loop(llm, lambda n, a: {"ok": True, "stdout": "merged.h5ad written"}
+              ).run("sys", "任务")
+        mem = [m for m in llm.calls[1]["messages"]
+               if "已试路径" in str(m.get("content", ""))]
+        assert len(mem) == 1
+        assert "OK:" in mem[0]["content"]
+        assert "merged.h5ad written" in mem[0]["content"]
+
+    def test_no_memory_without_any_tool_call(self):
+        """模型直接文字收尾（零工具调用）→ 不注入记忆消息。"""
+        seq = [{"role": "assistant", "content": "答", "tool_calls": None}]
+        llm = FakeLLM(seq)
         _loop(llm, lambda n, a: {"ok": True}).run("sys", "任务")
-        assert not [m for m in llm.calls[1]["messages"]
+        assert not [m for m in llm.calls[0]["messages"]
                     if "已试路径" in str(m.get("content", ""))]
+
+
+# === Phase 29 T3：成功路径摘要 ===
+
+
+class TestWorkingMemorySuccess:
+    """成功调用也进 Working Memory（可复用结果），失败段格式不变。"""
+
+    def _ok_summary_line_shape(self):
+        return None  # 形状断言见下述各用例
+
+    def test_success_line_format(self):
+        """成功行：- step N: name(args) → OK: <产出摘要>。"""
+        from orchestrator.coding.agent_loop import AgentLoop
+        messages = [{"role": "system", "content": "sys"}]
+        AgentLoop._refresh_memory_message(
+            messages, [], ["- step 1: merge({}) → OK: out.h5ad 90000 cells"])
+        content = messages[1]["content"]
+        assert content.startswith("## 已试路径")
+        assert "### 成功（可复用结果）" in content
+        assert "- step 1: merge({}) → OK: out.h5ad 90000 cells" in content
+        assert "### 失败" not in content          # 无失败段
+
+    def test_success_window_three_lines(self):
+        """成功行窗口 3：超出只留最近 3。"""
+        from orchestrator.coding.agent_loop import AgentLoop
+        ok_lines = [f"- step {i}: t({{}}) → OK: r{i}" for i in range(6)]
+        messages = [{"role": "system", "content": "sys"}]
+        AgentLoop._refresh_memory_message(messages, [], ok_lines)
+        body = [ln for ln in messages[1]["content"].splitlines()
+                if ln.startswith("- ")]
+        assert len(body) == 3
+        assert "r5" in messages[1]["content"]     # 最近在内
+        assert "r0" not in messages[1]["content"]  # 最旧滚出
+
+    def test_fail_and_success_sections_coexist(self):
+        """失败+成功混合：两段都在，失败行格式与 Phase 28 一致。"""
+        from orchestrator.coding.agent_loop import AgentLoop
+        messages = [{"role": "system", "content": "sys"}]
+        AgentLoop._refresh_memory_message(
+            messages,
+            ["- step 2: t1({}) → SCRIPT_ERROR: boom"],
+            ["- step 1: t2({}) → OK: fine"])
+        content = messages[1]["content"]
+        assert "### 失败（勿重复）" in content
+        assert "### 成功（可复用结果）" in content
+        assert "- step 2: t1({}) → SCRIPT_ERROR: boom" in content
+
+    def test_ok_summary_from_observation(self):
+        """_ok_summary：stdout 优先，result 次之，空则 'ok'。"""
+        from orchestrator.coding.agent_loop import AgentLoop
+        assert "merged ok" in AgentLoop._ok_summary({"stdout": "merged ok"})
+        assert "42" in AgentLoop._ok_summary({"result": 42})
+        assert AgentLoop._ok_summary({}) == "ok"
+
+    def test_run_injects_success_memory(self):
+        """全链：成功调用 → 下一轮消息含 OK 摘要行。"""
+        seq = [
+            {"role": "assistant", "content": "",
+             "tool_calls": [_call("merge", cid="c1")]},
+            {"role": "assistant", "content": "done", "tool_calls": None},
+        ]
+        llm = FakeLLM(seq)
+        _loop(llm, lambda n, a: {"ok": True, "stdout": "93665 cells"}
+              ).run("sys", "任务")
+        mem = [m for m in llm.calls[1]["messages"]
+               if "已试路径" in str(m.get("content", ""))]
+        assert mem and "OK: 93665 cells" in mem[0]["content"]
 
 
 class TestApproval:

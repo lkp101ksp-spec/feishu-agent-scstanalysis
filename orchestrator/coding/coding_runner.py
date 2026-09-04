@@ -225,7 +225,7 @@ class CodingRunner:
         risk_map.update({s.name: s.risk_level for s in specs})
 
         dispatch = self._make_dispatch(code_tools, session_id, incoming.sender_open_id)
-        knowledge = loader.build_system_knowledge(task_text)
+        knowledge = loader.build_system_knowledge(task_text, llm=self.llm)
         system = _SYSTEM_PROMPT + (f"\n\n{knowledge}" if knowledge else "")
 
         reporter = _ProgressReporter(self.im, incoming.chat_id)

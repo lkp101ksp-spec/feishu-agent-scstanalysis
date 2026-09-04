@@ -246,7 +246,23 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - [x] 验收暴露并修复（f9361ae，TDD 3 用例，回归 968）：诊断 prompt 归因纪律（issue 逐字引用 error、多事件逐个归因禁合并）+ 注入涉及工具的真实定义（YAML，单工具截断 800 字符）防 patch 参数名盲猜
 - [x] 后续：skill_improve 审计闭环（TDD 4 用例，回归 972）：`_audit_event` helper 抽取；卡片点击审计 target_id 候选链补 `skill_improve_id`（原先恒空检索断链）；apply 成功/失败追加 `skill_improve_applied` / `skill_improve_apply_failed` system 审计（detail 含 skill/file/backup/reason）——按 skill_improve_id 检索可得"点击→写回结果"完整链
 
-**已知限制**：Working Memory 只记失败路径，成功路径摘要跨步复用等真机反馈再议（避免过度设计）。
+**已知限制**：~~Working Memory 只记失败路径，成功路径摘要跨步复用等真机反馈再议~~（2026-09-04 Phase 29 T3 已补：成功段 ≤3 行"可复用结果"）。
+
+---
+
+## Phase 29：skill 容器隔离 + 语义检索 + Working Memory 成功路径 — 已实施（2026-09-04）
+
+**目标**：三项遗留项收尾——skill 执行安全、skill 召回质量、成功结果复用。均渐进兼容（不配置即走旧行为）。
+
+**交付物**：
+
+- [x] T1 容器隔离：tools.yaml 工具条目可选 `image` 字段 → `docker run --rm -i --network none --cpus 2 --memory 4g -v <skill_dir>:/skill:ro -w /skill <image> <command> <args>`；未配 image 本机直跑（存量 skill 零迁移）；错误处理与本机模式一致（SCRIPT_ERROR + stderr 尾部）。**限制**：skill 目录只读挂载，需写宿主路径的 skill 不适用容器模式
+- [x] T2 语义检索：`build_system_knowledge(task_text, llm=...)` 一次纯文本 LLM 调用从候选清单（name+description）选 top-N（JSON `{"skills": [...]}`，幻觉 name 过滤）；LLM 异常/解析失败/全空一律回退词元法 v1（`_rank_by_tokens` 抽取复用），绝不抛出；CodingRunner 已装配 `llm=self.llm`
+- [x] T3 Working Memory 成功路径：成功事件追加 `- step N: name(args) → OK: <产出摘要>`（stdout/result 截 80）；消息扩展两段——"### 失败（勿重复）"（≤5 行，格式与 Phase 28 一致）+ "### 成功（可复用结果）"（≤3 行）；零工具调用不注入
+- [x] 测试：新增 14 用例（T1 3 + T2 5 + T3 6），调整 3 个既有用例适配新语义（消息数 4→5、记忆注入条件、_refresh_memory_message 双列表签名）；全量回归 **986 passed**
+- [ ] 真机验收（可选）：/code 任务确认语义选中 skill；bio skill 成功调用后模型复用记忆
+
+**排除**：容器写宿主路径（挂 code_workspace，等真机需要再议）；嵌入向量检索（skill <50 个 LLM 选择足够）；跨任务持久记忆。
 
 ---
 
@@ -289,3 +305,4 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 | 2026-09-04 | Phase 28 失败观察摘要 + Working Memory：失败事件带 error 摘要进诊断 prompt（诊断 LLM 可见真实报错）+ 滚动失败记忆消息（窗口 5 行，模型防重复试错）；前置小修诊断写回白名单过滤（875b280）；新增 8 用例，回归 965 全过；真机轻量验收可选 |
 | 2026-09-04 | Phase 28 真机验收 4/4+1 全过 + 修复诊断归因（f9361ae）：验收首跑意外发现运行中 ws_client 为旧代码（18:18 启动早于当日 3 个修复 commit，首跑结论作废——教训：**验收前必须核对进程启动时间与 HEAD**）；重启后诊断卡逐字引用真实报错、逐事件归因、不盲猜参数，附赠验证 final+tools_disabled 触发；新增归因纪律+工具定义注入 TDD 3 用例，回归 968 全过 |
 | 2026-09-04 | skill_improve 审计闭环：查库发现点击审计本就落库（此前"不落库"记录不准确），真缺口是 target_id 恒空 + apply 结果无审计；补 skill_improve_id 候选链 + applied/apply_failed system 审计 + `_audit_event` helper 抽取，TDD 4 用例，回归 972 全过 |
+| 2026-09-04 | Phase 29 三项遗留收官：T1 skill 容器隔离（tools.yaml 可选 image → docker run network-none 资源限额 ro 挂载）+ T2 语义检索（LLM 选 skill + 词元 fallback）+ T3 Working Memory 成功段（可复用结果 ≤3 行）；新增 14 用例调整 3 个，回归 986 全过 |
