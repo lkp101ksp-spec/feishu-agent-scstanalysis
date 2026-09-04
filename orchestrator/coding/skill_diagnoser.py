@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 MAX_EVENTS_IN_PROMPT = 30     # 送入 prompt 的工具事件上限（防 prompt 爆炸）
 REQUIRED_FIELDS = ("skill", "issue", "fix", "file", "patch")
 JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+# tools.yaml 工具条目受支持的字段（与 skill_loader 消费面一致）；
+# 诊断 LLM 幻觉出的其他字段（如 max_retries）apply 时直接丢弃
+TOOLS_YAML_FIELDS = ("name", "description", "parameters", "command", "timeout_sec")
 
 PROMPT_TEMPLATE = """你是 skill 诊断专家。任务失败轨迹如下：
 - 任务：{task_text}
@@ -37,6 +40,10 @@ PROMPT_TEMPLATE = """你是 skill 诊断专家。任务失败轨迹如下：
 3. 改进建议（改 SKILL.md 描述 / tools.yaml 参数 / 增加示例）
 4. 若改 SKILL.md，patch 给出追加的 Markdown 段落；若改 tools.yaml，
    patch 给出 YAML 字段映射（如 "timeout_sec: 600" 或 "run_qc:\\n  timeout_sec: 600"）
+
+重要约束：tools.yaml 工具只支持以下字段：name / description / parameters /
+command / timeout_sec。patch 中不得出现其他字段（如 max_retries、retry_on、
+param_variants 均不支持，写了也会被丢弃）；重试策略类建议请改写到 SKILL.md。
 
 只以 JSON 返回：{{"skill": "...", "issue": "...", "fix": "...", "file": "SKILL.md|tools.yaml", "patch": "..."}}"""
 
@@ -140,7 +147,9 @@ class SkillDiagnoser:
 
         updated = self._merge_tool_patch(tools, patch_map)
         if not updated:
-            return {"ok": False, "error": "patch matched no tool fields"}
+            return {"ok": False, "error":
+                    "patch matched no supported tools.yaml fields "
+                    f"(allowed: {', '.join(TOOLS_YAML_FIELDS)})"}
 
         backup = self._backup(yaml_path)
         yaml_path.write_text(
@@ -151,19 +160,26 @@ class SkillDiagnoser:
 
     # ------------------------------------------------------------------ #
     def _merge_tool_patch(self, tools: list[dict], patch_map: dict) -> list[str]:
-        """合并 patch：{"工具名": {字段: 值}} 逐工具更新；{字段: 值} 作用于首个工具。"""
+        """合并 patch（仅白名单字段）：{"工具名": {字段: 值}} 逐工具更新；{字段: 值} 作用于首个工具。
+
+        schema 外字段（LLM 幻觉）在此被过滤丢弃，永不落盘。
+        """
+
+        def _sub_fields(sub: dict) -> dict:
+            return {k: v for k, v in sub.items() if k in TOOLS_YAML_FIELDS}
+
         tool_names = {str(t.get("name")) for t in tools}
         updated: list[str] = []
         if any(k in tool_names for k in patch_map):
             for tool in tools:
                 sub = patch_map.get(str(tool.get("name")))
                 if isinstance(sub, dict):
-                    for field_name, val in sub.items():
+                    for field_name, val in _sub_fields(sub).items():
                         tool[field_name] = val
                         updated.append(f"{tool.get('name')}.{field_name}")
         else:
             tool = tools[0]
-            for field_name, val in patch_map.items():
+            for field_name, val in _sub_fields(patch_map).items():
                 tool[field_name] = val
                 updated.append(f"{tool.get('name')}.{field_name}")
         return updated

@@ -165,3 +165,48 @@ class TestApply:
         })
         assert out["ok"] is False
         assert out["error"] == "empty patch"
+
+    def test_apply_tools_yaml_filters_schema_external_fields(self, skills_dir):
+        """诊断幻觉 schema 外字段（max_retries 等）→ 只写白名单字段，其余丢弃。
+
+        真机验收发现（2026-09-04）：LLM 建议 max_retries/retry_on 等
+        tools.yaml 不支持的字段，原样写入永不生效，属"假改进"。
+        """
+        diag = SkillDiagnoser(Mock(), skills_dir)
+        yaml_path = skills_dir / "bioqc" / "tools.yaml"
+        out = diag.apply({
+            "skill": "bioqc", "issue": "超时太短", "fix": "调大 timeout 并加重试",
+            "file": "tools.yaml",
+            "patch": ("run_qc:\n  timeout_sec: 600\n  max_retries: 8\n"
+                      "  retry_on:\n    - FileNotFoundError\n"),
+        })
+        assert out["ok"] is True
+        assert out["updated"] == ["run_qc.timeout_sec"]   # 只有白名单字段生效
+        data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        tool = data["tools"][0]
+        assert tool["timeout_sec"] == 600
+        assert "max_retries" not in tool and "retry_on" not in tool
+
+    def test_apply_tools_yaml_all_external_fields_rejected(self, skills_dir):
+        """patch 全是 schema 外字段 → 拒绝写回（文件不变，无 .bak）。"""
+        diag = SkillDiagnoser(Mock(), skills_dir)
+        yaml_path = skills_dir / "bioqc" / "tools.yaml"
+        before = yaml_path.read_text(encoding="utf-8")
+        out = diag.apply({
+            "skill": "bioqc", "issue": "i", "fix": "f",
+            "file": "tools.yaml",
+            "patch": "run_qc:\n  max_retries: 8\n  retry_on: [FileNotFoundError]\n",
+        })
+        assert out["ok"] is False
+        assert "supported" in out["error"]
+        assert yaml_path.read_text(encoding="utf-8") == before
+        assert not yaml_path.with_name("tools.yaml.bak").exists()
+
+
+class TestPromptConstraint:
+    def test_prompt_lists_supported_tools_yaml_fields(self):
+        """诊断 prompt 应明确 tools.yaml 只支持的字段集（防 LLM 幻觉）。"""
+        from orchestrator.coding.skill_diagnoser import PROMPT_TEMPLATE
+        for field_name in ("name", "description", "parameters", "command",
+                           "timeout_sec"):
+            assert field_name in PROMPT_TEMPLATE
