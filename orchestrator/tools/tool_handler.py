@@ -94,6 +94,13 @@ class ToolHandler:
         # mock，bind 不覆盖恒 deny）已删除——L2 均不可直呼时该分支不可达
         try:
             out = spec.handler(**inputs)
+            # handler 直接返回 ToolResult（如 skill 子进程工具）时透传，
+            # 保留 error_code/error_message，仅注入 AST notices；
+            # 此前走 dict 包装会把 ToolResult 包成 result repr 丢 error_code
+            if isinstance(out, ToolResult):
+                if outputs_extra:
+                    out.outputs = {**out.outputs, **outputs_extra}
+                return out
             if not isinstance(out, dict):
                 out = {"result": out}
             out.update(outputs_extra)  # 注入 AST P1/P2 notices

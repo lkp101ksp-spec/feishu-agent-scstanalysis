@@ -243,6 +243,97 @@ def test_e2e_failed_skill_triggers_improve_card_and_apply(e2e):
     assert (e2e["tmp"] / "skills" / "reportgen" / "SKILL.md.bak").exists()
 
 
+def test_e2e_crashed_skill_subprocess_triggers_diagnose(e2e):
+    """子进程真失败全链：合法参数调 crash 工具 → SCRIPT_ERROR（透传修复后
+    真实 ok=False）→ 连败禁用 → no_tools → 诊断发卡 → 批准写回。"""
+    from types import SimpleNamespace
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from gateway.app import create_app, process_card_payload
+    from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+    from persistence.models import Base
+
+    # 追加一个必然崩溃的 skill（非零退出 + stderr）
+    crash = e2e["tmp"] / "skills" / "crashskill"
+    crash.mkdir(parents=True)
+    (crash / "SKILL.md").write_text(
+        "---\nname: crashskill\ndescription: 崩溃工具 crash\n---\n"
+        "调用 crash_run（会崩）。\n", encoding="utf-8")
+    (crash / "tools.yaml").write_text(
+        f"tools:\n"
+        f"  - name: crash_run\n"
+        f"    description: 必崩工具\n"
+        f"    parameters: {{type: object, properties: {{}}}}\n"
+        f"    command: [{Path(sys.executable).as_posix()}, -c, "
+        f"\"import sys; sys.stderr.write('crash boom'); sys.exit(3)\"]\n",
+        encoding="utf-8")
+
+    # 4 轮合法 JSON 参数调 crash_run：子进程每次真失败（SCRIPT_ERROR）
+    script = [{"role": "assistant", "content": "",
+               "tool_calls": [_call("crash_run", "{}", cid=f"c{i}")]}
+              for i in range(4)]
+    suggestion = {"skill": "crashskill", "issue": "脚本本身崩溃（exit 3）",
+                  "fix": "修复脚本退出逻辑", "file": "SKILL.md",
+                  "patch": "### 已知问题\n脚本 exit 3，待修复"}
+    llm = FakeLLM(script, chat_response=json.dumps(suggestion, ensure_ascii=False))
+    runner = e2e["runner"]
+    runner.llm = llm
+    runner.diagnoser = SkillDiagnoser(llm=llm, skills_dir=e2e["tmp"] / "skills")
+
+    # 持续批准 L2 审批卡（只批 code_approval；skill_improve 卡留给后面手动走）
+    import threading
+    stop = threading.Event()
+
+    def auto_approve_all():
+        seen = 0
+        while not stop.is_set():
+            calls = e2e["im"].send_card.call_args_list
+            for c in calls[seen:]:
+                value = c.args[1]["elements"][-1]["actions"][0]["value"]
+                if value.get("action") == "code_approval":
+                    e2e["broker"].decide(value["code_approval_id"], "approve",
+                                         operator=value["owner"])
+            seen = len(calls)
+            threading.Event().wait(0.02)
+
+    approver = threading.Thread(target=auto_approve_all, daemon=True)
+    approver.start()
+    r = runner.run_sync(FakeIncoming("/code 跑崩溃工具"), "跑崩溃工具")
+    stop.set()
+    approver.join(timeout=5)
+
+    assert r["status"] == "no_tools"
+    # 关键断言：首次失败观察含 SCRIPT_ERROR（ToolResult 透传修复生效，
+    # 修复前会被包成 {"result": "ToolResult(...)"} 且 ok=True）
+    first_tool_msg = [m for m in llm.calls[1]["messages"]
+                      if m["role"] == "tool"][-1]
+    assert "SCRIPT_ERROR" in first_tool_msg["content"]
+    # 诊断卡 → 批准 → crashskill SKILL.md 写回
+    cards = [c.args[1] for c in e2e["im"].send_card.call_args_list]
+    improve_cards = [
+        c for c in cards
+        if c["elements"][-1]["actions"][0]["value"].get("action") == "skill_improve"
+    ]
+    assert len(improve_cards) == 1
+    value = improve_cards[0]["elements"][-1]["actions"][0]["value"]
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    app = create_app(secret="s",
+                     orchestrator=SimpleNamespace(coding_runner=runner),
+                     approval_broker=e2e["broker"])
+    app.state.session_factory = sessionmaker(
+        bind=engine, expire_on_commit=False, autoflush=False)
+    resp = process_card_payload(app, {**value, "open_id": value["owner"]})
+    assert resp["ok"] is True and resp["status"] == "applied"
+    md = (crash / "SKILL.md").read_text(encoding="utf-8")
+    assert "## 改进记录" in md and "exit 3" in md
+    assert (crash / "SKILL.md.bak").exists()
+
+
 def test_e2e_final_status_skips_diagnose(e2e):
     """任务成功（final）：已装配 diagnoser 也不触发诊断。"""
     llm = FakeLLM([
