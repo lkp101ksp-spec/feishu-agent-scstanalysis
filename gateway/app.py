@@ -144,7 +144,8 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         target_type="approval",
         target_id=payload.get("approval_id", "")
         or payload.get("doc_write_id", "")
-        or payload.get("skill_improve_id", ""),
+        or payload.get("skill_improve_id", "")
+        or payload.get("code_approval_id", ""),
         detail=payload,
     )
     # renew_bind 分支（Phase 3）

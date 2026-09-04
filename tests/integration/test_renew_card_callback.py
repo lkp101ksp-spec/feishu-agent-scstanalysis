@@ -412,6 +412,17 @@ def test_skill_improve_click_audited_with_target_id(client_with_skill_diagnoser)
     assert rows and rows[0].target_id == "siA"
 
 
+def test_code_approval_click_audited_with_target_id(client_with_broker):
+    """F1 补遗：code_approval 点击审计 target_id 应为 code_approval_id。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, {"action": "code_approval",
+                               "code_approval_id": "caT", "decision": "approve",
+                               "owner": "ou_1", "open_id": "ou_1"})
+    assert resp.json()["status"] == "decided"
+    rows = [r for r in _audit_rows(client) if r.action == "card_code_approval"]
+    assert rows and rows[0].target_id == "caT"
+
+
 def test_skill_improve_applied_audited(client_with_skill_diagnoser):
     """F2：apply 成功追加 system 审计，detail 含 file/backup（审计链不断在点击）。"""
     client, broker, skill_dir = client_with_skill_diagnoser

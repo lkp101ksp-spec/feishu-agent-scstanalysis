@@ -250,7 +250,7 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 
 ---
 
-## Phase 29：skill 容器隔离 + 语义检索 + Working Memory 成功路径 — 已实施（2026-09-04）
+## Phase 29：skill 容器隔离 + 语义检索 + Working Memory 成功路径 — 已收官（2026-09-04）
 
 **目标**：三项遗留项收尾——skill 执行安全、skill 召回质量、成功结果复用。均渐进兼容（不配置即走旧行为）。
 
@@ -260,7 +260,8 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - [x] T2 语义检索：`build_system_knowledge(task_text, llm=...)` 一次纯文本 LLM 调用从候选清单（name+description）选 top-N（JSON `{"skills": [...]}`，幻觉 name 过滤）；LLM 异常/解析失败/全空一律回退词元法 v1（`_rank_by_tokens` 抽取复用），绝不抛出；CodingRunner 已装配 `llm=self.llm`
 - [x] T3 Working Memory 成功路径：成功事件追加 `- step N: name(args) → OK: <产出摘要>`（stdout/result 截 80）；消息扩展两段——"### 失败（勿重复）"（≤5 行，格式与 Phase 28 一致）+ "### 成功（可复用结果）"（≤3 行）；零工具调用不注入
 - [x] 测试：新增 14 用例（T1 3 + T2 5 + T3 6），调整 3 个既有用例适配新语义（消息数 4→5、记忆注入条件、_refresh_memory_message 双列表签名）；全量回归 **986 passed**
-- [ ] 真机验收（可选）：/code 任务确认语义选中 skill；bio skill 成功调用后模型复用记忆
+- [x] 真机验收 3/3（2026-09-04 晚，8ea5483）：纯英文任务 `perform quality control on the merged single-cell data`（词元交集设计为 0，只有语义法能命中）→ 模型调用 run_qc（T2 ✅ 语义检索选中 bioqc）；run_qc 仅 1 调零重复、总结直接引用 stdout 数字 93665→90000（T3 ✅）；审批卡点击走新 `_audit_event` 公共段落库成功（审计 ✅）
+- [x] 验收发现并修复：code_approval 点击审计 target_id 同样恒空（F1 只补了 skill_improve_id 漏了 sibling）→ 候选链补 `code_approval_id`，TDD 1 用例，回归 **987 passed**
 
 **排除**：容器写宿主路径（挂 code_workspace，等真机需要再议）；嵌入向量检索（skill <50 个 LLM 选择足够）；跨任务持久记忆。
 
@@ -306,3 +307,4 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 | 2026-09-04 | Phase 28 真机验收 4/4+1 全过 + 修复诊断归因（f9361ae）：验收首跑意外发现运行中 ws_client 为旧代码（18:18 启动早于当日 3 个修复 commit，首跑结论作废——教训：**验收前必须核对进程启动时间与 HEAD**）；重启后诊断卡逐字引用真实报错、逐事件归因、不盲猜参数，附赠验证 final+tools_disabled 触发；新增归因纪律+工具定义注入 TDD 3 用例，回归 968 全过 |
 | 2026-09-04 | skill_improve 审计闭环：查库发现点击审计本就落库（此前"不落库"记录不准确），真缺口是 target_id 恒空 + apply 结果无审计；补 skill_improve_id 候选链 + applied/apply_failed system 审计 + `_audit_event` helper 抽取，TDD 4 用例，回归 972 全过 |
 | 2026-09-04 | Phase 29 三项遗留收官：T1 skill 容器隔离（tools.yaml 可选 image → docker run network-none 资源限额 ro 挂载）+ T2 语义检索（LLM 选 skill + 词元 fallback）+ T3 Working Memory 成功段（可复用结果 ≤3 行）；新增 14 用例调整 3 个，回归 986 全过 |
+| 2026-09-04 | Phase 29 真机验收 3/3（纯英文任务词元交集设计为 0，语义检索选中 bioqc→run_qc；成功记忆零重复引用 stdout；审批点击审计落库）+ 修复 code_approval 审计 target_id 恒空（候选链补 code_approval_id，1 用例，回归 987） |
