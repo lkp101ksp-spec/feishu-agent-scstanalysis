@@ -30,22 +30,22 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase15-ux-polis
 
 ---
 
-## Phase 16：安全加固轮（沙箱 + 权限）— 部分完成，剩余项见下
+## Phase 16：安全加固轮（沙箱 + 权限）— 已收官（2026-09-04 对齐：两项决策不做 + 一项已由 Phase 22 实现）
 
 来源：Phase 13 T2 不做项 + Phase 7 工具 ACL 推迟项
 
 ### 实施清单
 
-- [ ] 沙箱网络白名单：run_python 容器默认断网，按工具/节点粒度放行域名（NCBI eutils 等白名单制）
+- [ ] ~~沙箱网络白名单~~（2026-09-01 spec §1 评估**决策不做**：沙箱默认断网 docker_network_mode=none 已是最严姿态，非欠债；如未来需要联网工具再捞）
 - [x] idle_sweep 周期调度：kernel_pool 空闲容器定期回收（KernelPool 加锁线程安全 + 守护线程）
-- [ ] workspace 产物回收：沙箱 workspace 主机挂载与产物生命周期管理（防磁盘泄漏）
+- [ ] ~~workspace 产物回收~~（2026-09-01 决策不做：workspace 为容器内 tmpfs 随容器销毁，无磁盘泄漏面）
 - [x] 工具 ACL：全局禁用名单粒度（settings.disabled_tools，planner 过滤 + 执行层拦截）；按用户/会话粒度授权推迟
 - [x] 单测覆盖（断网容器/白名单域名/产物回收需真机，未做）
 
 ### 真机验收
 
-- [ ] run_python 内访问非白名单域名被拒（依赖网络白名单实施）
-- [ ] 空闲 30 分钟后容器被回收，下次调用冷启动正常
+- [ ] ~~run_python 内访问非白名单域名被拒~~（随网络白名单决策不做）
+- [x] 空闲 30 分钟后容器被回收，下次调用冷启动正常（kernel idle sweeper，Phase 22 ws_client 装配周期 300s 调度 + 单测覆盖；真机日志常驻 "kernel idle sweeper started"，2026-09-04 核实勾选）
 
 ---
 
