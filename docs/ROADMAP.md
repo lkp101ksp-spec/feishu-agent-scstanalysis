@@ -308,3 +308,4 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 | 2026-09-04 | skill_improve 审计闭环：查库发现点击审计本就落库（此前"不落库"记录不准确），真缺口是 target_id 恒空 + apply 结果无审计；补 skill_improve_id 候选链 + applied/apply_failed system 审计 + `_audit_event` helper 抽取，TDD 4 用例，回归 972 全过 |
 | 2026-09-04 | Phase 29 三项遗留收官：T1 skill 容器隔离（tools.yaml 可选 image → docker run network-none 资源限额 ro 挂载）+ T2 语义检索（LLM 选 skill + 词元 fallback）+ T3 Working Memory 成功段（可复用结果 ≤3 行）；新增 14 用例调整 3 个，回归 986 全过 |
 | 2026-09-04 | Phase 29 真机验收 3/3（纯英文任务词元交集设计为 0，语义检索选中 bioqc→run_qc；成功记忆零重复引用 stdout；审批点击审计落库）+ 修复 code_approval 审计 target_id 恒空（候选链补 code_approval_id，1 用例，回归 987） |
+| 2026-09-04 | 一键部署/启动脚本：setup.ps1（Python≥3.10→venv→清华源依赖→.env 模板引导→config_check 硬门禁→external 卷+compose+healthcheck→alembic 迁移）+ start.ps1（预检→PG 自动拉起→后台 --force 启动 ws_client→60s 日志确认→pid/HEAD 输出）；幂等可重跑、兼容 Windows PowerShell 5.1；真机两轮验证通过（修确认窗口 20s→60s、taskkill /T 杀树两处） |
