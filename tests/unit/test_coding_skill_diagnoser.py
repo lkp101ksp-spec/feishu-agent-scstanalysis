@@ -210,3 +210,20 @@ class TestPromptConstraint:
         for field_name in ("name", "description", "parameters", "command",
                            "timeout_sec"):
             assert field_name in PROMPT_TEMPLATE
+
+    def test_failed_event_error_visible_in_prompt(self, skills_dir, failed_result):
+        """失败事件的 error 摘要应送入诊断 prompt（Phase 28 T1）。"""
+        failed_result.tool_events[0]["error"] = "SCRIPT_ERROR: exit 2 boom"
+        llm = Mock()
+        llm.chat.return_value = _suggestion_json()
+        diag = SkillDiagnoser(llm, skills_dir)
+        out = diag.diagnose(failed_result, "任务")
+        assert out["ok"] is True
+        prompt = llm.chat.call_args.args[0][1].content   # 第二条 ChatMessage
+        assert "SCRIPT_ERROR: exit 2 boom" in prompt
+
+    def test_condense_events_without_error_backward_compatible(self):
+        """旧事件无 error 键 → _condense_events 正常输出（向后兼容）。"""
+        diag = SkillDiagnoser(Mock(), Path("."))
+        text = diag._condense_events([{"step": 1, "name": "run_qc", "ok": False}])
+        assert '"ok": false' in text and '"name": "run_qc"' in text

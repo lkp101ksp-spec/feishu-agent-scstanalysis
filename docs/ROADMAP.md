@@ -225,9 +225,26 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - [x] `gateway/app.py`：`skill_improve` 回调分支（owner 内嵌比对 forbidden → broker 幂等 → approve 时 apply，结果 toast 返回）
 - [x] `runtime.py`：CodingRunner 装配注入 SkillDiagnoser（llm + code_skills_dir）
 - [x] 测试：新增 18 用例（diagnoser 单测 9 + e2e 3 + gateway 回调 6），全量回归 **948 passed**
-- [ ] 真机验收：构造 skill 失败任务 → 收「/code skill 改进审批」卡 → 批准写回验证 .bak + 改进记录段落
+- [x] 真机验收 5/5（2026-09-04 晚）：验收桩 skill（qc_stat 必崩脚本）构造连败 → 诊断卡触发 → 批准写回 tools.yaml+.bak → 重复点击幂等 → 忽略分支 → 成功任务不误触发；验收后桩已删除
+- [x] 真机修复（TDD）：连败禁用后模型按引导文字收尾得 final，旧触发条件 `status != final` 漏掉该主路径 → LoopResult 新增 `tools_disabled` 字段（agent_loop 5 返回点统一携带），触发条件改为 final+tools_disabled 仍诊断；新增 3 用例，回归 **954 passed**
+- [x] 后续小修（875b280）：诊断写回 tools.yaml 白名单过滤 + prompt schema 约束（真机发现 LLM 幻觉 max_retries 等字段写入永不生效）
 
-**已知限制**：LoopResult.tool_events 仅 {step,name,ok} 无观察细节（Phase 28 可补失败观察摘要）；~~ToolHandler 对 handler 返回 ToolResult 非 dict 时包装丢 error_code~~（2026-09-04 已修：ToolResult 直接透传，TDD 2 单测 + 子进程真失败 e2e 全链用例，回归 951）；skill_improve 审批不落库无审计。
+**已知限制**：~~LoopResult.tool_events 仅 {step,name,ok} 无观察细节~~（2026-09-04 Phase 28 已补：失败事件携带 error 摘要进诊断 prompt）；~~ToolHandler 对 handler 返回 ToolResult 非 dict 时包装丢 error_code~~（2026-09-04 已修：ToolResult 直接透传，TDD 2 单测 + 子进程真失败 e2e 全链用例，回归 951）；skill_improve 审批不落库无审计。
+
+---
+
+## Phase 28：失败观察摘要 + Working Memory — 已实施（2026-09-04）
+
+**目标**：解 Phase 27 真机验收暴露的诊断质量问题（诊断器只见 ok 标志、模型重复试错），Recuris Working Memory 思想本地化收尾。
+
+**交付物**：
+
+- [x] T1 失败观察摘要：agent_loop 失败事件追加 `error` 摘要（error_code+error_message 拼接，截断 500）；diagnoser `_condense_events` 送入诊断 prompt——诊断 LLM 可见真实 stderr
+- [x] T2 Working Memory：滚动失败记忆消息（"## 已试路径"紧随 system，窗口 5 行，原地替换防消息膨胀，压缩丢失后下次失败自动重插）——模型每轮可见已试路径，减少重复调用
+- [x] 测试：新增 8 用例（ErrorSummary 3 + WorkingMemory 3 + diagnoser 2），全量回归 **965 passed**
+- [ ] 真机轻量验收（可选）：诊断卡 issue 应引用真实 stderr 文本；Working Memory 生效后模型应避免重复完全相同调用
+
+**已知限制**：Working Memory 只记失败路径，成功路径摘要跨步复用等真机反馈再议（避免过度设计）。
 
 ---
 
@@ -267,3 +284,4 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 | 2026-09-04 | Phase 27 skill 失败诊断实施（T1-T4）：SkillDiagnoser（diagnose/apply/.bak 写回）+ coding_runner 诊断发卡 + gateway skill_improve 回调 + runtime 装配；新增 18 用例，全量回归 948 全过；真机验收待人工 |
 | 2026-09-04 | Phase 27 真机验收 5/5 收官：发现并修复连败禁用后 final 收尾不触发诊断的设计缺陷（LoopResult.tools_disabled 标记，TDD 3 用例，回归 954 全过）；验收桩 qc_stat 验后删除；发现诊断 LLM 幻觉 schema 外字段等 3 项后续优化点 |
 | 2026-09-04 | ToolHandler ToolResult 透传修复（Phase 26 既有怪癖：skill 子进程 SCRIPT_ERROR 被 dict 包装丢 error_code 误判成功）→ 透传保留 error_code，连败禁用链路贯通；TDD 新增 3 用例（单测 2 + 子进程真失败 e2e 1），全量回归 951 全过 |
+| 2026-09-04 | Phase 28 失败观察摘要 + Working Memory：失败事件带 error 摘要进诊断 prompt（诊断 LLM 可见真实报错）+ 滚动失败记忆消息（窗口 5 行，模型防重复试错）；前置小修诊断写回白名单过滤（875b280）；新增 8 用例，回归 965 全过；真机轻量验收可选 |

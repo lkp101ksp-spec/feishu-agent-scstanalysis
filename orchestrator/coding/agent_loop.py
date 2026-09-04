@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 OBS_TRUNCATE = 4000          # 单条观察字符上限
 FAIL_DISABLE = 3             # 连续失败阈值
 COMPRESS_KEEP_TAIL = 8       # 压缩时保留的最近消息条数
+MEMORY_HEADER = "## 已试路径（避免重复尝试）"   # Working Memory 消息头（Phase 28 T2）
+MEMORY_MAX_LINES = 5         # 记忆滚动窗口（最近 N 次失败）
 
 
 @dataclass
@@ -97,6 +99,7 @@ class AgentLoop:
         failures = 0
         disabled = False
         compressed = False
+        memory_lines: list[str] = []          # Working Memory（Phase 28 T2）
 
         for step in range(1, self.max_steps + 1):
             if time.monotonic() - started >= self.timeout_sec:
@@ -134,10 +137,31 @@ class AgentLoop:
                     "content": truncate_observation(obs),
                 })
                 ok = bool(obs.get("ok"))
-                self.events.append({"step": step, "name": name, "ok": ok})
+                event = {"step": step, "name": name, "ok": ok}
+                if not ok:
+                    # 失败观察摘要进 events（Phase 28 T1：诊断器可见真实报错）
+                    event["error"] = self._error_summary(obs)
+                    # Working Memory 追加一行已试路径（Phase 28 T2）
+                    if isinstance(arguments, str):
+                        try:
+                            args_obj = json.loads(arguments) if arguments.strip() else {}
+                        except json.JSONDecodeError:
+                            args_obj = arguments
+                    else:
+                        args_obj = arguments
+                    args_brief = json.dumps(
+                        args_obj if isinstance(args_obj, (dict, list)) else args_obj,
+                        ensure_ascii=False, default=str)[:100]
+                    memory_lines.append(
+                        f"- step {step}: {name}({args_brief}) "
+                        f"→ {event['error'][:200]}")
+                self.events.append(event)
                 self._emit(step, {"event": "tool", "name": name, "ok": ok})
                 if not ok:
                     step_all_ok = False
+
+            if memory_lines:
+                self._refresh_memory_message(messages, memory_lines)
 
             failures = 0 if step_all_ok else failures + 1
             if failures >= FAIL_DISABLE and not disabled:
@@ -181,6 +205,35 @@ class AgentLoop:
             logger.warning("dispatch %s raised: %s", name, exc)
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         return result if isinstance(result, dict) else {"ok": True, "result": result}
+
+    @staticmethod
+    def _refresh_memory_message(messages: list[dict],
+                                memory_lines: list[str]) -> None:
+        """把最近失败记忆写入/更新为紧随 system 的 user 消息（滚动窗口）。
+
+        已存在同头消息则原地替换（保持消息条数不变）；被历史压缩丢弃后
+        下次失败会自动重插。
+        """
+        del memory_lines[:-MEMORY_MAX_LINES]      # 滚动窗口：只留最近 N 行
+        content = MEMORY_HEADER + "\n" + "\n".join(memory_lines)
+        for i, msg in enumerate(messages):
+            if str(msg.get("content", "")).startswith(MEMORY_HEADER):
+                msg["content"] = content
+                return
+        messages.insert(1, {"role": "user", "content": content})
+
+    @staticmethod
+    def _error_summary(obs: dict, limit: int = 500) -> str:
+        """观察 dict → 失败摘要："error_code: error_message" 形态，截断 500 字符。
+
+        覆盖三种错误形态：skill 子进程（error_code+error_message）、
+        异常/审批拒绝（error 单字段）、其他（首个非空候选）。
+        """
+        code = str(obs.get("error_code") or "").strip()
+        detail = str(obs.get("error_message") or obs.get("error") or "").strip()
+        if code and detail:
+            return f"{code}: {detail}"[:limit]
+        return (code or detail or "unknown error")[:limit]
 
     def _approx_tokens(self, messages: list[dict]) -> int:
         """粗估 token：消息 JSON 字符数 / 4。"""

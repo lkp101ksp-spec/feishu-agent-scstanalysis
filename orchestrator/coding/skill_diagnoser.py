@@ -200,14 +200,22 @@ class SkillDiagnoser:
         return mapping
 
     def _condense_events(self, events: list[dict]) -> str:
-        """压缩工具事件：优先保留失败事件，总量封顶，单行 JSON 输出。"""
+        """压缩工具事件：优先保留失败事件，总量封顶，单行 JSON 输出。
+
+        失败事件的 error 摘要（Phase 28 T1 起由 AgentLoop 附带）一并送入
+        prompt，使诊断基于真实报错而非 ok 标志猜测。
+        """
         events = events or []
         failed = [e for e in events if not e.get("ok")]
         kept = failed + [e for e in events if e.get("ok")]
         kept = kept[:MAX_EVENTS_IN_PROMPT]
-        lines = [json.dumps({"step": e.get("step"), "name": e.get("name"),
-                             "ok": bool(e.get("ok"))}, ensure_ascii=False)
-                 for e in kept]
+        lines = []
+        for e in kept:
+            row = {"step": e.get("step"), "name": e.get("name"),
+                   "ok": bool(e.get("ok"))}
+            if not e.get("ok") and e.get("error"):
+                row["error"] = str(e["error"])[:500]
+            lines.append(json.dumps(row, ensure_ascii=False))
         return "\n".join(lines) if lines else "(none)"
 
     def _parse_json(self, raw: str) -> "dict | None":

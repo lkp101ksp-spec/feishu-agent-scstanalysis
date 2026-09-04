@@ -131,6 +131,100 @@ class TestFailureDisable:
         assert r.status == "final" and r.tools_disabled is False
 
 
+class TestErrorSummary:
+    """失败观察摘要进 tool_events（Phase 28 T1：诊断器可见真实报错）。"""
+
+    def test_failed_event_carries_code_and_message(self):
+        """skill 子进程失败（error_code+error_message）→ 事件 error 摘要含两者并截断。"""
+        seq = [
+            {"role": "assistant", "content": "", "tool_calls": [_call("t1", cid="c1")]},
+            {"role": "assistant", "content": "总结", "tool_calls": None},
+        ]
+        llm = FakeLLM(seq)
+        r = _loop(llm, lambda n, a: {
+            "ok": False, "error_code": "SCRIPT_ERROR",
+            "error_message": "x" * 600}).run("sys", "任务")
+        ev = r.tool_events[0]
+        assert ev["ok"] is False
+        assert ev["error"].startswith("SCRIPT_ERROR: ")
+        assert len(ev["error"]) <= 500            # 500 字符截断
+
+    def test_failed_event_error_from_exception(self):
+        """dispatch 抛异常（error 字段）→ 事件 error 含异常类型。"""
+        seq = [
+            {"role": "assistant", "content": "", "tool_calls": [_call("t1", cid="c1")]},
+            {"role": "assistant", "content": "总结", "tool_calls": None},
+        ]
+        llm = FakeLLM(seq)
+
+        def boom(name, args):
+            raise ValueError("bad input")
+
+        r = _loop(llm, boom).run("sys", "任务")
+        assert "ValueError: bad input" in r.tool_events[0]["error"]
+
+    def test_success_event_has_no_error_key(self):
+        """成功事件不追加 error 键（向后兼容，events 保持精简）。"""
+        seq = [
+            {"role": "assistant", "content": "", "tool_calls": [_call("t1", cid="c1")]},
+            {"role": "assistant", "content": "done", "tool_calls": None},
+        ]
+        llm = FakeLLM(seq)
+        r = _loop(llm, lambda n, a: {"ok": True, "value": 1}).run("sys", "任务")
+        assert r.tool_events[0] == {"step": 1, "name": "t1", "ok": True}
+
+
+class TestWorkingMemory:
+    """滚动失败记忆（Phase 28 T2：模型每轮可见已试路径，减少重复试错）。"""
+
+    def _fail_script(self, n):
+        seq = [{"role": "assistant", "content": "",
+                "tool_calls": [_call("t1", json.dumps({"p": i}), cid=f"c{i}")]}
+               for i in range(n)]
+        seq.append({"role": "assistant", "content": "总结", "tool_calls": None})
+        return seq
+
+    def test_memory_injected_after_failure(self):
+        """首次失败 → 下一轮 messages 含"已试路径"消息（含工具与错误摘要）。"""
+        llm = FakeLLM(self._fail_script(1))
+        _loop(llm, lambda n, a: {"ok": False, "error": "SCRIPT_ERROR: boom"}
+              ).run("sys", "任务")
+        mem = [m for m in llm.calls[1]["messages"]
+               if "已试路径" in str(m.get("content", ""))]
+        assert len(mem) == 1
+        assert "t1" in mem[0]["content"] and "boom" in mem[0]["content"]
+
+    def test_memory_rolls_at_five_lines(self):
+        """滚动窗口：超过 5 行只留最近 5（直接单测 _refresh_memory_message，
+        run() 全链因连败禁用 3 次即停，到不了 6+ 次失败）。"""
+        from orchestrator.coding.agent_loop import AgentLoop
+        lines = [f"- step {i}: t1({{}}) → err-{i}" for i in range(7)]
+        messages = [{"role": "system", "content": "sys"},
+                    {"role": "user", "content": "任务"}]
+        AgentLoop._refresh_memory_message(messages, lines)
+        mem = next(m for m in messages
+                   if str(m.get("content", "")).startswith("## 已试路径"))
+        body = [ln for ln in mem["content"].splitlines() if ln.startswith("- ")]
+        assert len(body) == 5
+        assert "err-6" in mem["content"]          # 最新失败在内
+        assert "err-1" not in mem["content"]      # 最旧失败被滚出
+        # 原地替换：再次刷新不新增消息条数
+        AgentLoop._refresh_memory_message(messages, lines)
+        assert len([m for m in messages
+                    if str(m.get("content", "")).startswith("## 已试路径")]) == 1
+
+    def test_no_memory_without_failure(self):
+        """无失败 → 不注入记忆消息。"""
+        seq = [
+            {"role": "assistant", "content": "", "tool_calls": [_call("t1", cid="c1")]},
+            {"role": "assistant", "content": "done", "tool_calls": None},
+        ]
+        llm = FakeLLM(seq)
+        _loop(llm, lambda n, a: {"ok": True}).run("sys", "任务")
+        assert not [m for m in llm.calls[1]["messages"]
+                    if "已试路径" in str(m.get("content", ""))]
+
+
 class TestApproval:
     def test_l2_denied_returns_observation_without_dispatch(self):
         calls: list[str] = []
