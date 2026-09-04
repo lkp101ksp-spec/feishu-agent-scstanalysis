@@ -16,7 +16,7 @@
 
 | # | 文件 | 内容 | 依赖 |
 |---|---|---|---|
-| T1 | `2026-09-03-phase26-t1-llm-tools.md` | LLMRouter.chat_with_tools（function calling 协议 + fallback + strip_think） | 无 |
+| T1 ✅ | `2026-09-03-phase26-t1-llm-tools.md` | LLMRouter.chat_with_tools（function calling 协议 + fallback + strip_think） | 无 |
 | T2 | `2026-09-03-phase26-t2-workspace.md` | WorkspaceManager + CommandPolicy（路径防逃逸 + 命令白/黑名单） | 无 |
 | T3 | `2026-09-03-phase26-t3-code-tools.md` | CodeTools 六原语（read/write/edit/list/search/run_cmd） | T2 |
 | T4 | `2026-09-03-phase26-t4-skill-loader.md` | SkillLoader（SKILL.md + tools.yaml 解析/注册/热加载/知识面匹配） | 无 |

@@ -76,6 +76,58 @@ class LLMRouter:
                 f"primary failed ({last_err!r}), fallback failed ({e!r})"
             ) from e
 
+    def _call_with_tools_once(self, provider: _Provider, messages: list[dict],
+                              tools: list[dict], model: str | None = None) -> dict:
+        """OpenAI tools 协议单次调用（Phase 26 T1）。"""
+        url = f"{provider.base_url.rstrip('/')}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {provider.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": model or provider.model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        with httpx.Client(timeout=provider.timeout_sec) as client:
+            resp = client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            return resp.json()
+
+    def chat_with_tools(self, messages: list[dict], tools: list[dict],
+                        model: str | None = None) -> dict:
+        """Phase 26 T1：function calling 主入口。
+
+        messages 为 OpenAI dict 格式（含 role=tool 与 assistant.tool_calls
+        轮次）；返回 choices[0].message（dict，content 已剥 <think>，
+        tool_calls 原样保留）。主备 fallback 语义同 chat()。
+        """
+        last_err: Optional[Exception] = None
+        for _ in range(self.max_retries + 1):
+            try:
+                data = self._call_with_tools_once(
+                    self.primary, messages, tools, model=model)
+                return self._extract_message(data)
+            except (httpx.HTTPError, KeyError, IndexError) as e:
+                last_err = e
+        try:
+            data = self._call_with_tools_once(
+                self.fallback, messages, tools, model=model)
+            return self._extract_message(data)
+        except (httpx.HTTPError, KeyError, IndexError) as e:
+            raise LLMCallError(
+                f"primary failed ({last_err!r}), fallback failed ({e!r})"
+            ) from e
+
+    @staticmethod
+    def _extract_message(data: dict) -> dict:
+        """提取 choices[0].message；content 非 None 时剥 <think>。"""
+        msg = dict(data["choices"][0]["message"])
+        if msg.get("content"):
+            msg["content"] = strip_think(msg["content"])
+        return msg
+
     def call(self, *, role: str, prompt: str, tools: Optional[list] = None) -> str:
         """Phase 3：role-based 单轮 prompt 调用。
 

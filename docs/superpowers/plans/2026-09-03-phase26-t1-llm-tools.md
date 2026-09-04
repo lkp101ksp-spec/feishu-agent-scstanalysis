@@ -7,7 +7,7 @@
 - Modify: `orchestrator/llm_router.py`
 - Test: `tests/unit/test_llm_router_tools.py`（新建）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 """LLMRouter.chat_with_tools：OpenAI function calling 协议（Phase 26 T1）。"""
@@ -83,7 +83,7 @@ def test_chat_with_tools_model_override():
     assert payload_model == "kimi-coding" or m.call_args.args[4] == "kimi-coding"
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/unit/test_llm_router_tools.py -v --basetemp=.pytest_basetemp`
 Expected: 4 FAIL（`AttributeError: ... has no attribute 'chat_with_tools'`）
@@ -153,7 +153,7 @@ Expected: 4 FAIL（`AttributeError: ... has no attribute 'chat_with_tools'`）
 Run: `.\.venv\Scripts\python.exe -m pytest tests/unit/test_llm_router_tools.py -v --basetemp=.pytest_basetemp`
 Expected: 4 PASS
 
-- [ ] **Step 5: 既有 LLM 用例回归 + commit**
+- [x] **Step 5: 既有 LLM 用例回归 + commit**（按用户指示本轮不 commit）
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/unit/test_llm_router.py tests/unit/test_llm_router_tools.py -q --basetemp=.pytest_basetemp`（若 `test_llm_router.py` 不存在则只跑新文件）
 Expected: 全 PASS
