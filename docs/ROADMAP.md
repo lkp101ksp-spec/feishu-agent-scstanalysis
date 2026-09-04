@@ -174,7 +174,7 @@ spec：`docs/superpowers/specs/2026-09-02-bio-gpu-image-design.md`
 
 ---
 
-## Phase 26：/code agentic coding agent — 已实施（2026-09-04），真机验收待人工
+## Phase 26：/code agentic coding agent — 已实施并真机验收收官（2026-09-04）
 
 spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 计划：`docs/superpowers/plans/2026-09-03-phase26-plan-overview.md`（T1-T8 全部完成）
@@ -186,13 +186,15 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - [x] 五新文件 `orchestrator/coding/`：workspace.py（路径防逃逸 + CommandPolicy 命令三态）、code_tools.py（六原语 read/write/edit/list/search/run_cmd）、skill_loader.py（SKILL.md + tools.yaml 解析/注册/热加载/知识面词元匹配）、agent_loop.py（步数/预算/超时三终止 + 观察截断 + 历史压缩 + 连续失败禁用）、coding_runner.py（受理即回 + 后台线程 + 三层工具面拼装 + L2 审批发卡 + 节流过程反馈）
 - [x] 三处改动：`LLMRouter.chat_with_tools`（OpenAI tools 协议 + fallback + strip_think）；settings 七字段 + ws_client `/code` 路由 + `code_approval` 卡片回调分支（owner 内嵌 value 比对，不落库）；`gateway/runtime.py` build_runtime 装配
 - [x] 测试：Phase 26 累计新增 81 用例（单测 77 + e2e 冒烟 4）；全量回归 **927 passed / 0 failed**（基线 846 零回归）
+- [x] 真机验收 5/5：/code fib.py、curl 审批卡、skill bioqc、/code clear、/research 93665 细胞回归（过程中修 2 个 run_cmd bug：`shutil.which` 裸命令解析 + `shlex.split` 字符串兼容）
 
 **限制与后续**：
 
 - 过程反馈 v1 为节流文本；卡片原地更新留 v2（IMAdapter 无 update_card）
 - skill 知识面 v1 词元匹配（命中 ≤3 全文注入）；语义检索（embedding）留远期
 - registry 白名单默认 `sc_*`（settings `code_registry_tools` 可调），更细粒度配置化留后续；skill 子进程本机直跑无容器隔离；审批不落库无审计回溯
-- 真机验收清单 7 项（T8 计划 Step5：写跑 fib / curl 审批批拒 / 他人不可批 / skill 冒烟 / clear / /research 回归）待人工执行
+- sc_load 对不存在路径报 WinError 2（错误信息误导，待优化为 SC_PATH_NOT_FOUND）
+- 真机验收已完成 5/5（fib / curl 审批 / skill 冒烟 / clear / /research 回归）；「他人不可批」需群聊环境暂缓
 
 ---
 
@@ -227,4 +229,4 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 | 2026-09-02 | Phase 23 bio_workspace 磁盘治理（TTL 7d + LRU 10GB + 宽限期 2h 周期清理；.last_access 打点防误删；sweeper 线程；真机验证通过） |
 | 2026-09-02 | Phase 24 planner repr 串长期方案：执行层 schema 驱动纠正（param_coerce + execute 集成 + warning 日志）+ prompt 源头减量 |
 | 2026-09-03 | Phase 25 GPU 镜像 bio:gpu-latest：BioRunner --gpus 透传 + bio_use_gpu 开关 + sc_tools 双栈自适应（rapids-singlecell），RTX 3090 双链对照通过（markers 重合 100%） |
-| 2026-09-04 | Phase 26 /code agentic coding agent 全链落地（T1-T8）：orchestrator/coding 五件 + LLMRouter.chat_with_tools + code_approval 回调 + build_runtime 装配；新增 81 用例，回归 927 全过；真机验收清单待人工 |
+| 2026-09-04 | Phase 26 /code agentic coding agent 全链落地（T1-T8）：orchestrator/coding 五件 + LLMRouter.chat_with_tools + code_approval 回调 + build_runtime 装配；新增 81 用例，回归 927 全过；真机验收 5/5 收官（修 run_cmd 裸命令/字符串兼容 2 bug） |

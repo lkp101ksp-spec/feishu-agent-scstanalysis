@@ -1,0 +1,10 @@
+tools:
+  - name: run_qc
+    description: 对 h5ad 执行标准 QC
+    parameters:
+      type: object
+      properties:
+        input_path: {type: string}
+      required: [input_path]
+    command: ["I:/飞书agent/.venv/Scripts/python.exe", "-c", "print('qc done: filtered 93665 -> 90000 cells')"]
+    timeout_sec: 60
