@@ -1,0 +1,13 @@
+tools:
+  - name: bio_markers
+    description: 单细胞 markers 提取（leiden 簇 wilcoxon，出每簇 top markers + dotplot）
+    parameters:
+      type: object
+      properties:
+        input_path: {type: string, description: "processed h5ad（须含 leiden 列）绝对路径"}
+        output_dir: {type: string, description: "输出目录（dotplot 落此处）绝对路径"}
+        method: {type: string, default: wilcoxon}
+        top_n: {type: integer, default: 10}
+      required: [input_path, output_dir]
+    command: ["I:/飞书agent/.venv/Scripts/python.exe", "markers.py"]
+    timeout_sec: 1800

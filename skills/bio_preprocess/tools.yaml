@@ -1,0 +1,18 @@
+tools:
+  - name: bio_preprocess
+    description: 单细胞标准预处理（QC/归一化/HVG/PCA/UMAP/leiden），h5ad → processed h5ad
+    parameters:
+      type: object
+      properties:
+        input_path: {type: string, description: "输入 h5ad（raw counts）绝对路径"}
+        output_path: {type: string, description: "输出 processed h5ad 绝对路径"}
+        min_genes: {type: integer, default: 600}
+        min_cells: {type: integer, default: 3}
+        max_mt_pct: {type: number, default: 20.0}
+        n_top_hvg: {type: integer, default: 2000}
+        n_pcs: {type: integer, default: 50}
+        n_neighbors: {type: integer, default: 15}
+        resolution: {type: number, default: 1.0}
+      required: [input_path, output_path]
+    command: ["I:/飞书agent/.venv/Scripts/python.exe", "preprocess.py"]
+    timeout_sec: 1800

@@ -1,0 +1,11 @@
+tools:
+  - name: bio_10x_merge
+    description: 10x Genomics 多样本合并（父目录下逐样本 filtered_feature_bc_matrix → 单 h5ad，加 batch 列）
+    parameters:
+      type: object
+      properties:
+        input_dir: {type: string, description: "父目录，每个子目录一个 10x 样本"}
+        output_path: {type: string, description: "输出 h5ad 绝对路径"}
+      required: [input_dir, output_path]
+    command: ["I:/飞书agent/.venv/Scripts/python.exe", "merge_10x.py"]
+    timeout_sec: 600
