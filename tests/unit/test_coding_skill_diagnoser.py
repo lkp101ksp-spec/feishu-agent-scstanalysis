@@ -227,3 +227,60 @@ class TestPromptConstraint:
         diag = SkillDiagnoser(Mock(), Path("."))
         text = diag._condense_events([{"step": 1, "name": "run_qc", "ok": False}])
         assert '"ok": false' in text and '"name": "run_qc"' in text
+
+
+class TestPromptGrounding:
+    """Phase 28 真机验收修复：归因纪律（A）+ tools.yaml 真实定义注入（B）。"""
+
+    def test_prompt_requires_verbatim_error_quote(self, skills_dir, failed_result):
+        """A：prompt 要求 issue 逐字引用 error、多失败事件逐个归因。"""
+        for e in failed_result.tool_events:
+            if not e["ok"]:
+                e["error"] = "SCRIPT_ERROR: crc mismatch"
+        llm = Mock()
+        llm.chat.return_value = _suggestion_json()
+        diag = SkillDiagnoser(llm, skills_dir)
+        diag.diagnose(failed_result, "qc 任务")
+        prompt = llm.chat.call_args.args[0][1].content
+        assert "逐字引用" in prompt
+        assert "逐个分别归因" in prompt
+
+    def test_prompt_includes_tool_definitions(self, skills_dir, failed_result):
+        """B：涉及工具的真实 parameters 注入 prompt，防 patch 参数名盲猜。"""
+        (skills_dir / "bioqc" / "tools.yaml").write_text(
+            "tools:\n"
+            "  - name: run_qc\n"
+            "    description: 对 h5ad 执行标准 QC\n"
+            "    parameters:\n"
+            "      type: object\n"
+            "      properties:\n"
+            "        input_path: {type: string}\n"
+            "      required: [input_path]\n"
+            "    command: [python, qc.py]\n"
+            "    timeout_sec: 60\n",
+            encoding="utf-8",
+        )
+        llm = Mock()
+        llm.chat.return_value = _suggestion_json()
+        diag = SkillDiagnoser(llm, skills_dir)
+        diag.diagnose(failed_result, "qc 任务")
+        prompt = llm.chat.call_args.args[0][1].content
+        assert "input_path" in prompt          # 真实参数名可见
+        assert "现有工具定义" in prompt
+
+    def test_prompt_tool_defs_truncated(self, skills_dir, failed_result):
+        """B：超长工具定义截断，防 prompt 爆炸。"""
+        huge = "x" * 3000
+        (skills_dir / "bioqc" / "tools.yaml").write_text(
+            f"tools:\n"
+            f"  - name: run_qc\n"
+            f"    description: {huge}\n"
+            f"    command: [python, qc.py]\n",
+            encoding="utf-8",
+        )
+        llm = Mock()
+        llm.chat.return_value = _suggestion_json()
+        diag = SkillDiagnoser(llm, skills_dir)
+        diag.diagnose(failed_result, "qc 任务")
+        prompt = llm.chat.call_args.args[0][1].content
+        assert len(prompt) < 5000

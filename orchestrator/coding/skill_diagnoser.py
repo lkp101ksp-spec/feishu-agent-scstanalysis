@@ -22,6 +22,7 @@ from shared.schemas import ChatMessage
 logger = logging.getLogger(__name__)
 
 MAX_EVENTS_IN_PROMPT = 30     # 送入 prompt 的工具事件上限（防 prompt 爆炸）
+MAX_TOOL_DEF_CHARS = 800      # 单个工具定义注入 prompt 的字符上限（Phase 28 验收 B）
 REQUIRED_FIELDS = ("skill", "issue", "fix", "file", "patch")
 JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
 # tools.yaml 工具条目受支持的字段（与 skill_loader 消费面一致）；
@@ -33,10 +34,14 @@ PROMPT_TEMPLATE = """你是 skill 诊断专家。任务失败轨迹如下：
 - 终止原因：{status} / {abort_reason}
 - 工具事件：{tool_events}
 - 涉及 skill：{involved_skills}
+- 现有工具定义（patch 中的参数名/字段名必须与此一致，不得虚构）：
+{tool_defs}
 
 请分析：
 1. 哪个 skill/工具出问题（或无 skill 问题）
-2. 具体问题（描述不清/参数缺失/命令错误/超时）
+2. 具体问题（描述不清/参数缺失/命令错误/超时）——issue 必须逐字引用
+   对应失败事件 error 的关键报错片段；若多个工具/步骤失败，逐个分别归因，
+   禁止合并成单一笼统原因（例如把某一步的超时当成所有失败的原因）
 3. 改进建议（改 SKILL.md 描述 / tools.yaml 参数 / 增加示例）
 4. 若改 SKILL.md，patch 给出追加的 Markdown 段落；若改 tools.yaml，
    patch 给出 YAML 字段映射（如 "timeout_sec: 600" 或 "run_qc:\\n  timeout_sec: 600"）
@@ -72,6 +77,10 @@ class SkillDiagnoser:
             abort_reason=loop_result.abort_reason or "(none)",
             tool_events=self._condense_events(loop_result.tool_events),
             involved_skills=", ".join(involved),
+            tool_defs=self._tool_defs_text(
+                self._load_tool_defs(),
+                sorted({e["name"] for e in skill_events}),
+            ),
         )
         try:
             raw = self.llm.chat([
@@ -198,6 +207,33 @@ class SkillDiagnoser:
                 if isinstance(tool, dict) and tool.get("name"):
                     mapping[str(tool["name"])] = yaml_path.parent.name
         return mapping
+
+    def _load_tool_defs(self) -> dict[str, dict]:
+        """扫描 skills_dir/*/tools.yaml，构建 工具名 → 工具定义 dict 映射。"""
+        defs: dict[str, dict] = {}
+        if not self.skills_dir.is_dir():
+            return defs
+        for yaml_path in sorted(self.skills_dir.glob("*/tools.yaml")):
+            try:
+                data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+            except yaml.YAMLError:
+                continue
+            for tool in data.get("tools") or []:
+                if isinstance(tool, dict) and tool.get("name"):
+                    defs[str(tool["name"])] = tool
+        return defs
+
+    def _tool_defs_text(self, defs: dict[str, dict], names: list[str]) -> str:
+        """把涉及工具的定义渲染为 YAML 文本，单工具截断防 prompt 爆炸。"""
+        lines: list[str] = []
+        for name in names:
+            tool = defs.get(name)
+            if tool is None:
+                continue
+            dumped = yaml.safe_dump(
+                {name: tool}, allow_unicode=True, sort_keys=False)
+            lines.append(dumped.strip()[:MAX_TOOL_DEF_CHARS])
+        return "\n".join(lines) if lines else "(none)"
 
     def _condense_events(self, events: list[dict]) -> str:
         """压缩工具事件：优先保留失败事件，总量封顶，单行 JSON 输出。
