@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
@@ -184,7 +185,12 @@ class CodeTools:
     # 命令执行
     # ------------------------------------------------------------------ #
     def _op_run_cmd(self, cmd: list[str]) -> dict:
-        """三态执行：block 拒 / need_approval 走 approve_fn / allow 直跑。"""
+        """三态执行：block 拒 / need_approval 走 approve_fn / allow 直跑。
+
+        shell=False 下 Windows 不会对裸命令名做 PATH 解析（curl/git 等会
+        FileNotFoundError）；审批判定用原始 cmd，执行前用 shutil.which 把
+        首个元素解析为绝对路径（已是路径或解析失败则原样交给 subprocess 报错）。
+        """
         verdict, reason = CommandPolicy.verdict(cmd)
         if verdict == "block":
             logger.warning("run_cmd blocked: %r (%s)", cmd, reason)
@@ -192,8 +198,13 @@ class CodeTools:
         if verdict == "need_approval":
             if self.approve_fn is None or not self.approve_fn(list(cmd)):
                 return {"ok": False, "error": "APPROVAL_DENIED", "cmd": cmd}
+        resolved = list(cmd)
+        if resolved and not (Path(resolved[0]).is_absolute() or "\\" in resolved[0] or "/" in resolved[0]):
+            found = shutil.which(resolved[0])
+            if found:
+                resolved[0] = found
         proc = subprocess.run(
-            cmd, cwd=str(self.dir), capture_output=True, text=True,
+            resolved, cwd=str(self.dir), capture_output=True, text=True,
             timeout=self.cmd_timeout_sec, shell=False,
         )
         return {

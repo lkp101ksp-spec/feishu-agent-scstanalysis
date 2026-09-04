@@ -85,6 +85,15 @@ class TestRunCmd:
         r = tools.dispatch("run_cmd", {"cmd": ["cmd", "/c", "echo approved_ok"]})
         assert r["ok"] is True and "approved_ok" in r["stdout"]
 
+    def test_bare_command_resolved_via_path(self, tmp_path):
+        """裸命令名（curl/git 等）经 shutil.which 解析为绝对路径后执行。"""
+        ws = WorkspaceManager(tmp_path / "ws3")
+        tools = CodeTools(ws, "s3", approve_fn=lambda info: True)
+        # curl 在 need_approval 白名单外 → 先审批，再 which 解析 System32\curl.exe
+        r = tools.dispatch("run_cmd", {"cmd": ["curl", "--version"]})
+        assert r["ok"] is True
+        assert "curl" in r["stdout"].lower()
+
 
 class TestDispatch:
     def test_arguments_as_json_string(self, tools):
