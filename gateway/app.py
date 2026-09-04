@@ -100,18 +100,15 @@ def run_im_pipeline(app: FastAPI, app_id: str, payload: dict) -> dict:
     return result
 
 
-def process_card_payload(app: FastAPI, payload: dict) -> dict:
-    """卡片回调公共处理（ADR-0031）：audit 落库 + renew_bind 分支。
-
-    输入为平铺 dict（open_id/action/approval_id/session_id...，
-    与 webhook 卡片路由验签后的 payload 结构一致）；ws 卡片适配层产出同构 dict。
-    """
-    ctx: AppContext = app.state.ctx
-    if app.state.session_factory is not None:
-        factory = app.state.session_factory
-    else:
+def _audit_event(app: FastAPI, *, actor_type: str, actor_id: str,
+                 action: str, target_type: str, target_id: str,
+                 detail: dict) -> None:
+    """audit_logs 追加一条（session 缺省回退全局 engine；失败仅记日志）。"""
+    factory = getattr(app.state, "session_factory", None)
+    if factory is None:
         from persistence.engine import get_engine
-        factory = sessionmaker(bind=get_engine(), expire_on_commit=False, autoflush=False)
+        factory = sessionmaker(bind=get_engine(), expire_on_commit=False,
+                               autoflush=False)
     try:
         s = factory()
         try:
@@ -119,20 +116,39 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
             from shared.ulid_ import new_ulid
             AuditRepo(s).write(
                 audit_id=new_ulid(),
-                actor_type="user",
-                actor_id=payload.get("open_id", ""),
-                action=f"card_{payload.get('action', 'unknown')}",
-                target_type="approval",
-                target_id=payload.get("approval_id", "")
-                or payload.get("doc_write_id", ""),
-                detail=payload,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                detail=detail,
             )
             s.commit()
         finally:
             s.close()
     except Exception:
         logger.exception("audit write failed (ignored)")
+
+
+def process_card_payload(app: FastAPI, payload: dict) -> dict:
+    """卡片回调公共处理（ADR-0031）：audit 落库 + renew_bind 分支。
+
+    输入为平铺 dict（open_id/action/approval_id/session_id...，
+    与 webhook 卡片路由验签后的 payload 结构一致）；ws 卡片适配层产出同构 dict。
+    """
+    _audit_event(
+        app,
+        actor_type="user",
+        actor_id=payload.get("open_id", ""),
+        action=f"card_{payload.get('action', 'unknown')}",
+        target_type="approval",
+        target_id=payload.get("approval_id", "")
+        or payload.get("doc_write_id", "")
+        or payload.get("skill_improve_id", ""),
+        detail=payload,
+    )
     # renew_bind 分支（Phase 3）
+    ctx: AppContext = app.state.ctx
     action = payload.get("action", "")
     if action == "renew_bind":
         session_id = payload.get("session_id", "")
@@ -237,16 +253,40 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         try:
             suggestion = json.loads(payload.get("suggestion", "") or "{}")
         except ValueError:
+            _audit_event(
+                app, actor_type="system", actor_id="skill_diagnoser",
+                action="skill_improve_apply_failed", target_type="skill",
+                target_id=payload.get("skill_improve_id", ""),
+                detail={"skill": "", "reason": "bad suggestion json"})
             return {"ok": False, "status": "apply_failed",
                     "reason": "bad suggestion json"}
         try:
             applied = diagnoser.apply(suggestion)
         except Exception as e:  # noqa: BLE001 —— 写回异常转为卡片可见错误
             logger.exception("skill_improve apply crashed")
+            _audit_event(
+                app, actor_type="system", actor_id="skill_diagnoser",
+                action="skill_improve_apply_failed", target_type="skill",
+                target_id=payload.get("skill_improve_id", ""),
+                detail={"skill": suggestion.get("skill", ""),
+                        "reason": str(e)})
             return {"ok": False, "status": "apply_failed", "reason": str(e)}
         if not applied.get("ok"):
+            _audit_event(
+                app, actor_type="system", actor_id="skill_diagnoser",
+                action="skill_improve_apply_failed", target_type="skill",
+                target_id=payload.get("skill_improve_id", ""),
+                detail={"skill": suggestion.get("skill", ""),
+                        "reason": applied.get("error", "")})
             return {"ok": False, "status": "apply_failed",
                     "reason": applied.get("error", "")}
+        _audit_event(
+            app, actor_type="system", actor_id="skill_diagnoser",
+            action="skill_improve_applied", target_type="skill",
+            target_id=payload.get("skill_improve_id", ""),
+            detail={"skill": suggestion.get("skill", ""),
+                    "file": applied.get("file", ""),
+                    "backup": applied.get("backup", "")})
         return {"ok": True, "status": "applied",
                 "file": applied.get("file", ""),
                 "backup": applied.get("backup", "")}

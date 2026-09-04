@@ -229,7 +229,7 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - [x] 真机修复（TDD）：连败禁用后模型按引导文字收尾得 final，旧触发条件 `status != final` 漏掉该主路径 → LoopResult 新增 `tools_disabled` 字段（agent_loop 5 返回点统一携带），触发条件改为 final+tools_disabled 仍诊断；新增 3 用例，回归 **954 passed**
 - [x] 后续小修（875b280）：诊断写回 tools.yaml 白名单过滤 + prompt schema 约束（真机发现 LLM 幻觉 max_retries 等字段写入永不生效）
 
-**已知限制**：~~LoopResult.tool_events 仅 {step,name,ok} 无观察细节~~（2026-09-04 Phase 28 已补：失败事件携带 error 摘要进诊断 prompt）；~~ToolHandler 对 handler 返回 ToolResult 非 dict 时包装丢 error_code~~（2026-09-04 已修：ToolResult 直接透传，TDD 2 单测 + 子进程真失败 e2e 全链用例，回归 951）；skill_improve 审批不落库无审计。
+**已知限制**：~~LoopResult.tool_events 仅 {step,name,ok} 无观察细节~~（2026-09-04 Phase 28 已补：失败事件携带 error 摘要进诊断 prompt）；~~ToolHandler 对 handler 返回 ToolResult 非 dict 时包装丢 error_code~~（2026-09-04 已修：ToolResult 直接透传，TDD 2 单测 + 子进程真失败 e2e 全链用例，回归 951）；~~skill_improve 审批不落库无审计~~（2026-09-04 已修：点击审计本就走公共段落库（此前记录不准确，但 target_id 恒空 + apply 结果无审计）；现补 skill_improve_id 进 target_id 候选链 + applied/apply_failed 追加 system 审计，TDD 4 用例回归 972）。
 
 ---
 
@@ -244,6 +244,7 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - [x] 测试：新增 8 用例（ErrorSummary 3 + WorkingMemory 3 + diagnoser 2），全量回归 **965 passed**
 - [x] 真机验收 4/4+1（2026-09-04 晚，f9361ae）：qc_stat 必崩桩（stderr 带 0x1F4A 标识）→ 诊断卡逐字引用真实报错 `SCRIPT_ERROR: ... checksum mismatch at offset 0x1F4A`、逐事件分别归因（qc_stat_run 数据损坏 / run_cmd Windows 命令不兼容分开分析）、基于注入定义判断"不修改 tools.yaml"不再盲猜参数、qc_stat_run 仅 1 调零重复（T2 生效）；附赠验证 final+tools_disabled 触发路径；验收后桩已删除
 - [x] 验收暴露并修复（f9361ae，TDD 3 用例，回归 968）：诊断 prompt 归因纪律（issue 逐字引用 error、多事件逐个归因禁合并）+ 注入涉及工具的真实定义（YAML，单工具截断 800 字符）防 patch 参数名盲猜
+- [x] 后续：skill_improve 审计闭环（TDD 4 用例，回归 972）：`_audit_event` helper 抽取；卡片点击审计 target_id 候选链补 `skill_improve_id`（原先恒空检索断链）；apply 成功/失败追加 `skill_improve_applied` / `skill_improve_apply_failed` system 审计（detail 含 skill/file/backup/reason）——按 skill_improve_id 检索可得"点击→写回结果"完整链
 
 **已知限制**：Working Memory 只记失败路径，成功路径摘要跨步复用等真机反馈再议（避免过度设计）。
 
@@ -287,3 +288,4 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 | 2026-09-04 | ToolHandler ToolResult 透传修复（Phase 26 既有怪癖：skill 子进程 SCRIPT_ERROR 被 dict 包装丢 error_code 误判成功）→ 透传保留 error_code，连败禁用链路贯通；TDD 新增 3 用例（单测 2 + 子进程真失败 e2e 1），全量回归 951 全过 |
 | 2026-09-04 | Phase 28 失败观察摘要 + Working Memory：失败事件带 error 摘要进诊断 prompt（诊断 LLM 可见真实报错）+ 滚动失败记忆消息（窗口 5 行，模型防重复试错）；前置小修诊断写回白名单过滤（875b280）；新增 8 用例，回归 965 全过；真机轻量验收可选 |
 | 2026-09-04 | Phase 28 真机验收 4/4+1 全过 + 修复诊断归因（f9361ae）：验收首跑意外发现运行中 ws_client 为旧代码（18:18 启动早于当日 3 个修复 commit，首跑结论作废——教训：**验收前必须核对进程启动时间与 HEAD**）；重启后诊断卡逐字引用真实报错、逐事件归因、不盲猜参数，附赠验证 final+tools_disabled 触发；新增归因纪律+工具定义注入 TDD 3 用例，回归 968 全过 |
+| 2026-09-04 | skill_improve 审计闭环：查库发现点击审计本就落库（此前"不落库"记录不准确），真缺口是 target_id 恒空 + apply 结果无审计；补 skill_improve_id 候选链 + applied/apply_failed system 审计 + `_audit_event` helper 抽取，TDD 4 用例，回归 972 全过 |

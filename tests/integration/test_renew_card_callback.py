@@ -386,3 +386,66 @@ def test_skill_improve_diagnoser_not_configured(client_with_broker):
     body = resp.json()
     assert body["ok"] is False and body["status"] == "decided"
     assert body["reason"] == "skill diagnoser not configured"
+
+
+# === Phase 28 后续：skill_improve 审计闭环 ===
+
+
+def _audit_rows(client, limit: int = 20):
+    """读测试 app 的 audit_logs（按时间倒序），返回 AuditLogRow 列表。"""
+    from persistence.repositories.audit_repo import AuditRepo
+
+    factory = client.app.state.session_factory
+    s = factory()
+    try:
+        return AuditRepo(s).list_recent(limit=limit)
+    finally:
+        s.close()
+
+
+def test_skill_improve_click_audited_with_target_id(client_with_skill_diagnoser):
+    """F1：点击审计的 target_id 应为 skill_improve_id（原先恒为空，检索断链）。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    resp = _post_card(client, _skill_improve_payload(iid="siA"))
+    assert resp.json()["status"] == "applied"
+    rows = [r for r in _audit_rows(client) if r.action == "card_skill_improve"]
+    assert rows and rows[0].target_id == "siA"
+
+
+def test_skill_improve_applied_audited(client_with_skill_diagnoser):
+    """F2：apply 成功追加 system 审计，detail 含 file/backup（审计链不断在点击）。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    resp = _post_card(client, _skill_improve_payload(iid="siB"))
+    assert resp.json()["status"] == "applied"
+    rows = [r for r in _audit_rows(client) if r.action == "skill_improve_applied"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.actor_type == "system"
+    assert row.target_id == "siB"
+    assert row.detail_json.get("skill") == "reportgen"
+    assert row.detail_json.get("file", "").endswith("SKILL.md")
+    assert row.detail_json.get("backup", "").endswith("SKILL.md.bak")
+
+
+def test_skill_improve_apply_failed_audited(client_with_skill_diagnoser):
+    """F3：apply 失败也追加审计，detail 含失败原因。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    resp = _post_card(client, _skill_improve_payload(skill="ghost", iid="siC"))
+    assert resp.json()["status"] == "apply_failed"
+    rows = [r for r in _audit_rows(client) if r.action == "skill_improve_apply_failed"]
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.target_id == "siC"
+    assert row.detail_json.get("skill") == "ghost"
+    assert "ghost" in row.detail_json.get("reason", "")
+
+
+def test_skill_improve_deny_has_no_apply_audit(client_with_skill_diagnoser):
+    """deny：只有点击审计（decision=deny），无 applied/failed 记录。"""
+    client, broker, skill_dir = client_with_skill_diagnoser
+    resp = _post_card(client, _skill_improve_payload(decision="deny", iid="siD"))
+    assert resp.json()["status"] == "decided"
+    actions = [r.action for r in _audit_rows(client)]
+    assert "card_skill_improve" in actions
+    assert "skill_improve_applied" not in actions
+    assert "skill_improve_apply_failed" not in actions
