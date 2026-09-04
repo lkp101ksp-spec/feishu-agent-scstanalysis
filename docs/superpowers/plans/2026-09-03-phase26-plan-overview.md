@@ -22,8 +22,8 @@
 | T4 | `2026-09-03-phase26-t4-skill-loader.md` | SkillLoader（SKILL.md + tools.yaml 解析/注册/热加载/知识面匹配） | 无 |
 | T5 | `2026-09-03-phase26-t5-agent-loop.md` | AgentLoop 状态机（步数/预算/超时三终止 + 截断压缩 + 连续失败禁用） | T1 |
 | T6 ✅ | `2026-09-03-phase26-t6-wiring.md` | settings 七字段 + `code_approval` 卡片回调分支 + `/code` 路由 | 无 |
-| T7 | `2026-09-03-phase26-t7-coding-runner.md` | CodingRunner（授权卡/后台线程/工具面拼装/过程反馈/结果卡）+ build_runtime 装配 | T1-T6 |
-| T8 | `2026-09-03-phase26-t8-e2e-docs.md` | fake skill 集成冒烟 + 全量回归 + 真机验收清单 + 文档 | T1-T7 |
+| T7 ✅ | `2026-09-03-phase26-t7-coding-runner.md` | CodingRunner（授权卡/后台线程/工具面拼装/过程反馈/结果卡）+ build_runtime 装配 | T1-T6 |
+| T8 ✅ | `2026-09-03-phase26-t8-e2e-docs.md` | fake skill 集成冒烟 + 全量回归 + 真机验收清单 + 文档 | T1-T7 |
 
 顺序执行 T1→T8（T2 与 T4 相互独立可并行）。
 

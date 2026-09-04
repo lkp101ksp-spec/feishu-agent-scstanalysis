@@ -321,6 +321,13 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     orch.research_runner = ResearchRunner(
         orchestrator=orch, session_factory=research_session_factory,
     )
+    # Phase 26：/code agentic coding 链路（CodingRunner 三层工具面拼装；
+    # tool_handler/registry 复用 Orchestrator.__init__ 已装配的实例）
+    from orchestrator.coding.coding_runner import CodingRunner
+    orch.coding_runner = CodingRunner(
+        llm=llm, im=im, tool_handler=orch.tool_handler,
+        registry=orch.registry, broker=approval_broker, settings=settings,
+    )
     return Runtime(
         app=app, orchestrator=orch, settings=settings,
         renew_scan_service=renew_scan_service,
