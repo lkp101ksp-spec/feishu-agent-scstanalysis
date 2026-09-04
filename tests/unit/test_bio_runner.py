@@ -111,6 +111,14 @@ def test_compute_dataset_id_dir_missing_raises(tmp_path):
         compute_dataset_id_dir(str(tmp_path / "nope"))
 
 
+def test_compute_dataset_id_missing_file_raises(tmp_path):
+    """单文件版对齐目录版：不存在路径抛 BioRunError 而非原生 OSError。"""
+    from orchestrator.tools.bio.bio_runner import BioRunError
+    import pytest
+    with pytest.raises(BioRunError, match="not found"):
+        compute_dataset_id(str(tmp_path / "nope.h5ad"))
+
+
 # === run()：容器执行错误链 ===
 
 def _fake_proc(monkeypatch, *, rc=0, stdout="{}", stderr=""):

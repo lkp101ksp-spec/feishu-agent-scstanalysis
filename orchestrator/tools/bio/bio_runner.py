@@ -30,7 +30,11 @@ def compute_dataset_id(abs_path: str) -> str:
     """dataset_ref = sha1(绝对路径 + 文件大小)[:12]（spec §3.3 幂等键）。
 
     同路径同大小二次分析复用 workspace；文件变化后 id 变化（视为新数据集）。
+    文件不存在抛 BioRunError（对齐 compute_dataset_id_dir 的 is_dir 检查）。
     """
+    if not os.path.isfile(abs_path):
+        raise BioRunError(
+            "SC_FILE_NOT_FOUND", f"data file not found: {abs_path}")
     st = os.stat(abs_path)
     digest = hashlib.sha1(
         f"{os.path.realpath(abs_path)}:{st.st_size}".encode("utf-8")
