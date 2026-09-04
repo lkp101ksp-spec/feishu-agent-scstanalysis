@@ -110,6 +110,26 @@ class TestFailureDisable:
         r = _loop(llm, lambda n, a: {"ok": False, "error": "x"}, max_steps=10).run("sys", "任务")
         assert r.status == "no_tools"
 
+    def test_tools_disabled_flag_set_after_three_failures(self):
+        """连败禁用后文字收尾：status=final 且 tools_disabled=True（Phase 27 真机修复）。
+
+        真机发现：连败禁用后模型按引导文字总结 → final，诊断链依赖该标记识别
+        "实质失败的 final"。
+        """
+        seq = [{"role": "assistant", "content": "", "tool_calls": [_call("t1", cid=f"c{i}")]}
+               for i in range(3)]
+        seq.append({"role": "assistant", "content": "放弃工具，直接作答", "tool_calls": None})
+        llm = FakeLLM(seq)
+        r = _loop(llm, lambda n, a: {"ok": False, "error": "x"}, max_steps=10).run("sys", "任务")
+        assert r.status == "final"
+        assert r.tools_disabled is True
+
+    def test_tools_disabled_flag_false_on_normal_final(self):
+        """正常 final（无连败禁用）→ tools_disabled=False。"""
+        llm = FakeLLM([{"role": "assistant", "content": "答案", "tool_calls": None}])
+        r = _loop(llm, lambda n, a: {"ok": True}).run("sys", "任务")
+        assert r.status == "final" and r.tools_disabled is False
+
 
 class TestApproval:
     def test_l2_denied_returns_observation_without_dispatch(self):

@@ -243,6 +243,35 @@ def test_e2e_failed_skill_triggers_improve_card_and_apply(e2e):
     assert (e2e["tmp"] / "skills" / "reportgen" / "SKILL.md.bak").exists()
 
 
+def test_e2e_final_after_tools_disabled_still_diagnoses(e2e):
+    """连败禁用后模型文字收尾（final）→ 仍触发诊断卡（Phase 27 真机修复）。
+
+    真机发现：连败禁用后模型按引导文字总结（final），旧触发条件
+    status != "final" 把这条最常见路径漏掉了。修复后 final+tools_disabled
+    也诊断；"先失败后成功"（无连败禁用）仍不诊断。
+    """
+    from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+
+    suggestion = {"skill": "reportgen", "issue": "参数说明不清",
+                  "fix": "补充参数示例", "file": "SKILL.md",
+                  "patch": "### 参数示例\n`{\"tag\": \"daily\"}`"}
+    # 3 轮非法参数连败 + 第 4 轮按引导文字收尾 → final + tools_disabled
+    script = _bad_args_skill_script(3)
+    script.append({"role": "assistant", "content": "工具被禁用，文字总结", "tool_calls": None})
+    llm = FakeLLM(script, chat_response=json.dumps(suggestion, ensure_ascii=False))
+    runner = e2e["runner"]
+    runner.llm = llm
+    runner.diagnoser = SkillDiagnoser(llm=llm, skills_dir=e2e["tmp"] / "skills")
+
+    r = runner.run_sync(FakeIncoming("/code 生成报表"), "生成报表")
+
+    assert r["status"] == "final"
+    cards = [c.args[1] for c in e2e["im"].send_card.call_args_list]
+    assert len(cards) == 1
+    value = cards[0]["elements"][-1]["actions"][0]["value"]
+    assert value["action"] == "skill_improve"
+
+
 def test_e2e_crashed_skill_subprocess_triggers_diagnose(e2e):
     """子进程真失败全链：合法参数调 crash 工具 → SCRIPT_ERROR（透传修复后
     真实 ok=False）→ 连败禁用 → no_tools → 诊断发卡 → 批准写回。"""

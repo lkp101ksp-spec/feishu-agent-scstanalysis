@@ -248,8 +248,16 @@ class CodingRunner:
     # ------------------------------------------------------------------ #
     def _maybe_diagnose_skill(self, incoming, result: LoopResult,
                               task_text: str) -> None:
-        """失败轨迹 → SkillDiagnoser 诊断 → 改进审批卡；任何异常只记日志。"""
-        if self.diagnoser is None or result.status == "final":
+        """失败轨迹 → SkillDiagnoser 诊断 → 改进审批卡；任何异常只记日志。
+
+        触发条件（Phase 27 真机修复）：status != final，或 final 但发生过
+        连败禁用（tools_disabled=True）——连败禁用后模型按引导文字收尾
+        会得到 final，但任务实质失败，仍应诊断；"先失败后成功"的正常
+        final（无禁用）不触发。
+        """
+        if self.diagnoser is None:
+            return
+        if result.status == "final" and not result.tools_disabled:
             return
         try:
             suggestion = self.diagnoser.diagnose(result, task_text)

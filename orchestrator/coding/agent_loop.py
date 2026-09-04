@@ -30,6 +30,9 @@ class LoopResult:
     approx_tokens: int
     abort_reason: str = ""
     tool_events: list[dict] = field(default_factory=list)  # {step,name,ok}
+    # 连败禁用是否触发过（Phase 27 真机修复）：禁用后模型按引导文字收尾
+    # 会得到 final 状态，诊断链依赖该标记区分"实质失败的 final"
+    tools_disabled: bool = False
 
 
 def truncate_observation(payload: dict, limit: int = OBS_TRUNCATE) -> str:
@@ -99,7 +102,7 @@ class AgentLoop:
             if time.monotonic() - started >= self.timeout_sec:
                 return LoopResult("timeout", "", step - 1,
                                   self._approx_tokens(messages), "timeout exceeded",
-                                  self.events)
+                                  self.events, disabled)
 
             resp = self.llm.chat_with_tools(
                 messages, [] if disabled else self.tools_schema, model=self.model)
@@ -110,12 +113,13 @@ class AgentLoop:
                 return LoopResult("no_tools", content, step,
                                   self._approx_tokens(messages),
                                   "model kept requesting tools after disable",
-                                  self.events)
+                                  self.events, disabled)
 
             if not calls:
                 self._emit(step, {"event": "final", "text": content[:200]})
                 return LoopResult("final", content, step,
-                                  self._approx_tokens(messages), "", self.events)
+                                  self._approx_tokens(messages), "", self.events,
+                                  disabled)
 
             messages.append({"role": "assistant", "content": resp.get("content") or "",
                              "tool_calls": calls})
@@ -152,11 +156,11 @@ class AgentLoop:
                     return LoopResult("budget_exhausted", content or "", step,
                                       self._approx_tokens(messages),
                                       "token budget exceeded after compress",
-                                      self.events)
+                                      self.events, disabled)
 
         return LoopResult("max_steps", "", self.max_steps,
                           self._approx_tokens(messages), "max steps reached",
-                          self.events)
+                          self.events, disabled)
 
     # ------------------------------------------------------------------ #
     def _execute_tool(self, name: str, arguments) -> dict:
