@@ -9,6 +9,15 @@ RUN pip install --no-cache-dir \
     numpy pandas scipy matplotlib h5py \
     anndata scanpy leidenalg igraph
 
+# Phase 31 富集分析：gseapy + Enrichr 基因集预取
+# （构建期有网时下载 hallmark/GO BP/KEGG 三库存 /opt/gene_sets/，
+#   运行期容器 --network none 离线可用；源不可达时 build 报错重试即可）
+COPY fetch_gene_sets.py /tmp/fetch_gene_sets.py
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple gseapy \
+    && python /tmp/fetch_gene_sets.py \
+    && rm /tmp/fetch_gene_sets.py
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

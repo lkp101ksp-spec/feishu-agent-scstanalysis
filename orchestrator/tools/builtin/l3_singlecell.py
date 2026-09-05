@@ -1,4 +1,4 @@
-"""Phase 20：单细胞 sc_* 工具注册（spec §4，5 个 L1_compute 工具）。
+"""Phase 20/31：单细胞 sc_* 工具注册（spec §4；6 个 L1_compute 工具）。
 
 BioRunner 由 runtime 组装注入（image/workspace/data_roots 可配）；
 handler 捕获 BioRunError 转工具级 error_code/error_message。
@@ -6,8 +6,8 @@ handler 捕获 BioRunError 转工具级 error_code/error_message。
 from __future__ import annotations
 
 from orchestrator.tools.bio.bio_runner import (
-    BioRunner,
     BioRunError,
+    BioRunner,
     compute_dataset_id,
     parse_gene_list,
 )
@@ -26,7 +26,7 @@ def register_l3_singlecell(
     bio_use_gpu: bool = False,
     bio_gpu_image: str = "feishu-research-agent/bio:gpu-latest",
 ) -> None:
-    """注册 sc_* 5 工具（runner 由 runtime 装配后传入）。
+    """注册 sc_* 6 工具（runner 由 runtime 装配后传入）。
 
     bio_use_gpu=True 时 sc_process/sc_markers 切 GPU 镜像 + --gpus all
     （Phase 25，spec 2026-09-02-bio-gpu-image-design §1.5）。
@@ -104,6 +104,23 @@ def register_l3_singlecell(
             out = runner.run("plot", {
                 "dataset_id": dataset_ref,
                 "genes": parse_gene_list(genes), "kind": kind,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_enrichment(*, dataset_ref: str, group: str = "",
+                      gene_sets: list[str] | None = None,
+                      top_n: int = 15, min_log2fc: float = 0.25,
+                      method: str = "wilcoxon") -> dict:
+        """富集分析（Phase 31）：DEG→ORA + GSEA → csv/png。"""
+        try:
+            out = runner.run("enrichment", {
+                "dataset_id": dataset_ref, "group": group,
+                "gene_sets": gene_sets or ["hallmark", "go_bp", "kegg"],
+                "top_n": top_n, "min_log2fc": min_log2fc,
+                "rank_method": method,
             })
         except BioRunError as e:
             return _err(e)
@@ -218,4 +235,43 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_plot,
         timeout_sec=600,
+    ))
+    registry.register(ToolSpec(
+        name="sc_enrichment",
+        description=(
+            "富集分析（Phase 31，对齐 clusterProfiler ORA+GSEA 能力）："
+            "指定簇 rank_genes_groups 出 DEG → 上调基因 ORA（超几何检验）"
+            "+ 全基因排序 GSEA（prerank）。基因集：hallmark（50 通路）/"
+            "go_bp（GO 生物过程）/ kegg（KEGG 2021 通路），可任选组合。"
+            "输出每集 top 通路（ORA: adj_p/odds_ratio/genes；GSEA: nes/fdr_q）"
+            "与 ora.csv/gsea.csv/柱状图 png。需先跑 sc_process。"
+            "上调基因 <5 时会报错——此时调低 min_log2fc 重试。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "group": {"type": "string",
+                          "description": "目标簇（leiden 标签，如 '0'；"
+                                         "空=第一个簇）"},
+                "gene_sets": {
+                    "type": "array", "uniqueItems": True,
+                    "items": {"type": "string",
+                              "enum": ["hallmark", "go_bp", "kegg"]},
+                    "default": ["hallmark", "go_bp", "kegg"]},
+                "top_n": {"type": "integer", "default": 15,
+                          "maximum": 30,
+                          "description": "每基因集返回/绘图的通路数"},
+                "min_log2fc": {"type": "number", "default": 0.25,
+                               "description": "ORA 上调基因入选阈值"},
+                "method": {"type": "string", "default": "wilcoxon",
+                           "enum": ["wilcoxon", "t-test"],
+                           "description": "DEG 检验方法"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_enrichment,
+        timeout_sec=1800,
     ))

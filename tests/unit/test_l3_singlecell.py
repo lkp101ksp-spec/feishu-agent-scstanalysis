@@ -2,8 +2,6 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-import pytest
-
 from orchestrator.tools.bio.bio_runner import BioRunError
 from orchestrator.tools.builtin.l3_singlecell import register_l3_singlecell
 from orchestrator.tools.tool_registry import ToolRegistry
@@ -141,3 +139,53 @@ def test_sc_qc_never_uses_gpu(tmp_path):
     kw = runner.run.call_args.kwargs
     assert kw.get("image") is None
     assert kw.get("gpus") is False
+
+
+# === Phase 31：富集分析 ===
+
+
+def test_sc_enrichment_registered_l1(tmp_path):
+    """sc_enrichment 注册可见且 L1_compute（研究链路可规划）。"""
+    reg, _ = _registry(tmp_path)
+    names = [t.name for t in reg.list(planner_visible=True)]
+    assert "sc_enrichment" in names
+    assert reg.get("sc_enrichment").risk_level == "L1_compute"
+
+
+def test_sc_enrichment_forwards_params(tmp_path):
+    """handler 转发 enrichment 脚本参数（默认基因集三件 + 阈值）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "group": "3",
+        "ora": {"hallmark": []}, "gsea": {"hallmark": []},
+        "ora_png": "/ws/d/enrichment/ora_bar.png"}
+    out = reg.get("sc_enrichment").handler(
+        dataset_ref="d", group="3", top_n=10, min_log2fc=0.5)
+    args = runner.run.call_args.args
+    assert args[0] == "enrichment"
+    assert args[1]["dataset_id"] == "d"
+    assert args[1]["group"] == "3"
+    assert args[1]["gene_sets"] == ["hallmark", "go_bp", "kegg"]
+    assert args[1]["top_n"] == 10
+    assert args[1]["min_log2fc"] == 0.5
+    assert "ok" not in out
+    assert out["ora_png"].endswith("ora_bar.png")
+
+
+def test_sc_enrichment_error_passthrough(tmp_path):
+    """BioRunError → error_code 透传（镜像未重建时 SC_SCRIPT_ERROR 可见）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.side_effect = BioRunError(
+        "SC_SCRIPT_ERROR", "FileNotFoundError: /opt/gene_sets/kegg.json")
+    out = reg.get("sc_enrichment").handler(dataset_ref="d")
+    assert out["error_code"] == "SC_SCRIPT_ERROR"
+    assert "gene_sets" in out["error_message"]
+
+
+def test_sc_enrichment_schema_enum(tmp_path):
+    """基因集参数 enum 锁定三个别名，防 planner 幻觉库名。"""
+    reg, _ = _registry(tmp_path)
+    props = reg.get("sc_enrichment").parameters["properties"]
+    assert set(props["gene_sets"]["items"]["enum"]) == {
+        "hallmark", "go_bp", "kegg"}
+    assert reg.get("sc_enrichment").timeout_sec == 1800
