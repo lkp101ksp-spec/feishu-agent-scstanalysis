@@ -130,6 +130,7 @@ class Orchestrator:
                     self.registry, bio_runner,
                     bio_use_gpu=settings.bio_use_gpu,
                     bio_gpu_image=settings.bio_gpu_image,
+                    bio_scenic_db_root=settings.bio_scenic_db_root,
                 )
                 # === Phase 21: 空间转录组 st_* 工具（st 镜像 + /opt/st_tools） ===
                 from orchestrator.tools.builtin.l3_spatial import (

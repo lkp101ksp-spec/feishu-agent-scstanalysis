@@ -53,6 +53,17 @@ RUN apt-get update \
     && apt-get purge -y --no-install-recommends g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# Phase 36 调控网络：pyscenic 0.12.1。锁 setuptools<81（84+ 删了
+# pkg_resources，ctxcore import 即炸）；sitecustomize 补 numpy>=1.24
+# 移除的别名（np.object/np.float），放 site-packages 由 site 自动导入
+# 以覆盖 dask worker 子进程。宿主 probe 实测：pandas 2.3.3/numpy 2.5.2/
+# dask 2026.8.0 下三幕全绿（GRNBoost2 走 create_graph 绕路、prune2df
+# from_delayed 物化 monkeypatch——均在 scenic.py 内）。
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    pyscenic "setuptools<81"
+COPY scenic_site/sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

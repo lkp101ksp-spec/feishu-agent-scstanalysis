@@ -594,3 +594,65 @@ def test_sc_cellcycle_forwards_params(tmp_path):
     assert args[0] == "cellcycle"
     assert out["phase_counts"]["G1"] == 150
     assert reg.get("sc_cellcycle").timeout_sec == 600
+
+
+# === Phase 36：调控网络（scenic） ===
+
+
+def test_sc_scenic_registered_l1(tmp_path):
+    """sc_scenic 注册可见、L1_compute、timeout 3600。"""
+    reg, _ = _registry(tmp_path)
+    names = [t.name for t in reg.list(planner_visible=True)]
+    assert "sc_scenic" in names
+    spec = reg.get("sc_scenic")
+    assert spec.risk_level == "L1_compute"
+    assert spec.timeout_sec == 3600
+
+
+def test_sc_scenic_forwards_and_mounts(tmp_path):
+    """db 目录存在时转发参数并只读挂载两个 DB 目录。"""
+    from orchestrator.tools.builtin.l3_singlecell import (
+        register_l3_singlecell,
+    )
+    (tmp_path / "cisTarget_databases").mkdir()
+    (tmp_path / "motifAnnotations").mkdir()
+    reg = ToolRegistry()
+    runner = SimpleNamespace(
+        run=MagicMock(), resolve_data_path=MagicMock())
+    register_l3_singlecell(reg, runner, bio_scenic_db_root=str(tmp_path))
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "species": "human",
+        "n_regulons": 12, "top_regulons_by_cluster": {"0": ["SPI1(+)"]}}
+    out = reg.get("sc_scenic").handler(dataset_ref="d", species="human",
+                                       db="10kb", max_cells=1500)
+    call = runner.run.call_args
+    assert call.args[0] == "scenic"
+    assert call.args[1]["db"] == "10kb"
+    assert call.args[1]["max_cells"] == 1500
+    mount_targets = sorted(m[1] for m in call.kwargs["mounts"])
+    assert mount_targets == ["/scenic_db/cistarget", "/scenic_db/motifannot"]
+    assert call.kwargs["timeout_sec"] == 3600
+    assert "ok" not in out
+    assert out["n_regulons"] == 12
+
+
+def test_sc_scenic_config_error_when_db_missing(tmp_path):
+    """DB 目录缺失时不进容器，直接 SC_CONFIG 错误。"""
+    from orchestrator.tools.builtin.l3_singlecell import (
+        register_l3_singlecell,
+    )
+    reg = ToolRegistry()
+    runner = SimpleNamespace(
+        run=MagicMock(), resolve_data_path=MagicMock())
+    register_l3_singlecell(reg, runner, bio_scenic_db_root=str(tmp_path))
+    out = reg.get("sc_scenic").handler(dataset_ref="d")
+    assert out["error_code"] == "SC_CONFIG"
+    runner.run.assert_not_called()
+
+
+def test_sc_scenic_schema_enums(tmp_path):
+    """species/db enum 锁定。"""
+    reg, _ = _registry(tmp_path)
+    props = reg.get("sc_scenic").parameters["properties"]
+    assert props["species"]["enum"] == ["human", "mouse"]
+    assert props["db"]["enum"] == ["500bp", "10kb", "both"]

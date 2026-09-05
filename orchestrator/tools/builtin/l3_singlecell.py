@@ -1,9 +1,11 @@
-"""Phase 20/31/32/33/34/35：单细胞 sc_* 工具注册（spec §4；20 个 L1_compute 工具）。
+"""Phase 20/31/32/33/34/35/36：单细胞 sc_* 工具注册（spec §4；21 个 L1_compute 工具）。
 
 BioRunner 由 runtime 组装注入（image/workspace/data_roots 可配）；
 handler 捕获 BioRunError 转工具级 error_code/error_message。
 """
 from __future__ import annotations
+
+from pathlib import Path
 
 from orchestrator.tools.bio.bio_runner import (
     BioRunError,
@@ -25,6 +27,7 @@ def register_l3_singlecell(
     *,
     bio_use_gpu: bool = False,
     bio_gpu_image: str = "feishu-research-agent/bio:gpu-latest",
+    bio_scenic_db_root: str = "",
 ) -> None:
     """注册 sc_* 6 工具（runner 由 runtime 装配后传入）。
 
@@ -333,6 +336,36 @@ def register_l3_singlecell(
             out = runner.run("cellcycle", {
                 "dataset_id": dataset_ref, "celltype_col": celltype_col,
             })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_scenic(*, dataset_ref: str, species: str = "human",
+                  db: str = "500bp", max_cells: int = 3000,
+                  celltype_col: str = "leiden", n_workers: int = 2,
+                  seed: int = 42) -> dict:
+        """转录调控网络（Phase 36，pySCENIC）：DB 目录只读挂载进容器。"""
+        db_root = (Path(bio_scenic_db_root) if bio_scenic_db_root
+                   else Path(__file__).resolve().parents[3])
+        ct_dir = db_root / "cisTarget_databases"
+        ma_dir = db_root / "motifAnnotations"
+        if not ct_dir.is_dir() or not ma_dir.is_dir():
+            return {
+                "error_code": "SC_CONFIG",
+                "error_message": (
+                    f"SCENIC db not found: expect {ct_dir} and {ma_dir}; "
+                    "set BIO_SCENIC_DB_ROOT to the directory containing "
+                    "cisTarget_databases/ and motifAnnotations/"),
+            }
+        try:
+            out = runner.run("scenic", {
+                "dataset_id": dataset_ref, "species": species, "db": db,
+                "max_cells": max_cells, "celltype_col": celltype_col,
+                "n_workers": n_workers, "seed": seed,
+            }, mounts=[(str(ct_dir), "/scenic_db/cistarget"),
+                       (str(ma_dir), "/scenic_db/motifannot")],
+                timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -907,4 +940,44 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_cellcycle,
         timeout_sec=600,
+    ))
+    registry.register(ToolSpec(
+        name="sc_scenic",
+        description=(
+            "转录调控网络推断（Phase 36，pySCENIC 三幕）：GRNBoost2 共表达"
+            "→ cisTarget motif 剪枝 → AUCell 打分，回答\"各细胞类型的核心"
+            "转录因子/regulon 是什么、活性多高\"。species 选 human/mouse，"
+            "db 选 500bp（快）/10kb（更多 regulon）/both。默认按簇分层抽样"
+            " 3000 细胞（大计算量护栏）。产物：adjacencies 共表达表、"
+            "regulons 列表、regulon_auc.csv（抽样细胞×regulon 活性）、"
+            "rss.csv（簇特异 regulon 排序）、热图 png。n_regulons=0 不算"
+            "失败（小样本/motif 命中低正常，note 会说明）。需先跑 "
+            "sc_process。耗时较长（分钟~小时级）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "species": {"type": "string", "default": "human",
+                            "enum": ["human", "mouse"]},
+                "db": {"type": "string", "default": "500bp",
+                       "enum": ["500bp", "10kb", "both"],
+                       "description": "cisTarget rankings 库（500bp 快，"
+                                      "10kb 捕获更多 regulon）"},
+                "max_cells": {"type": "integer", "default": 3000,
+                              "description": "分层抽样上限（GRNBoost2 是"
+                                             "计算重头）"},
+                "celltype_col": {"type": "string", "default": "leiden",
+                                 "description": "簇标签列（抽样/RSS 用）"},
+                "n_workers": {"type": "integer", "default": 2,
+                              "description": "dask worker 数（内存随 worker "
+                                             "线性涨，16g 容器勿超 4）"},
+                "seed": {"type": "integer", "default": 42},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_scenic,
+        timeout_sec=3600,
     ))

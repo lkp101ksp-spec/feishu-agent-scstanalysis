@@ -122,6 +122,9 @@ class Settings:
     # bio 容器资源限额（docker --cpus/--memory）
     bio_cpus: str = "4"
     bio_memory: str = "16g"
+    # Phase 36：SCENIC 数据库根（cisTarget_databases/ 与 motifAnnotations/
+    # 所在目录）；空 = 仓库根。容器内只读挂载到 /scenic_db/。
+    bio_scenic_db_root: str = ""
     # === Phase 23: bio_workspace 磁盘治理（TTL+LRU 周期清理，spec §3） ===
     # 数据集保留期（秒，默认 7d）：last_used 早于此即整目录删除
     bio_workspace_ttl_sec: int = 604800
@@ -274,6 +277,7 @@ def load_settings() -> Settings:
             os.environ.get("BIO_ST_DECONVOLVE_TIMEOUT", "3600")),
         bio_cpus=os.environ.get("BIO_CPUS", "4"),
         bio_memory=os.environ.get("BIO_MEMORY", "16g"),
+        bio_scenic_db_root=os.environ.get("BIO_SCENIC_DB_ROOT", ""),
         # Phase 23：bio_workspace 磁盘治理
         bio_workspace_ttl_sec=int(
             os.environ.get("BIO_WORKSPACE_TTL_SEC", "604800")),
