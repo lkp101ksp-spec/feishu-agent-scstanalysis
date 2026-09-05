@@ -1,4 +1,4 @@
-"""Phase 20/31：单细胞 sc_* 工具注册（spec §4；6 个 L1_compute 工具）。
+"""Phase 20/31/32：单细胞 sc_* 工具注册（spec §4；9 个 L1_compute 工具）。
 
 BioRunner 由 runtime 组装注入（image/workspace/data_roots 可配）；
 handler 捕获 BioRunError 转工具级 error_code/error_message。
@@ -121,6 +121,40 @@ def register_l3_singlecell(
                 "gene_sets": gene_sets or ["hallmark", "go_bp", "kegg"],
                 "top_n": top_n, "min_log2fc": min_log2fc,
                 "rank_method": method,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_score_genes(*, dataset_ref: str,
+                       gene_sets: dict[str, list[str]]) -> dict:
+        """基因集打分（Phase 32）：多基因集 score_genes → 分数/图。"""
+        try:
+            out = runner.run("score", {
+                "dataset_id": dataset_ref, "gene_sets": gene_sets,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_metabolism(*, dataset_ref: str, top_n: int = 30) -> dict:
+        """代谢通路活性（Phase 32）：KEGG 逐通路打分 → 簇均值+热图。"""
+        try:
+            out = runner.run("metabolism", {
+                "dataset_id": dataset_ref, "top_n": top_n,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_pseudotime(*, dataset_ref: str, root_marker: str = "") -> dict:
+        """扩散伪时序（Phase 32）：diffmap+DPT → 伪时序/轨迹图。"""
+        try:
+            out = runner.run("pseudotime", {
+                "dataset_id": dataset_ref, "root_marker": root_marker,
             })
         except BioRunError as e:
             return _err(e)
@@ -274,4 +308,85 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_enrichment,
         timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_score_genes",
+        description=(
+            "基因集打分（Phase 32，等价 Seurat AddModuleScore / toolsv1 基因集打分）："
+            "自定义基因集（如 T 细胞毒性 {Cytotoxic: [GZMB,PRF1]}、"
+            "耗竭 {Exhausted: [PDCD1,TIGIT,LAG3]}）一次多集打分，"
+            "输出每集每簇 mean/median 排名、gene_set_scores.csv、"
+            "UMAP 着色图与按簇小提琴图。基因与数据求交；"
+            "空交集的集被跳过（全部为空时报错）。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "gene_sets": {
+                    "type": "object",
+                    "minProperties": 1, "maxProperties": 8,
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
+                    "description": "基因集字典 {集名: [基因符号列表]}，"
+                                   "最多 8 个集",
+                },
+            },
+            "required": ["dataset_ref", "gene_sets"],
+        },
+        risk_level="L1_compute",
+        handler=sc_score_genes,
+        timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_metabolism",
+        description=(
+            "代谢通路活性分析（Phase 32，对齐 scMetabolism）：基于 KEGG 2021 "
+            "通路库（镜像内置，离线）逐通路单细胞打分，输出代谢活性全矩阵 csv、"
+            "簇×通路均值 csv、簇间方差 top_n 通路热图与 top 通路 UMAP 图。"
+            "比较各簇代谢重编程（糖酵解/OXPHOS 等）首选。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "top_n": {"type": "integer", "default": 30, "maximum": 100,
+                          "description": "返回/绘图的高方差通路数"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_metabolism,
+        timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_pseudotime",
+        description=(
+            "扩散伪时序（Phase 32，scanpy diffmap+DPT，对齐 Monocle 拟时序排序场景）："
+            "推断细胞分化/发育顺序。root_marker 指定根细胞标记基因"
+            "（取其表达最高的细胞为根，如干细胞/前体 marker；"
+            "空或不存在则取第 0 个细胞）。输出每簇伪时序均值表、"
+            "pseudotime.csv、UMAP 伪时序图（标注根细胞）与 PAGA 轨迹图。"
+            "注意：不推断分支（Monocle2 BEAM/CytoTRACE2 不在范围）。"
+            "需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "root_marker": {"type": "string", "default": "",
+                                "description": "根细胞定位标记基因"
+                                               "（如 NKG7/干细胞 marker）"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_pseudotime,
+        timeout_sec=1200,
     ))

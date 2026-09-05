@@ -189,3 +189,92 @@ def test_sc_enrichment_schema_enum(tmp_path):
     assert set(props["gene_sets"]["items"]["enum"]) == {
         "hallmark", "go_bp", "kegg"}
     assert reg.get("sc_enrichment").timeout_sec == 1800
+
+
+# === Phase 32：常用分析（打分/代谢/拟时序） ===
+
+
+def test_sc_phase32_tools_registered_l1(tmp_path):
+    """三新工具注册可见且 L1_compute（研究链路可规划）。"""
+    reg, _ = _registry(tmp_path)
+    names = [t.name for t in reg.list(planner_visible=True)]
+    for name in ("sc_score_genes", "sc_metabolism", "sc_pseudotime"):
+        assert name in names
+        assert reg.get(name).risk_level == "L1_compute"
+
+
+def test_sc_score_genes_forwards_params(tmp_path):
+    """handler 原样转发 gene_sets 字典（多基因集一次调用）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "n_cells": 100,
+        "gene_sets": [{"name": "Cyto", "n_used": 2}], "skipped": []}
+    gs = {"Cyto": ["GZMB", "PRF1"], "Exh": ["PDCD1"]}
+    out = reg.get("sc_score_genes").handler(dataset_ref="d", gene_sets=gs)
+    args = runner.run.call_args.args
+    assert args[0] == "score"
+    assert args[1]["gene_sets"] == gs
+    assert "ok" not in out
+    assert out["gene_sets"][0]["name"] == "Cyto"
+
+
+def test_sc_score_genes_error_passthrough(tmp_path):
+    """BioRunError → error_code 透传（全部基因集空交集时可见）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.side_effect = BioRunError(
+        "SC_SCRIPT_ERROR", "ValueError: gene set 'X': no genes found in data")
+    out = reg.get("sc_score_genes").handler(
+        dataset_ref="d", gene_sets={"X": ["NOPE1"]})
+    assert out["error_code"] == "SC_SCRIPT_ERROR"
+    assert "no genes" in out["error_message"]
+
+
+def test_sc_score_genes_schema_limits(tmp_path):
+    """gene_sets object schema 限 1..8 个集（防 planner 一次塞爆）。"""
+    reg, _ = _registry(tmp_path)
+    props = reg.get("sc_score_genes").parameters["properties"]
+    assert props["gene_sets"]["minProperties"] == 1
+    assert props["gene_sets"]["maxProperties"] == 8
+    assert set(reg.get("sc_score_genes").parameters["required"]) == {
+        "dataset_ref", "gene_sets"}
+    assert reg.get("sc_score_genes").timeout_sec == 1800
+
+
+def test_sc_metabolism_forwards_params(tmp_path):
+    """handler 转发 metabolism 脚本参数（top_n 降维输出数）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "n_pathways_scored": 280,
+        "top_pathways": [{"term": "Glycolysis"}]}
+    out = reg.get("sc_metabolism").handler(dataset_ref="d", top_n=50)
+    args = runner.run.call_args.args
+    assert args[0] == "metabolism"
+    assert args[1]["top_n"] == 50
+    assert "ok" not in out
+    assert out["n_pathways_scored"] == 280
+
+
+def test_sc_pseudotime_forwards_params(tmp_path):
+    """handler 转发 pseudotime 脚本参数（root_marker 定根）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "diffmap_dpt",
+        "root_note": "NKG7-highest cell #42"}
+    out = reg.get("sc_pseudotime").handler(
+        dataset_ref="d", root_marker="NKG7")
+    args = runner.run.call_args.args
+    assert args[0] == "pseudotime"
+    assert args[1]["root_marker"] == "NKG7"
+    assert "ok" not in out
+    assert out["method"] == "diffmap_dpt"
+    assert reg.get("sc_pseudotime").timeout_sec == 1200
+
+
+def test_sc_pseudotime_error_passthrough(tmp_path):
+    """BioRunError → error_code 透传（缺 neighbors 时可见）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.side_effect = BioRunError(
+        "SC_SCRIPT_ERROR", "ValueError: lacks neighbors graph")
+    out = reg.get("sc_pseudotime").handler(dataset_ref="d")
+    assert out["error_code"] == "SC_SCRIPT_ERROR"
+    assert "neighbors" in out["error_message"]
