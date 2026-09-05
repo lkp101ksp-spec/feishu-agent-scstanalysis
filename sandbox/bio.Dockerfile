@@ -18,6 +18,16 @@ RUN pip install --no-cache-dir \
     && python /tmp/fetch_gene_sets.py \
     && rm /tmp/fetch_gene_sets.py
 
+# Phase 33 批次整合：bbknn（独立层，保上方 gene_sets 缓存层）。
+# annoy（bbknn 硬依赖）无 manylinux 轮需源码编译——同层临时装 g++，
+# 编译完成后 purge，层体积近似不变。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && pip install --no-cache-dir \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple bbknn \
+    && apt-get purge -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

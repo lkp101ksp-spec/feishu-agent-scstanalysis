@@ -161,6 +161,66 @@ def register_l3_singlecell(
         out.pop("ok", None)
         return out
 
+    def sc_de(*, dataset_ref: str, groupby: str, group_a: str,
+              group_b: str, method: str = "wilcoxon", top_n: int = 20) -> dict:
+        """组间差异（Phase 33）：两组定向 DE → csv+火山图。"""
+        try:
+            out = runner.run("de", {
+                "dataset_id": dataset_ref, "groupby": groupby,
+                "group_a": group_a, "group_b": group_b,
+                "method": method, "top_n": top_n,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_subcluster(*, dataset_ref: str, clusters: list[str],
+                      n_top_hvg: int = 2000, n_pcs: int = 50,
+                      n_neighbors: int = 15,
+                      resolution: float = 1.0) -> dict:
+        """亚聚类（Phase 33）：指定簇子集重聚类 → 新 dataset_ref。"""
+        try:
+            out = runner.run("subcluster", {
+                "dataset_id": dataset_ref, "clusters": clusters,
+                "n_top_hvg": n_top_hvg, "n_pcs": n_pcs,
+                "n_neighbors": n_neighbors, "resolution": resolution,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_integrate(*, dataset_ref: str, batch: str,
+                     method: str = "bbknn", n_top_hvg: int = 2000,
+                     n_pcs: int = 50, n_neighbors: int = 15,
+                     resolution: float = 1.0) -> dict:
+        """批次整合（Phase 33）：bbknn → 新 dataset_ref。"""
+        try:
+            out = runner.run("integrate", {
+                "dataset_id": dataset_ref, "batch": batch,
+                "method": method, "n_top_hvg": n_top_hvg,
+                "n_pcs": n_pcs, "n_neighbors": n_neighbors,
+                "resolution": resolution,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_cellfreq(*, dataset_ref: str, by: str, group: str = "",
+                    celltype_col: str = "leiden") -> dict:
+        """组成比较（Phase 33）：比例表+卡方 → csv+堆叠图。"""
+        try:
+            out = runner.run("cellfreq", {
+                "dataset_id": dataset_ref, "by": by, "group": group,
+                "celltype_col": celltype_col,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     registry.register(ToolSpec(
         name="sc_load",
         description=(
@@ -389,4 +449,124 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_pseudotime,
         timeout_sec=1200,
+    ))
+    registry.register(ToolSpec(
+        name="sc_de",
+        description=(
+            "组间差异分析（Phase 33，对齐 server_differential_analysis）："
+            "obs 任意分组列上的两组定向对比（如 condition 下 treated vs "
+            "control、样本 A vs B、同一细胞类型内用药前后）。输出上调/下调"
+            "top 基因表、全量 DEG csv 与火山图 png。列或取值不存在时错误"
+            "消息会列出可用分组列与已有取值。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "groupby": {"type": "string",
+                            "description": "obs 分组列名（如 condition/sample）"},
+                "group_a": {"type": "string",
+                            "description": "对比组（上调方向）取值"},
+                "group_b": {"type": "string",
+                            "description": "参照组取值"},
+                "method": {"type": "string", "default": "wilcoxon",
+                           "enum": ["wilcoxon", "t-test"]},
+                "top_n": {"type": "integer", "default": 20,
+                          "maximum": 100,
+                          "description": "上调/下调各返回的基因数"},
+            },
+            "required": ["dataset_ref", "groupby", "group_a", "group_b"],
+        },
+        risk_level="L1_compute",
+        handler=sc_de,
+        timeout_sec=1200,
+    ))
+    registry.register(ToolSpec(
+        name="sc_subcluster",
+        description=(
+            "亚聚类（Phase 33）：取指定 leiden 簇子集，从 raw 重跑 HVG→PCA→"
+            "UMAP→Leiden（标签重编 0..k），发现大群内部异质性。输出**新 "
+            "dataset_ref**（形如 {原id}_sub0-1）——后续 sc_markers/sc_enrichment/"
+            "sc_score_genes 等工具直接传该新 ref 即可，支持多级亚聚类。"
+            "产物含新 umap.png 与簇大小。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "父级 sc_process 的 dataset_ref"},
+                "clusters": {
+                    "type": "array", "minItems": 1,
+                    "items": {"type": "string"},
+                    "description": "要亚聚类的 leiden 簇标签列表，如 ['0','1']"},
+                "n_top_hvg": {"type": "integer", "default": 2000},
+                "n_pcs": {"type": "integer", "default": 50},
+                "n_neighbors": {"type": "integer", "default": 15},
+                "resolution": {"type": "number", "default": 1.0,
+                               "description": "子集内 Leiden 分辨率"},
+            },
+            "required": ["dataset_ref", "clusters"],
+        },
+        risk_level="L1_compute",
+        handler=sc_subcluster,
+        timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_integrate",
+        description=(
+            "批次整合（Phase 33，对齐 server_batch_correction）：多样本合并"
+            "去除批次效应（bbknn）。输入与 sc_process 相同（filtered/raw），"
+            "obs 需含批次列（如 sample/batch）。输出**新 dataset_ref**"
+            "（形如 {原id}_bbknn）与双联 UMAP 图（左按批次着色看混合程度、"
+            "右按新 leiden）——下游工具直接传新 ref。批次列不存在时错误消息"
+            "列出可用列。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_load/sc_qc 输出的 dataset_ref"},
+                "batch": {"type": "string",
+                          "description": "obs 批次列名（如 sample/batch）"},
+                "method": {"type": "string", "default": "bbknn",
+                           "enum": ["bbknn"]},
+                "n_top_hvg": {"type": "integer", "default": 2000},
+                "n_pcs": {"type": "integer", "default": 50},
+                "n_neighbors": {"type": "integer", "default": 15},
+                "resolution": {"type": "number", "default": 1.0},
+            },
+            "required": ["dataset_ref", "batch"],
+        },
+        risk_level="L1_compute",
+        handler=sc_integrate,
+        timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_cellfreq",
+        description=(
+            "细胞组成比较（Phase 33，对齐 server_cell_freq_merged）：按样本/"
+            "受试者列统计各簇细胞比例（csv + 堆叠柱状图）；给出分组列时"
+            "每簇做卡方检验（该簇 vs 其余 × 分组，返回原始 p 未做多重校正）。"
+            "回答\"哪种细胞在病例组富集/缺失\"类问题。需先跑 sc_process，"
+            "obs 需含样本列（如 sample/orig.ident）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "by": {"type": "string",
+                       "description": "统计单元列（样本/受试者，如 sample）"},
+                "group": {"type": "string", "default": "",
+                          "description": "比较分组列（如 condition）；"
+                                         "空则只出比例表"},
+                "celltype_col": {"type": "string", "default": "leiden",
+                                 "description": "细胞标签列（leiden 或注释列）"},
+            },
+            "required": ["dataset_ref", "by"],
+        },
+        risk_level="L1_compute",
+        handler=sc_cellfreq,
+        timeout_sec=600,
     ))

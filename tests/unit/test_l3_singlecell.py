@@ -278,3 +278,94 @@ def test_sc_pseudotime_error_passthrough(tmp_path):
     out = reg.get("sc_pseudotime").handler(dataset_ref="d")
     assert out["error_code"] == "SC_SCRIPT_ERROR"
     assert "neighbors" in out["error_message"]
+
+
+# === Phase 33：常用分析第二批（组间差异/亚聚类/整合/组成） ===
+
+
+def test_sc_phase33_tools_registered_l1(tmp_path):
+    """四新工具注册可见且 L1_compute（研究链路可规划）。"""
+    reg, _ = _registry(tmp_path)
+    names = [t.name for t in reg.list(planner_visible=True)]
+    for name in ("sc_de", "sc_subcluster", "sc_integrate", "sc_cellfreq"):
+        assert name in names
+        assert reg.get(name).risk_level == "L1_compute"
+
+
+def test_sc_de_forwards_params(tmp_path):
+    """handler 转发 de 脚本参数（两组定向对比）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "comparison": "treated_vs_control",
+        "up": [{"gene": "GZMB"}], "down": []}
+    out = reg.get("sc_de").handler(
+        dataset_ref="d", groupby="condition", group_a="treated",
+        group_b="control", top_n=30)
+    args = runner.run.call_args.args
+    assert args[0] == "de"
+    assert args[1]["groupby"] == "condition"
+    assert args[1]["group_a"] == "treated"
+    assert args[1]["group_b"] == "control"
+    assert args[1]["top_n"] == 30
+    assert "ok" not in out
+    assert out["up"][0]["gene"] == "GZMB"
+
+
+def test_sc_de_error_lists_columns(tmp_path):
+    """BioRunError → 透传（列不存在时错误含可用列引导自纠）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.side_effect = BioRunError(
+        "SC_SCRIPT_ERROR",
+        "ValueError: groupby column 'cond' not in obs; available: leiden(5)")
+    out = reg.get("sc_de").handler(
+        dataset_ref="d", groupby="cond", group_a="x", group_b="y")
+    assert out["error_code"] == "SC_SCRIPT_ERROR"
+    assert "available" in out["error_message"]
+
+
+def test_sc_subcluster_forwards_params(tmp_path):
+    """handler 转发 subcluster 参数，返回新 dataset_ref 供下游链。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d_sub0-1", "parent_ref": "d",
+        "n_cells": 500, "n_clusters": 3}
+    out = reg.get("sc_subcluster").handler(
+        dataset_ref="d", clusters=["0", "1"], resolution=0.8)
+    args = runner.run.call_args.args
+    assert args[0] == "subcluster"
+    assert args[1]["clusters"] == ["0", "1"]
+    assert args[1]["resolution"] == 0.8
+    assert out["dataset_ref"] == "d_sub0-1"
+    assert reg.get("sc_subcluster").timeout_sec == 1800
+
+
+def test_sc_integrate_forwards_params(tmp_path):
+    """handler 转发 integrate 参数（batch 列 + bbknn 锁定）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d_bbknn", "n_batches": 4,
+        "method": "bbknn"}
+    out = reg.get("sc_integrate").handler(dataset_ref="d", batch="sample")
+    args = runner.run.call_args.args
+    assert args[0] == "integrate"
+    assert args[1]["batch"] == "sample"
+    assert args[1]["method"] == "bbknn"
+    assert out["dataset_ref"] == "d_bbknn"
+    props = reg.get("sc_integrate").parameters["properties"]
+    assert props["method"]["enum"] == ["bbknn"]
+
+
+def test_sc_cellfreq_forwards_params(tmp_path):
+    """handler 转发 cellfreq 参数（by 必填 + group 可选）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "chi2_tests": [
+            {"cluster": "3", "p": 1e-4}]}
+    out = reg.get("sc_cellfreq").handler(
+        dataset_ref="d", by="sample", group="condition")
+    args = runner.run.call_args.args
+    assert args[0] == "cellfreq"
+    assert args[1]["by"] == "sample"
+    assert args[1]["group"] == "condition"
+    assert out["chi2_tests"][0]["cluster"] == "3"
+    assert reg.get("sc_cellfreq").timeout_sec == 600
