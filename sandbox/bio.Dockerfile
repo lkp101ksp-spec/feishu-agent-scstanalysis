@@ -35,6 +35,24 @@ RUN apt-get update \
 RUN pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple liana
 
+# Phase 35 自动注释：celltypist + 模型构建期预取（运行期断网可用）。
+# 模型下载自 celltypist.cog.sanger.ac.uk；不可达时 build 报错重试即可。
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple celltypist \
+    && python -c "from celltypist import models; \
+        models.download_models(model=['Immune_All_Low.pkl', 'Immune_All_High.pkl'])" \
+    && mkdir -p /opt/celltypist_models \
+    && cp /root/.celltypist/data/models/*.pkl /opt/celltypist_models/
+
+# Phase 35 双联体：scrublet（依赖 annoy 无 manylinux 轮需源码编译——
+# 同层临时装 g++，编译完成后 purge，bbknn 层先例）。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && pip install --no-cache-dir \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple scrublet \
+    && apt-get purge -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

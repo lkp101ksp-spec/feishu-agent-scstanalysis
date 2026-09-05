@@ -1,4 +1,4 @@
-"""Phase 20/31/32/33/34：单细胞 sc_* 工具注册（spec §4；16 个 L1_compute 工具）。
+"""Phase 20/31/32/33/34/35：单细胞 sc_* 工具注册（spec §4；20 个 L1_compute 工具）。
 
 BioRunner 由 runtime 组装注入（image/workspace/data_roots 可配）；
 handler 捕获 BioRunError 转工具级 error_code/error_message。
@@ -267,6 +267,72 @@ def register_l3_singlecell(
                  "top_n": top_n},
                 mounts=[(mount_root, "/data")],
             )
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_annotate(*, dataset_ref: str, method: str = "celltypist",
+                    model: str = "Immune_All_Low.pkl",
+                    marker_sets: dict | None = None,
+                    celltype_col: str = "leiden",
+                    out_col: str = "annotation") -> dict:
+        """细胞注释（Phase 35）：celltypist 参考 / marker 打分双路。"""
+        try:
+            out = runner.run("annotate", {
+                "dataset_id": dataset_ref, "method": method,
+                "model": model, "marker_sets": marker_sets,
+                "celltype_col": celltype_col, "out_col": out_col,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_meta(*, dataset_ref: str, op: str, col: str = "",
+                mapping: dict | None = None, out_col: str = "",
+                csv_file: str = "", key_col: str = "",
+                old: str = "", new: str = "") -> dict:
+        """元数据编辑（Phase 35）：merge_csv/map_values/rename_col。"""
+        try:
+            payload = {
+                "dataset_id": dataset_ref, "op": op, "col": col,
+                "mapping": mapping, "out_col": out_col,
+                "key_col": key_col, "old": old, "new": new,
+            }
+            if op == "merge_csv":
+                mount_root, rel, host = runner.resolve_data_path(csv_file)
+                payload["csv_path"] = rel
+                out = runner.run("meta", payload,
+                                 mounts=[(mount_root, "/data")])
+            else:
+                out = runner.run("meta", payload)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_doublet(*, dataset_ref: str, expected_rate: float = 0.06,
+                   n_prin_comps: int = 30,
+                   celltype_col: str = "leiden") -> dict:
+        """双联体检测（Phase 35）：scrublet → 写回 doublet 列。"""
+        try:
+            out = runner.run("doublet", {
+                "dataset_id": dataset_ref, "expected_rate": expected_rate,
+                "n_prin_comps": n_prin_comps, "celltype_col": celltype_col,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_cellcycle(*, dataset_ref: str,
+                     celltype_col: str = "leiden") -> dict:
+        """细胞周期打分（Phase 35）：Tirosh S/G2M → 写回 phase 列。"""
+        try:
+            out = runner.run("cellcycle", {
+                "dataset_id": dataset_ref, "celltype_col": celltype_col,
+            })
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -715,4 +781,130 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_deconv,
         timeout_sec=1200,
+    ))
+    registry.register(ToolSpec(
+        name="sc_annotate",
+        description=(
+            "细胞类型注释（Phase 35，对齐 server_cell_annotation）："
+            "method=celltypist 用参考模型自动注释（写回 celltypist_label/"
+            "celltypist_conf，model 不存在时错误列出可用模型）；"
+            "method=markers 用用户 marker 基因集打分按簇投票（写回 "
+            "out_col 指定列）。注释列写回 processed.h5ad——sc_plot/"
+            "sc_cellfreq/sc_cellchat 的 celltype_col 可直接引用。"
+            "需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "method": {"type": "string", "default": "celltypist",
+                           "enum": ["celltypist", "markers"]},
+                "model": {"type": "string", "default": "Immune_All_Low.pkl",
+                          "description": "celltypist 模型文件名（如 "
+                                         "Immune_All_Low/High.pkl）"},
+                "marker_sets": {
+                    "type": "object",
+                    "additionalProperties": {"type": "array",
+                                             "items": {"type": "string"}},
+                    "description": "markers 路必填：{细胞类型: [基因,...]}，"
+                                   "≤20 集"},
+                "celltype_col": {"type": "string", "default": "leiden",
+                                 "description": "簇标签列（投票/平滑用）"},
+                "out_col": {"type": "string", "default": "annotation",
+                            "description": "markers 路写回的列名"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_annotate,
+        timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_meta",
+        description=(
+            "元数据编辑（Phase 35，对齐 server_meta_settings）：对话式修改"
+            "细胞注释表。op=merge_csv 把样本注释表（数据目录内 csv，首列"
+            "=连接键）按 key_col 并入 obs（典型：给样本补 condition 分组"
+            "列）；op=map_values 取值映射/合并（如 leiden 簇号改细胞类型"
+            "名）；op=rename_col 列改名。结果写回 processed.h5ad。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "op": {"type": "string",
+                       "enum": ["merge_csv", "map_values", "rename_col"]},
+                "col": {"type": "string", "default": "",
+                        "description": "map_values 的源列"},
+                "mapping": {"type": "object",
+                            "additionalProperties": {"type": "string"},
+                            "description": "map_values 的 {旧值: 新值}"},
+                "out_col": {"type": "string", "default": "",
+                            "description": "map_values 输出列（缺省 "
+                                           "{col}_mapped）"},
+                "csv_file": {"type": "string", "default": "",
+                             "description": "merge_csv 的 csv 本地路径"
+                                            "（须在数据目录内）"},
+                "key_col": {"type": "string", "default": "",
+                            "description": "merge_csv 的 obs 连接列"},
+                "old": {"type": "string", "default": "",
+                        "description": "rename_col 的原列名"},
+                "new": {"type": "string", "default": "",
+                        "description": "rename_col 的新列名"},
+            },
+            "required": ["dataset_ref", "op"],
+        },
+        risk_level="L1_compute",
+        handler=sc_meta,
+        timeout_sec=600,
+    ))
+    registry.register(ToolSpec(
+        name="sc_doublet",
+        description=(
+            "双联体检测（Phase 35，scrublet）：识别两个细胞被包进同一"
+            "液滴形成的假细胞。在 QC 后 counts 上打分，写回 doublet_score/"
+            "predicted_doublet 到 processed.h5ad（只标记不删除）。输出"
+            "各簇双联体率 csv 与 UMAP（预测双联体红圈）。expected_rate "
+            "默认 0.06（10x 典型值，按上机细胞量调整）。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "expected_rate": {"type": "number", "default": 0.06,
+                                  "description": "预期双联体率"},
+                "n_prin_comps": {"type": "integer", "default": 30},
+                "celltype_col": {"type": "string", "default": "leiden",
+                                 "description": "簇率统计用标签列"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_doublet,
+        timeout_sec=1200,
+    ))
+    registry.register(ToolSpec(
+        name="sc_cellcycle",
+        description=(
+            "细胞周期打分（Phase 35）：Tirosh S/G2M 基因集（人源，内嵌"
+            "离线）给每细胞定 G1/S/G2M 期，写回 S_score/G2M_score/phase "
+            "到 processed.h5ad，输出 phase UMAP 与 phase×簇计数 csv。"
+            "回答\"增殖活性差异/周期是否干扰聚类\"类问题。需先跑 "
+            "sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "celltype_col": {"type": "string", "default": "leiden"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_cellcycle,
+        timeout_sec=600,
     ))

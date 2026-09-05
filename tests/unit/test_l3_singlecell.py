@@ -470,3 +470,127 @@ def test_sc_deconv_schema_enum(tmp_path):
     assert props["method"]["enum"] == ["wnnls", "nusvr"]
     assert reg.get("sc_deconv").parameters["required"] == [
         "dataset_ref", "bulk_file"]
+
+
+# === Phase 35：注释与质控补强（annotate/meta/doublet/cellcycle） ===
+
+
+def test_sc_phase35_tools_registered_l1(tmp_path):
+    """四新工具注册可见且 L1_compute。"""
+    reg, _ = _registry(tmp_path)
+    names = [t.name for t in reg.list(planner_visible=True)]
+    for name in ("sc_annotate", "sc_meta", "sc_doublet", "sc_cellcycle"):
+        assert name in names
+        assert reg.get(name).risk_level == "L1_compute"
+
+
+def test_sc_annotate_celltypist_forwards(tmp_path):
+    """celltypist 路转发 model 与 celltype_col。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "celltypist",
+        "label_col": "celltypist_label", "n_labels": 5}
+    out = reg.get("sc_annotate").handler(
+        dataset_ref="d", method="celltypist", model="Immune_All_High.pkl")
+    args = runner.run.call_args.args
+    assert args[0] == "annotate"
+    assert args[1]["method"] == "celltypist"
+    assert args[1]["model"] == "Immune_All_High.pkl"
+    assert "ok" not in out
+    assert reg.get("sc_annotate").timeout_sec == 1800
+
+
+def test_sc_annotate_markers_forwards(tmp_path):
+    """markers 路转发 marker_sets 字典。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "markers",
+        "label_col": "annotation",
+        "cluster_assignment": {"0": "T cell"}}
+    out = reg.get("sc_annotate").handler(
+        dataset_ref="d", method="markers",
+        marker_sets={"T cell": ["CD3D", "CD3E"]})
+    args = runner.run.call_args.args
+    assert args[1]["marker_sets"] == {"T cell": ["CD3D", "CD3E"]}
+    assert out["cluster_assignment"]["0"] == "T cell"
+
+
+def test_sc_annotate_schema_enum(tmp_path):
+    """method enum 锁定 celltypist/markers。"""
+    reg, _ = _registry(tmp_path)
+    props = reg.get("sc_annotate").parameters["properties"]
+    assert props["method"]["enum"] == ["celltypist", "markers"]
+
+
+def test_sc_meta_merge_csv_mounts(tmp_path):
+    """merge_csv 走 resolve_data_path 白名单 + /data 挂载转发。"""
+    from pathlib import Path
+
+    reg, runner = _registry(tmp_path)
+    runner.resolve_data_path.return_value = (
+        Path("D:/sc_data"), "meta.csv", "D:/sc_data/meta.csv")
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "op": "merge_csv",
+        "changed_cols": ["condition"]}
+    out = reg.get("sc_meta").handler(
+        dataset_ref="d", op="merge_csv", csv_file="D:/sc_data/meta.csv",
+        key_col="sample")
+    call = runner.run.call_args
+    assert call.args[0] == "meta"
+    assert call.args[1]["csv_path"] == "meta.csv"
+    assert call.args[1]["key_col"] == "sample"
+    assert call.kwargs["mounts"] == [(Path("D:/sc_data"), "/data")]
+    assert "ok" not in out
+
+
+def test_sc_meta_map_values_forwards(tmp_path):
+    """map_values 不挂 /data，mapping 透传。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "op": "map_values",
+        "changed_cols": ["celltype"]}
+    out = reg.get("sc_meta").handler(
+        dataset_ref="d", op="map_values", col="leiden",
+        mapping={"0": "T"}, out_col="celltype")
+    call = runner.run.call_args
+    assert call.args[1]["mapping"] == {"0": "T"}
+    assert call.args[1]["out_col"] == "celltype"
+    assert call.kwargs.get("mounts") is None
+    runner.resolve_data_path.assert_not_called()
+
+
+def test_sc_meta_error_passthrough(tmp_path):
+    """脚本错误透传（列不存在等）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.side_effect = BioRunError(
+        "SC_SCRIPT_ERROR", "ValueError: column 'foo' not in obs")
+    out = reg.get("sc_meta").handler(dataset_ref="d", op="rename_col",
+                                     old="foo", new="bar")
+    assert out["error_code"] == "SC_SCRIPT_ERROR"
+
+
+def test_sc_doublet_forwards_params(tmp_path):
+    """doublet 转发 expected_rate；timeout 1200。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "n_doublets": 12,
+        "doublet_rate": 0.05}
+    out = reg.get("sc_doublet").handler(dataset_ref="d", expected_rate=0.08)
+    args = runner.run.call_args.args
+    assert args[0] == "doublet"
+    assert args[1]["expected_rate"] == 0.08
+    assert out["n_doublets"] == 12
+    assert reg.get("sc_doublet").timeout_sec == 1200
+
+
+def test_sc_cellcycle_forwards_params(tmp_path):
+    """cellcycle 转发；timeout 600。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d",
+        "phase_counts": {"G1": 150, "S": 30, "G2M": 20}}
+    out = reg.get("sc_cellcycle").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[0] == "cellcycle"
+    assert out["phase_counts"]["G1"] == 150
+    assert reg.get("sc_cellcycle").timeout_sec == 600
