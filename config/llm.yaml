@@ -10,3 +10,18 @@ router:
     model_env: LLM_FALLBACK_MODEL
     timeout_sec: 30
   max_retries: 1
+
+# Phase 30 可视化模型切换候选池（可选段；缺省 = 无候选，/model 仅查看）。
+# - 条目 = name + 三个 env 变量名（api key 只在 .env/进程内存，不落库不进卡片）
+# - 默认两条直接复用现有主备变量，存量部署零改动即可切换主备位置
+# - 加新候选：此处加一段 + .env 加三个变量（name 自定，如 minimax/kimi/glm）
+# - 缺 env 的条目启动时自动跳过（卡片不显示，不阻塞启动）
+providers:
+  - name: primary
+    base_url_env: LLM_PRIMARY_BASE_URL
+    api_key_env: LLM_PRIMARY_API_KEY
+    model_env: LLM_PRIMARY_MODEL
+  - name: fallback
+    base_url_env: LLM_FALLBACK_BASE_URL
+    api_key_env: LLM_FALLBACK_API_KEY
+    model_env: LLM_FALLBACK_MODEL

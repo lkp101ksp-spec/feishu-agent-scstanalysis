@@ -41,6 +41,19 @@ class LLMRouter:
         self.fallback = _Provider(**fallback)
         self.max_retries = max_retries
 
+    def reconfigure(self, primary: dict, fallback: dict,
+                    max_retries: int | None = None) -> None:
+        """Phase 30 热切换：原地替换主备 Provider（共享本实例的全链路立即生效）。
+
+        dict 字段同 __init__（base_url/api_key/model/timeout_sec）；
+        max_retries 缺省不变。引用赋值原子，两行间的新主+旧备窗口
+        对管理级低频操作可接受（旧备亦为有效配置）。
+        """
+        self.primary = _Provider(**primary)
+        self.fallback = _Provider(**fallback)
+        if max_retries is not None:
+            self.max_retries = max_retries
+
     def _call_once(self, provider: _Provider, messages: list[dict]) -> dict:
         """调用一次 OpenAI 兼容 /chat/completions，返回完整 JSON 响应。"""
         url = f"{provider.base_url.rstrip('/')}/chat/completions"

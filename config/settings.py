@@ -13,6 +13,15 @@ class FeishuSettings:
 
 
 @dataclass(frozen=True)
+class ProviderCfg:
+    """Phase 30 候选池条目：name + 已解析的连接参数（key 只在内存）。"""
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+
+
+@dataclass(frozen=True)
 class LLMSettings:
     primary_base_url: str
     primary_api_key: str
@@ -21,6 +30,8 @@ class LLMSettings:
     fallback_api_key: str
     fallback_model: str
     max_retries: int
+    # Phase 30 可视化切换候选池（llm.yaml providers 段；缺省空 = 功能仅查看）
+    providers: tuple[ProviderCfg, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -136,6 +147,8 @@ class Settings:
     code_model: str = ""
     # registry 工具白名单（逗号分隔前缀通配；AgentLoop 额外可调的既有工具）
     code_registry_tools: str = "sc_*"
+    # Phase 30 admin 名单复用 FEISHU_ADMIN_OPEN_IDS（runtime 装配处解析，
+    # 与模板审核共用一份管理员概念，不另设变量）
 
 
 def _load_yaml(path: str) -> dict:
@@ -162,6 +175,22 @@ def load_env_file(path: str = ".env") -> None:
             )
 
 
+def _parse_providers(cfg: dict) -> tuple[ProviderCfg, ...]:
+    """解析 llm.yaml providers 段：缺 env 的条目跳过（不阻塞启动，卡片不显示）。"""
+    out: list[ProviderCfg] = []
+    for p in cfg.get("providers") or []:
+        try:
+            out.append(ProviderCfg(
+                name=str(p["name"]),
+                base_url=os.environ[p["base_url_env"]],
+                api_key=os.environ[p["api_key_env"]],
+                model=os.environ[p["model_env"]],
+            ))
+        except KeyError:
+            continue  # .env 未配该候选变量：静默跳过
+    return tuple(out)
+
+
 def load_settings() -> Settings:
     load_env_file()
     feishu_cfg = _load_yaml("config/feishu.yaml")
@@ -180,6 +209,7 @@ def load_settings() -> Settings:
             fallback_api_key=os.environ[llm_cfg["router"]["fallback"]["api_key_env"]],
             fallback_model=os.environ[llm_cfg["router"]["fallback"]["model_env"]],
             max_retries=llm_cfg["router"]["max_retries"],
+            providers=_parse_providers(llm_cfg),
         ),
         database_url=os.environ["DATABASE_URL"],
         bind_doc_ttl_sec=int(os.environ.get("BIND_DOC_TTL_SEC", "1800")),

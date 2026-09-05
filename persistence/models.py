@@ -340,3 +340,21 @@ class CommentNotifyRow(Base):
     notified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
+
+
+# === Phase 30 ===
+
+class LLMActiveRow(Base):
+    """Phase 30: 当前生效的主备模型候选名（单行表，id 恒为 1）。
+
+    只存 providers 名字（api key 留在 .env/进程内存，不落库）；
+    空表 = 未切换过，回退 config/llm.yaml router 段默认主备。
+    """
+    __tablename__ = "llm_active"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    primary_name: Mapped[str] = mapped_column(String, nullable=False)
+    fallback_name: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )

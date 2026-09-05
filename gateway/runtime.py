@@ -336,6 +336,22 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
             llm=llm,
             skills_dir=Path(getattr(settings, "code_skills_dir", "./skills"))),
     )
+    # --- Phase 30：模型热切换（/model 管理卡 + model_switch 卡片回调） ---
+    # admin 名单复用模板审核的 FEISHU_ADMIN_OPEN_IDS（上方 admin_ids）；
+    # 启动时应用 DB 记忆的 active 主备（失败回退 yaml 默认，不阻塞启动）
+    from orchestrator.model_switch_service import ModelSwitchService
+
+    model_switch_service = ModelSwitchService(
+        llm=llm, providers=settings.llm.providers,
+        admin_ids=admin_ids,
+        session_factory=sessionmaker(
+            bind=get_engine(), expire_on_commit=False, autoflush=False),
+    )
+    orch.model_switch_service = model_switch_service
+    try:
+        model_switch_service.apply_startup()
+    except Exception:
+        logger.exception("llm active restore failed (keep yaml default)")
     return Runtime(
         app=app, orchestrator=orch, settings=settings,
         renew_scan_service=renew_scan_service,

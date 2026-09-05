@@ -213,6 +213,23 @@ class Orchestrator:
                 return {"status": "coding_unavailable"}
             return runner.handle(incoming)
 
+        # 1.69 /model 指令：模型切换状态卡（Phase 30，admin 限定）
+        if stripped == "/model" or stripped.startswith("/model "):
+            svc = getattr(self, "model_switch_service", None)
+            if svc is None:
+                self.im.reply(incoming.chat_id,
+                              "[错误] 模型切换未配置（config/llm.yaml providers 段）")
+                return {"status": "model_switch_unavailable"}
+            card = svc.status_card(incoming.sender_open_id)
+            if card is None:
+                self.im.reply(
+                    incoming.chat_id,
+                    "[拒绝] /model 仅管理员可用（FEISHU_ADMIN_OPEN_IDS 名单内）",
+                )
+                return {"status": "model_switch_forbidden"}
+            self.im.send_card(incoming.chat_id, card)
+            return {"status": "model_switch_card_sent"}
+
         # 1.7 群聊门控：群聊只响应指令（/ 开头、#写到），闲聊静默忽略防刷屏；
         # 私聊（p2p）行为不变。指令此前已全部路由，走到这里的群消息即闲聊。
         if getattr(incoming, "chat_type", "") == "group" and not (

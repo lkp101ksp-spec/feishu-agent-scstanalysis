@@ -9,8 +9,8 @@
 """
 from __future__ import annotations
 
-import atexit
 import asyncio
+import atexit
 import ctypes
 import logging
 import os
@@ -258,6 +258,28 @@ def card_result_to_response(result: dict) -> P2CardActionTriggerResponse | None:
         else:  # forbidden
             toast.type = "error"
             toast.content = "仅任务发起者可操作"
+        resp = P2CardActionTriggerResponse({})
+        resp.toast = toast
+        return resp
+    # Phase 30：模型切换 toast（成功即时生效；拒绝按 reason 提示）
+    if status == "model_switched":
+        slot = "主" if result.get("slot") == "primary" else "备"
+        toast = CallBackToast({})
+        toast.type = "success"
+        toast.content = f"已切换 {result.get('to', '')} 为{slot}模型（即时生效，无需重启）"
+        resp = P2CardActionTriggerResponse({})
+        resp.toast = toast
+        return resp
+    if status in ("model_switch_denied", "model_switch_unavailable"):
+        reason = result.get("reason", "")
+        fallback_text = ("模型切换不可用" if status == "model_switch_unavailable"
+                         else f"切换失败：{reason}")
+        text = {"forbidden": "仅管理员可切换模型",
+                "unknown_provider": "无效候选（候选池无此名字）",
+                "bad_slot": "无效槽位"}.get(reason, fallback_text)
+        toast = CallBackToast({})
+        toast.type = "error"
+        toast.content = text
         resp = P2CardActionTriggerResponse({})
         resp.toast = toast
         return resp

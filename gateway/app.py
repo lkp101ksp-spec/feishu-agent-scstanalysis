@@ -291,6 +291,34 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         return {"ok": True, "status": "applied",
                 "file": applied.get("file", ""),
                 "backup": applied.get("backup", "")}
+    # Phase 30：model_switch 分支（/model 状态卡按钮热切换主备模型）。
+    # admin 校验在 service 内（复用 FEISHU_ADMIN_OPEN_IDS）；成败均落专项审计，
+    # 结果经 toast 反馈（卡片无 update 能力，同 skill_improve 模式）。
+    if action == "model_switch":
+        svc = ctx.model_switch_service
+        if svc is None:
+            logger.warning("model_switch received but service not configured")
+            return {"ok": False, "status": "model_switch_unavailable"}
+        operator = payload.get("open_id", "")
+        name = payload.get("name", "")
+        slot = payload.get("slot", "")
+        result = svc.switch(operator, name, slot)
+        if result.get("ok"):
+            _audit_event(
+                app, actor_type="user", actor_id=operator,
+                action="llm_model_switched", target_type="llm_config",
+                target_id=f"{slot}:{name}",
+                detail={"slot": slot, "from": result.get("from", ""),
+                        "to": result.get("to", "")})
+            return {"ok": True, "status": "model_switched",
+                    "slot": slot, "to": name}
+        _audit_event(
+            app, actor_type="user", actor_id=operator,
+            action="llm_model_switch_denied", target_type="llm_config",
+            target_id=f"{slot}:{name}",
+            detail={"reason": result.get("reason", "")})
+        return {"ok": False, "status": "model_switch_denied",
+                "reason": result.get("reason", "")}
     return {"ok": True}
 
 
@@ -344,6 +372,7 @@ class AppContext:
     approval_broker: object | None = None  # Phase 14：写回审批决策传递
     comment_event_service: object | None = None  # Phase 18：webhook 评论事件
     tag_recommend_service: object | None = None  # Phase 19：标签推荐
+    model_switch_service: object | None = None  # Phase 30：模型热切换
 
 
 def create_app(
@@ -370,6 +399,7 @@ def create_app(
     approval_broker=None,
     comment_event_service=None,
     tag_recommend_service=None,
+    model_switch_service=None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -422,6 +452,7 @@ def create_app(
         approval_broker=approval_broker,
         comment_event_service=comment_event_service,
         tag_recommend_service=tag_recommend_service,
+        model_switch_service=model_switch_service,
     )
 
     @app.get("/health")

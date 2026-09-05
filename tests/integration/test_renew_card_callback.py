@@ -460,3 +460,90 @@ def test_skill_improve_deny_has_no_apply_audit(client_with_skill_diagnoser):
     assert "card_skill_improve" in actions
     assert "skill_improve_applied" not in actions
     assert "skill_improve_apply_failed" not in actions
+
+
+# === Phase 30：model_switch 卡片回调（/model 状态卡按钮热切换） ===
+
+
+@pytest.fixture
+def client_with_model_switch():
+    """真 ModelSwitchService（内存 SQLite + 真 LLMRouter）的卡片环境。"""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from config.settings import ProviderCfg
+    from orchestrator.llm_router import LLMRouter
+    from orchestrator.model_switch_service import ModelSwitchService
+    from persistence.models import Base
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+    llm = LLMRouter(
+        primary={"base_url": "https://a.example.com/v1", "api_key": "sk-a",
+                 "model": "model-a", "timeout_sec": 30},
+        fallback={"base_url": "https://b.example.com/v1", "api_key": "sk-b",
+                  "model": "model-b", "timeout_sec": 30},
+        max_retries=1)
+    svc = ModelSwitchService(
+        llm=llm,
+        providers=(ProviderCfg(name="kimi", base_url="https://k.example.com/v1",
+                               api_key="sk-k", model="kimi-x"),),
+        admin_ids={"ou_admin"}, session_factory=factory)
+    app = create_app(secret="phase2-secret", orchestrator=object(),
+                     model_switch_service=svc)
+    app.state.session_factory = factory
+    return TestClient(app), svc
+
+
+def test_model_switch_admin_ok_audited(client_with_model_switch):
+    """admin 点击切换：热生效 + llm_model_switched 审计（target_id=slot:name）。"""
+    client, svc = client_with_model_switch
+    resp = _post_card(client, {"action": "model_switch", "name": "kimi",
+                               "slot": "primary", "open_id": "ou_admin"})
+    body = resp.json()
+    assert body["status"] == "model_switched" and body["to"] == "kimi"
+    assert svc.llm.primary.model == "kimi-x"
+    rows = [r for r in _audit_rows(client) if r.action == "llm_model_switched"]
+    assert len(rows) == 1
+    assert rows[0].target_type == "llm_config"
+    assert rows[0].target_id == "primary:kimi"
+    assert "model-a" in rows[0].detail_json.get("from", "")
+
+
+def test_model_switch_non_admin_denied_audited(client_with_model_switch):
+    """非 admin 点击：denied 审计 + 路由不变。"""
+    client, svc = client_with_model_switch
+    resp = _post_card(client, {"action": "model_switch", "name": "kimi",
+                               "slot": "primary", "open_id": "ou_other"})
+    body = resp.json()
+    assert body["status"] == "model_switch_denied"
+    assert body["reason"] == "forbidden"
+    assert svc.llm.primary.model == "model-a"
+    rows = [r for r in _audit_rows(client) if r.action == "llm_model_switch_denied"]
+    assert len(rows) == 1
+    assert rows[0].detail_json.get("reason") == "forbidden"
+
+
+def test_model_switch_unknown_provider_denied(client_with_model_switch):
+    """幻觉候选名：denied 审计（reason=unknown_provider），路由不变。"""
+    client, svc = client_with_model_switch
+    resp = _post_card(client, {"action": "model_switch", "name": "ghost",
+                               "slot": "primary", "open_id": "ou_admin"})
+    assert resp.json()["reason"] == "unknown_provider"
+    assert svc.llm.primary.model == "model-a"
+    rows = [r for r in _audit_rows(client) if r.action == "llm_model_switch_denied"]
+    assert rows[0].detail_json.get("reason") == "unknown_provider"
+
+
+def test_model_switch_service_not_configured(client_with_broker):
+    """未装配 service：返回 unavailable，不抛异常。"""
+    client, broker = client_with_broker
+    resp = _post_card(client, {"action": "model_switch", "name": "kimi",
+                               "slot": "primary", "open_id": "ou_1"})
+    assert resp.json()["status"] == "model_switch_unavailable"
