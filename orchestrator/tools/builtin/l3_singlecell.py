@@ -1,4 +1,4 @@
-"""Phase 20/31/32：单细胞 sc_* 工具注册（spec §4；9 个 L1_compute 工具）。
+"""Phase 20/31/32/33/34：单细胞 sc_* 工具注册（spec §4；16 个 L1_compute 工具）。
 
 BioRunner 由 runtime 组装注入（image/workspace/data_roots 可配）；
 handler 捕获 BioRunError 转工具级 error_code/error_message。
@@ -216,6 +216,57 @@ def register_l3_singlecell(
                 "dataset_id": dataset_ref, "by": by, "group": group,
                 "celltype_col": celltype_col,
             })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_cellchat(*, dataset_ref: str, celltype_col: str = "leiden",
+                    species: str = "human", expr_prop: float = 0.1,
+                    min_cells: int = 10, top_n: int = 30) -> dict:
+        """细胞通讯（Phase 34）：liana cellchat → LR 表+dotplot+热图。"""
+        try:
+            out = runner.run("cellchat", {
+                "dataset_id": dataset_ref, "celltype_col": celltype_col,
+                "species": species, "expr_prop": expr_prop,
+                "min_cells": min_cells, "top_n": top_n,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_milo(*, dataset_ref: str, sample_col: str, group_col: str,
+                group_a: str, group_b: str, k: int = 0,
+                top_n: int = 20) -> dict:
+        """差异丰度（Phase 34）：KNN 邻域 + NB-GLM → da csv+UMAP。"""
+        try:
+            out = runner.run("milo", {
+                "dataset_id": dataset_ref, "sample_col": sample_col,
+                "group_col": group_col, "group_a": group_a,
+                "group_b": group_b, "k": k, "top_n": top_n,
+            })
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_deconv(*, dataset_ref: str, bulk_file: str,
+                  celltype_col: str = "leiden", method: str = "wnnls",
+                  top_n: int = 200) -> dict:
+        """bulk 解卷积（Phase 34）：wNNLS/NuSVR → 比例 csv+图。
+
+        bulk_file 复用 sc_load 的数据根白名单校验与 /data 挂载。
+        """
+        try:
+            mount_root, rel, host = runner.resolve_data_path(bulk_file)
+            out = runner.run(
+                "deconv",
+                {"dataset_id": dataset_ref, "bulk_path": rel,
+                 "celltype_col": celltype_col, "method": method,
+                 "top_n": top_n},
+                mounts=[(mount_root, "/data")],
+            )
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -569,4 +620,99 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_cellfreq,
         timeout_sec=600,
+    ))
+    registry.register(ToolSpec(
+        name="sc_cellchat",
+        description=(
+            "细胞通讯分析（Phase 34，对齐 server_cellchat 单组推断）："
+            "推断细胞类型间的配体-受体互作（liana cellchat 方法 + 内置"
+            "consensus 资源库）。输出显著 LR 对 top 表、全量 csv、top LR "
+            "dotplot 与细胞类型间互作计数热图。回答\"哪类细胞在给谁发"
+            "信号\"类问题。需先跑 sc_process。列名错误时错误消息会列出"
+            "可用列。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "celltype_col": {"type": "string", "default": "leiden",
+                                 "description": "细胞标签列（leiden 或注释列）"},
+                "species": {"type": "string", "default": "human",
+                            "enum": ["human", "mouse"]},
+                "expr_prop": {"type": "number", "default": 0.1,
+                              "description": "细胞类型中表达比例阈值"},
+                "min_cells": {"type": "integer", "default": 10,
+                              "description": "细胞类型最少细胞数（低于剔除）"},
+                "top_n": {"type": "integer", "default": 30, "maximum": 100},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_cellchat,
+        timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_milo",
+        description=(
+            "差异丰度分析（Phase 34，Python 复刻 miloR 思路）：在 KNN 图"
+            "邻域上检验\"哪些细胞状态在 A 组比 B 组显著增多/减少\""
+            "（如病灶富集的细胞亚群）。逐邻域 NB-GLM + BH 校正，输出"
+            "da csv 与 UMAP 着色图（FDR<0.1 邻域黑边高亮）。"
+            "需先跑 sc_process；obs 需含样本列与分组列，且每组样本数≥2。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "sample_col": {"type": "string",
+                               "description": "样本/受试者列（如 sample）"},
+                "group_col": {"type": "string",
+                              "description": "分组列（如 condition）"},
+                "group_a": {"type": "string",
+                            "description": "对比组（log2FC>0 方向）取值"},
+                "group_b": {"type": "string", "description": "参照组取值"},
+                "k": {"type": "integer", "default": 0,
+                      "description": "邻域大小；0=自动 clip(0.1×最小样本量,"
+                                     "10,50)"},
+                "top_n": {"type": "integer", "default": 20, "maximum": 100},
+            },
+            "required": ["dataset_ref", "sample_col", "group_col",
+                         "group_a", "group_b"],
+        },
+        risk_level="L1_compute",
+        handler=sc_milo,
+        timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_deconv",
+        description=(
+            "bulk 解卷积（Phase 34，对齐 server_bulk_deconvolution）："
+            "以当前单细胞数据为参考，估计 bulk 表达矩阵中各细胞类型比例"
+            "（method=wnnls MuSiC 式加权 NNLS / nusvr CIBERSORT 式线性"
+            "SVR）。bulk_file 为数据目录内 csv/tsv（行=基因列=样本，"
+            "方向放反会自动转置）。输出比例 csv、signature csv、堆叠柱状"
+            "图与热图。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc 参考的 dataset_ref"},
+                "bulk_file": {"type": "string",
+                              "description": "bulk 表达矩阵本地路径（必须在"
+                                             "管理员允许的数据目录内）"},
+                "celltype_col": {"type": "string", "default": "leiden",
+                                 "description": "参考细胞标签列"},
+                "method": {"type": "string", "default": "wnnls",
+                           "enum": ["wnnls", "nusvr"]},
+                "top_n": {"type": "integer", "default": 200, "maximum": 2000,
+                          "description": "signature 基因数"},
+            },
+            "required": ["dataset_ref", "bulk_file"],
+        },
+        risk_level="L1_compute",
+        handler=sc_deconv,
+        timeout_sec=1200,
     ))

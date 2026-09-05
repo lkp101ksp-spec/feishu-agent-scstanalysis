@@ -28,6 +28,13 @@ RUN apt-get update \
     && apt-get purge -y --no-install-recommends g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# Phase 34 B 类分析：liana（细胞通讯，内置 consensus/mouseconsensus
+# 资源库随包分发，容器断网可用）。statsmodels/sklearn 已由 scanpy
+# 传递依赖带入；liana 依赖 plotnine/kneed 等均为纯 Python/manylinux 轮，
+# 无编译需求（若构建报编译错误，按 bbknn 层先例同层临时装 g++）。
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple liana
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

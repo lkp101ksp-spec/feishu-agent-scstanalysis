@@ -369,3 +369,104 @@ def test_sc_cellfreq_forwards_params(tmp_path):
     assert args[1]["group"] == "condition"
     assert out["chi2_tests"][0]["cluster"] == "3"
     assert reg.get("sc_cellfreq").timeout_sec == 600
+
+
+# === Phase 34：B 类分析（细胞通讯/差异丰度/bulk 解卷积） ===
+
+
+def test_sc_phase34_tools_registered_l1(tmp_path):
+    """三新工具注册可见且 L1_compute（研究链路可规划）。"""
+    reg, _ = _registry(tmp_path)
+    names = [t.name for t in reg.list(planner_visible=True)]
+    for name in ("sc_cellchat", "sc_milo", "sc_deconv"):
+        assert name in names
+        assert reg.get(name).risk_level == "L1_compute"
+
+
+def test_sc_cellchat_forwards_params(tmp_path):
+    """handler 转发 cellchat 参数（species→资源库、min_cells）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "resource": "consensus",
+        "n_sig": 12, "top": [{"ligand": "CXCL12"}]}
+    out = reg.get("sc_cellchat").handler(
+        dataset_ref="d", celltype_col="leiden", species="human")
+    args = runner.run.call_args.args
+    assert args[0] == "cellchat"
+    assert args[1]["celltype_col"] == "leiden"
+    assert args[1]["species"] == "human"
+    assert "ok" not in out
+    assert out["top"][0]["ligand"] == "CXCL12"
+    assert reg.get("sc_cellchat").timeout_sec == 1800
+
+
+def test_sc_cellchat_error_lists_columns(tmp_path):
+    """BioRunError → 透传（细胞标签列不存在时错误含可用列引导自纠）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.side_effect = BioRunError(
+        "SC_SCRIPT_ERROR",
+        "ValueError: celltype column 'celltype' not in obs; available: "
+        "leiden(5)")
+    out = reg.get("sc_cellchat").handler(
+        dataset_ref="d", celltype_col="celltype")
+    assert out["error_code"] == "SC_SCRIPT_ERROR"
+    assert "available" in out["error_message"]
+
+
+def test_sc_milo_forwards_params(tmp_path):
+    """handler 转发 milo 参数（样本列+分组列+定向对比）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "comparison": "treated_vs_control",
+        "n_nhoods": 40, "n_sig_fdr01": 3, "top": []}
+    out = reg.get("sc_milo").handler(
+        dataset_ref="d", sample_col="sample", group_col="condition",
+        group_a="treated", group_b="control")
+    args = runner.run.call_args.args
+    assert args[0] == "milo"
+    assert args[1]["sample_col"] == "sample"
+    assert args[1]["group_a"] == "treated"
+    assert out["n_sig_fdr01"] == 3
+    assert reg.get("sc_milo").timeout_sec == 1800
+
+
+def test_sc_milo_error_passthrough(tmp_path):
+    """样本数不足等脚本错误透传。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.side_effect = BioRunError(
+        "SC_SCRIPT_ERROR",
+        "ValueError: need >=2 samples per group: treated=1, control=3")
+    out = reg.get("sc_milo").handler(
+        dataset_ref="d", sample_col="sample", group_col="condition",
+        group_a="treated", group_b="control")
+    assert out["error_code"] == "SC_SCRIPT_ERROR"
+    assert ">=2 samples" in out["error_message"]
+
+
+def test_sc_deconv_forwards_params(tmp_path):
+    """bulk_file 走 resolve_data_path 白名单 + /data 挂载转发。"""
+    from pathlib import Path
+
+    reg, runner = _registry(tmp_path)
+    runner.resolve_data_path.return_value = (
+        Path("D:/sc_data"), "bulk.csv", "D:/sc_data/bulk.csv")
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "wnnls",
+        "n_samples": 3, "dominant": []}
+    out = reg.get("sc_deconv").handler(
+        dataset_ref="d", bulk_file="D:/sc_data/bulk.csv")
+    assert runner.resolve_data_path.call_args.args[0] == "D:/sc_data/bulk.csv"
+    call = runner.run.call_args
+    assert call.args[0] == "deconv"
+    assert call.args[1]["bulk_path"] == "bulk.csv"
+    assert call.kwargs["mounts"] == [(Path("D:/sc_data"), "/data")]
+    assert "ok" not in out
+
+
+def test_sc_deconv_schema_enum(tmp_path):
+    """method enum 锁定 wnnls/nusvr。"""
+    reg, _ = _registry(tmp_path)
+    props = reg.get("sc_deconv").parameters["properties"]
+    assert props["method"]["enum"] == ["wnnls", "nusvr"]
+    assert reg.get("sc_deconv").parameters["required"] == [
+        "dataset_ref", "bulk_file"]

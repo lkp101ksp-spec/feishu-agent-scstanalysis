@@ -43,11 +43,13 @@ toolsv1 的 B 类模块（CellChat / MiloR / bulk 解卷积 / scTenifoldKnk）�
 - 流程：
   1. 复用 processed.h5ad 的 KNN connectivities（无则用 PCA 重建，n_neighbors=15）
   2. 邻域采样：随机种子细胞 + refined 式去重（贪心，邻域重叠度阈值 0.8 跳过后续种子）
-  3. 逐样本×邻域计数矩阵 → NB-GLM（statsmodels，`group ~ 1`，offset=log(样本总细胞数)）
+  3. 逐样本×邻域计数矩阵 → QP-GLM（Poisson + 全局 Pearson 离散度 floor=1）
   4. BH 校正（注明：非 miloR 的 SpatialFDR 加权校正，口径偏保守/不同，文档写明）
 - 产出：`milo_da.csv`（nhood 结果：logFC/PValue/FDR/主要细胞类型构成）、`milo_umap.png`（UMAP 按 nhood logFC 着色，FDR<0.1 邻域高亮）
 - 校验：sample_col/group_col 存在性；每组样本数≥2 否则报错（GLM 无复制无法估计）
 - timeout：1800s
+
+> 实施期修正说明：固定 α=1 NB 在 2v2 小样本下无检验功效，详见计划文档验证记录。
 
 ### 3.3 sc_deconv（bulk 解卷积）
 
