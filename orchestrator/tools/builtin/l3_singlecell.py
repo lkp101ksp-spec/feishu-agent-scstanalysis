@@ -1,4 +1,4 @@
-"""Phase 20/31/32/33/34/35/36：单细胞 sc_* 工具注册（spec §4；21 个 L1_compute 工具）。
+"""Phase 20/31/32/33/34/35/36/37：单细胞 sc_* 工具注册（spec §4；23 个 L1_compute 工具）。
 
 BioRunner 由 runtime 组装注入（image/workspace/data_roots 可配）；
 handler 捕获 BioRunError 转工具级 error_code/error_message。
@@ -366,6 +366,58 @@ def register_l3_singlecell(
             }, mounts=[(str(ct_dir), "/scenic_db/cistarget"),
                        (str(ma_dir), "/scenic_db/motifannot")],
                 timeout_sec=3600)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_wnn(*, rna_file: str, adt_file: str, rna_dims: int = 30,
+               adt_dims: int = 18, resolution: float = 1.0,
+               n_neighbors: int = 20, seed: int = 42) -> dict:
+        """WNN 多组学整合（Phase 37，muon）：双文件 → 新 dataset_ref。"""
+        try:
+            mount_r, rel_r, host_r = runner.resolve_data_path(rna_file)
+            mount_a, rel_a, host_a = runner.resolve_data_path(adt_file)
+            dataset_id = (compute_dataset_id(host_r)[:6]
+                          + compute_dataset_id(host_a)[:6])
+            payload = {
+                "dataset_id": dataset_id,
+                "rna_path": rel_r if mount_a == mount_r else rel_r,
+                "adt_path": rel_a,
+                "rna_dims": rna_dims, "adt_dims": adt_dims,
+                "resolution": resolution, "n_neighbors": n_neighbors,
+                "seed": seed,
+            }
+            if mount_a == mount_r:
+                out = runner.run("wnn", payload,
+                                 mounts=[(mount_r, "/data")],
+                                 timeout_sec=1200)
+            else:
+                # 异根：脚本 DATA_ROOT 指向 /data_rna，ADT 换绝对容器路径
+                payload["rna_path"] = rel_r
+                payload["adt_path"] = f"/data_adt/{rel_a}"
+                out = runner.run("wnn", payload,
+                                 mounts=[(mount_r, "/data"),
+                                         (mount_a, "/data_adt")],
+                                 timeout_sec=1200)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_knockout(*, dataset_ref: str, gko: str,
+                    celltype_col: str = "", group: str = "",
+                    n_genes: int = 1000, n_net: int = 10,
+                    n_cells: int = 500, min_lib_size: int = 1000,
+                    mt_threshold: float = 0.1) -> dict:
+        """虚拟敲除（Phase 37，scTenifoldKnk R 保真链路）。"""
+        try:
+            out = runner.run("knockout", {
+                "dataset_id": dataset_ref, "gko": gko,
+                "celltype_col": celltype_col, "group": group,
+                "n_genes": n_genes, "n_net": n_net, "n_cells": n_cells,
+                "min_lib_size": min_lib_size, "mt_threshold": mt_threshold,
+            }, timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -979,5 +1031,74 @@ def register_l3_singlecell(
         },
         risk_level="L1_compute",
         handler=sc_scenic,
+        timeout_sec=3600,
+    ))
+    registry.register(ToolSpec(
+        name="sc_wnn",
+        description=(
+            "WNN 多组学整合（Phase 37，muon，等价 Seurat "
+            "FindMultiModalNeighbors）：CITE-seq 场景把 RNA 与蛋白（ADT）"
+            "两个模态加权整合成联合邻居图 → 联合 UMAP + leiden 聚类 + "
+            "每细胞模态权重。输入两个 h5ad 文件（RNA counts + ADT counts，"
+            "按细胞名交集对齐），输出**新的 dataset_ref**（raw=RNA "
+            "lognorm，可直接接 sc_plot/sc_score/sc_annotate/sc_markers "
+            "下游）。两文件须在数据目录白名单内。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "rna_file": {"type": "string",
+                             "description": "RNA h5ad 本地路径（counts）"},
+                "adt_file": {"type": "string",
+                             "description": "ADT h5ad 本地路径（蛋白 counts）"},
+                "rna_dims": {"type": "integer", "default": 30,
+                             "description": "RNA PCA 维数"},
+                "adt_dims": {"type": "integer", "default": 18,
+                             "description": "ADT PCA 维数"},
+                "resolution": {"type": "number", "default": 1.0},
+                "n_neighbors": {"type": "integer", "default": 20},
+                "seed": {"type": "integer", "default": 42},
+            },
+            "required": ["rna_file", "adt_file"],
+        },
+        risk_level="L1_compute",
+        handler=sc_wnn,
+        timeout_sec=1200,
+    ))
+    registry.register(ToolSpec(
+        name="sc_knockout",
+        description=(
+            "虚拟敲除（Phase 37，scTenifoldKnk R 保真链路）：不敲真基因，"
+            "在网络上模拟敲掉某个转录因子，输出全基因组差异调控排序"
+            "（dRegulation Z/FC/p/padj + 火山图），回答\"敲掉 X 会影响哪些"
+            "基因\"。gKO 为高变基因内的基因名；可用 celltype_col+group 只"
+            "在指定细胞类型内做（≥100 细胞）。耗时分钟~小时级（n_net 次"
+            "网络构建）。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "gko": {"type": "string",
+                        "description": "要虚拟敲除的基因（须在 HVG 内）"},
+                "celltype_col": {"type": "string", "default": "",
+                                 "description": "子集用标签列（可空）"},
+                "group": {"type": "string", "default": "",
+                          "description": "子集用标签值（可空=全数据）"},
+                "n_genes": {"type": "integer", "default": 1000,
+                            "description": "HVG 数（网络规模，越大越慢）"},
+                "n_net": {"type": "integer", "default": 10,
+                          "description": "子抽样网络数（耗时线性）"},
+                "n_cells": {"type": "integer", "default": 500,
+                            "description": "每网抽细胞数"},
+                "min_lib_size": {"type": "integer", "default": 1000,
+                                 "description": "R 侧 QC 最小文库大小"},
+                "mt_threshold": {"type": "number", "default": 0.1},
+            },
+            "required": ["dataset_ref", "gko"],
+        },
+        risk_level="L1_compute",
+        handler=sc_knockout,
         timeout_sec=3600,
     ))

@@ -64,6 +64,22 @@ RUN pip install --no-cache-dir \
     pyscenic "setuptools<81"
 COPY scenic_site/sitecustomize.py /usr/local/lib/python3.12/site-packages/sitecustomize.py
 
+# Phase 37 多组学：muon WNN（探针实测 muon 0.1.9+mudata 0.4.1 与
+# pandas 2.3.3/numpy 2.5.2 兼容；n_multineighbors<n_obs 防御在脚本内）。
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple muon
+
+# Phase 37 虚拟敲除：R 4.5 + CRAN scTenifoldKnk 1.1（保真路线——算法链
+# 封装在 R 包内，Python 端口维护停滞。P3M trixie 二进制优先（设 UA），
+# 依赖链含需编译包（igraph 等）→ r-base-dev/g++ 同层装完即 purge。
+# 探针实测：基底 trixie、apt r-base-core=4.5.0、P3M trixie 源 200）。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends r-base-core r-base-dev g++ \
+    && Rscript -e "options(HTTPUserAgent=sprintf('R/%s R (%s)', getRversion(), paste(getRversion(), R.version['platform'], R.version['arch'], R.version['os']))); install.packages('scTenifoldKnk', repos='https://packagemanager.posit.co/cran/__linux__/trixie/latest')" \
+    && Rscript -e "library(scTenifoldKnk); cat('scTenifoldKnk', as.character(packageVersion('scTenifoldKnk')), 'ok\n')" \
+    && apt-get purge -y --no-install-recommends r-base-dev g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
@@ -76,6 +92,7 @@ WORKDIR /ws
 
 # 固化参数化脚本（BioRunner 调 python /opt/sc_tools/<name>.py）
 COPY sc_tools/ /opt/sc_tools/
+COPY r_tools/ /opt/r_tools/
 
 # 短命容器：跑完即退（--rm），无 CMD 保活需求
 CMD ["python", "/opt/sc_tools/load.py"]

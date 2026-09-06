@@ -284,6 +284,7 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - CI（远端）、mypy 严格化、uv/poetry 迁移
 - 群聊共享 session、用户身份订阅
 - 本地 BLAST+、AlphaFold 结构预测（原 Phase 20 方向，2026-09-01 取消）
+- GHIST 组织学图像分析（2026-09-06 Phase 37 评估**暂缓**：toolsv1 实现为 PyTorch UNet3+ 从零训练框架，需 Xenium 级输入 5 类文件 + 核分割预处理链，无预训练权重、建议 24GB 显存——属独立赛道投入；待 GPU + Xenium 数据齐备后立项）
 
 ---
 

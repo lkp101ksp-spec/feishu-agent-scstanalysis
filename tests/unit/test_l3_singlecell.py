@@ -1,6 +1,6 @@
 """Phase 20：sc_* 5 工具注册单测（fake BioRunner，不起容器）。"""
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from orchestrator.tools.bio.bio_runner import BioRunError
 from orchestrator.tools.builtin.l3_singlecell import register_l3_singlecell
@@ -656,3 +656,94 @@ def test_sc_scenic_schema_enums(tmp_path):
     props = reg.get("sc_scenic").parameters["properties"]
     assert props["species"]["enum"] == ["human", "mouse"]
     assert props["db"]["enum"] == ["500bp", "10kb", "both"]
+
+
+# === Phase 37：WNN 多组学 + 虚拟敲除 ===
+
+
+def test_sc_phase37_tools_registered_l1(tmp_path):
+    """两新工具注册可见、L1_compute、超时正确。"""
+    reg, _ = _registry(tmp_path)
+    names = [t.name for t in reg.list(planner_visible=True)]
+    for name in ("sc_wnn", "sc_knockout"):
+        assert name in names
+        assert reg.get(name).risk_level == "L1_compute"
+    assert reg.get("sc_wnn").timeout_sec == 1200
+    assert reg.get("sc_knockout").timeout_sec == 3600
+
+
+def test_sc_wnn_same_root_single_mount(tmp_path):
+    """两文件同数据根 → 单 /data 挂载；新 dataset_id 为双 hash 拼接。"""
+    from pathlib import Path
+
+    reg, runner = _registry(tmp_path)
+    root = Path("D:/sc_data")
+    runner.resolve_data_path.side_effect = [
+        (root, "rna.h5ad", "D:/sc_data/rna.h5ad"),
+        (root, "adt.h5ad", "D:/sc_data/adt.h5ad"),
+    ]
+    runner.run.return_value = {"ok": True, "dataset_ref": "abc123def456",
+                               "n_cells": 900, "n_clusters": 8}
+    with patch("orchestrator.tools.builtin.l3_singlecell.compute_dataset_id", side_effect=["abcdef123456", "789012fedcba"]):
+        out = reg.get("sc_wnn").handler(rna_file="D:/sc_data/rna.h5ad",
+                                        adt_file="D:/sc_data/adt.h5ad")
+    call = runner.run.call_args
+    assert call.args[0] == "wnn"
+    assert len(call.kwargs["mounts"]) == 1
+    assert call.kwargs["mounts"][0] == (root, "/data")
+    assert len(call.args[1]["dataset_id"]) == 12
+    assert call.kwargs["timeout_sec"] == 1200
+    assert out["n_clusters"] == 8 and "ok" not in out
+
+
+def test_sc_wnn_cross_root_dual_mount(tmp_path):
+    """两文件异数据根 → 双挂载 + adt_path 容器绝对路径。"""
+    from pathlib import Path
+
+    reg, runner = _registry(tmp_path)
+    runner.resolve_data_path.side_effect = [
+        (Path("D:/sc_data"), "rna.h5ad", "D:/sc_data/rna.h5ad"),
+        (Path("E:/adt"), "adt.h5ad", "E:/adt/adt.h5ad"),
+    ]
+    runner.run.return_value = {"ok": True, "dataset_ref": "x" * 12}
+    with patch("orchestrator.tools.builtin.l3_singlecell.compute_dataset_id", side_effect=["abcdef123456", "789012fedcba"]):
+        reg.get("sc_wnn").handler(rna_file="D:/sc_data/rna.h5ad",
+                                  adt_file="E:/adt/adt.h5ad")
+    call = runner.run.call_args
+    targets = sorted(m[1] for m in call.kwargs["mounts"])
+    assert targets == ["/data", "/data_adt"]
+    assert call.args[1]["adt_path"].startswith("/data_adt/")
+
+
+def test_sc_wnn_schema_required(tmp_path):
+    """required 锁定双文件参数。"""
+    reg, _ = _registry(tmp_path)
+    params = reg.get("sc_wnn").parameters
+    assert params["required"] == ["rna_file", "adt_file"]
+
+
+def test_sc_knockout_forwards_params(tmp_path):
+    """knockout 转发 gko 与网络参数。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "gko": "SPI1",
+        "top_dr_genes": ["CTSS", "LYZ"], "n_genes": 1000}
+    out = reg.get("sc_knockout").handler(
+        dataset_ref="d", gko="SPI1", celltype_col="leiden", group="2",
+        n_genes=800, n_net=5)
+    args = runner.run.call_args
+    assert args.args[0] == "knockout"
+    assert args.args[1]["gko"] == "SPI1"
+    assert args.args[1]["n_net"] == 5
+    assert args.args[1]["group"] == "2"
+    assert args.kwargs["timeout_sec"] == 3600
+    assert out["top_dr_genes"] == ["CTSS", "LYZ"] and "ok" not in out
+
+
+def test_sc_knockout_error_passthrough(tmp_path):
+    """R 侧失败透传错误码。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.side_effect = BioRunError(
+        "SC_SCRIPT_ERROR", "RuntimeError: Rscript knk.R failed")
+    out = reg.get("sc_knockout").handler(dataset_ref="d", gko="XX")
+    assert out["error_code"] == "SC_SCRIPT_ERROR"
