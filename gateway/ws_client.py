@@ -366,7 +366,13 @@ def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
 
 
 _PIDFILE = Path(__file__).resolve().parent.parent / ".ws_client.pid"
-_KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
+# kernel32 仅 Windows 存在；CI（ubuntu）下置 None 保证模块可 import——
+# _pid_alive/_terminate 只在 Windows 生产路径调用，测试一律 monkeypatch。
+_KERNEL32 = (
+    ctypes.WinDLL("kernel32", use_last_error=True)
+    if sys.platform == "win32"
+    else None
+)
 _ERROR_INVALID_PARAMETER = 87
 
 
