@@ -313,6 +313,8 @@ class CodingRunner:
                                   if p.strip()]
         # 审批等待复用 research 的超时配置
         self.approval_timeout_sec = int(getattr(s, "research_approval_timeout_sec", 600))
+        # Phase 43：/code 画像注入用（对齐 research_runner Phase 42；空 = 功能关闭）
+        self.bio_workspace_root = getattr(s, "bio_workspace_root", "")
 
     # ------------------------------------------------------------------ #
     def handle(self, incoming) -> dict:
@@ -367,6 +369,15 @@ class CodingRunner:
         dispatch = self._make_dispatch(code_tools, session_id, incoming.sender_open_id)
         knowledge = loader.build_system_knowledge(task_text, llm=self.llm)
         system = _SYSTEM_PROMPT + (f"\n\n{knowledge}" if knowledge else "")
+        # Phase 43：数据画像注入——任务文本含 dataset_ref 时附真实统计，
+        # 防 LLM 调 sc_qc 套默认 min_genes=600 致全过滤（对齐 research_runner Phase 42）。
+        try:
+            from orchestrator.tools.bio.dataset_profile import build_profile_context
+            profile_ctx = build_profile_context(task_text, self.bio_workspace_root)
+            if profile_ctx:
+                system += "\n\n" + profile_ctx
+        except Exception:  # noqa: BLE001
+            logger.warning("dataset profile inject failed", exc_info=True)
 
         reporter = self._make_reporter(incoming, task_text)
         loop = AgentLoop(self.llm, tools_schema, dispatch,

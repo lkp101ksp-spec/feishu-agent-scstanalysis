@@ -392,3 +392,65 @@ class TestMakeReporter:
         texts = [str(c.args[1]) for c in deps["im"].reply.call_args_list]
         assert any("异常" in t for t in texts)
         assert runner._session_id("c1") != runner._session_id("c2")
+
+
+# === Phase 43：数据画像注入 /code system prompt（对齐 research_runner Phase 42） ===
+
+class TestDatasetProfileInject:
+    """任务文本含 dataset_ref 时，system prompt 附真实数据画像段。"""
+
+    @staticmethod
+    def _write_h5ad(path):
+        """写最小 dense h5ad（3 细胞×4 基因，每细胞非零 2/3/1 → median=2）。"""
+        import h5py
+        import numpy as np
+        with h5py.File(path, "w") as f:
+            f.create_dataset("X", data=np.array(
+                [[5, 0, 3, 0], [0, 2, 1, 4], [0, 0, 7, 0]], dtype=np.float64))
+            var = f.create_group("var")
+            var.attrs["_index"] = "_index"
+            var.create_dataset("_index",
+                               data=[g.encode() for g in ["MT-ND1", "G2", "G3", "G4"]])
+
+    @staticmethod
+    def _settings_with_bio(deps, bio_root):
+        """deps settings 替身 + bio_workspace_root 字段。"""
+        class _S(deps["settings"]):
+            pass
+        _S.bio_workspace_root = str(bio_root)
+        return _S
+
+    def test_profile_injected_when_ref_present(self, deps, tmp_path):
+        ref = "abcdef123456"
+        bio_root = tmp_path / "bio_ws"
+        (bio_root / ref).mkdir(parents=True)
+        self._write_h5ad(bio_root / ref / "raw.h5ad")
+        llm = FakeLLM([{"role": "assistant", "content": "done", "tool_calls": None}])
+        runner = _runner(llm, deps, settings=self._settings_with_bio(deps, bio_root))
+        runner.run_sync(FakeIncoming(f"/code 对数据集 {ref} 做质控"),
+                        f"对数据集 {ref} 做质控")
+        system = llm.calls[0]["messages"][0]["content"]
+        assert "数据画像" in system
+        assert ref in system
+        assert "median=2" in system
+
+    def test_profile_absent_for_plain_text(self, deps):
+        """纯文本任务（无 ref）：零注入回归保护。"""
+        llm = FakeLLM([{"role": "assistant", "content": "done", "tool_calls": None}])
+        runner = _runner(llm, deps)
+        runner.run_sync(FakeIncoming("/code 写个脚本"), "写个脚本")
+        system = llm.calls[0]["messages"][0]["content"]
+        assert "数据画像" not in system
+
+    def test_profile_failure_noop(self, deps, tmp_path):
+        """bio_root 不存在：画像静默跳过，run_sync 主链路不受影响。"""
+        class _S(deps["settings"]):
+            bio_workspace_root = str(tmp_path / "nonexistent")
+        ref = "abcdef123456"
+        llm = FakeLLM([{"role": "assistant", "content": "done", "tool_calls": None}])
+        runner = _runner(llm, deps, settings=_S)
+        r = runner.run_sync(FakeIncoming(f"/code 对数据集 {ref} 做质控"),
+                            f"对数据集 {ref} 做质控")
+        assert r["status"] == "final"
+        system = llm.calls[0]["messages"][0]["content"]
+        assert "数据画像" not in system
