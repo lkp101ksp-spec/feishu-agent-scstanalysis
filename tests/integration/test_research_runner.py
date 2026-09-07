@@ -3,6 +3,7 @@
 假 Executor 直接返回 SUCCESS 句柄（不起线程跑真实工具），
 验证受理即回、后台执行、结果回复与文档写回语义。
 """
+import threading
 import time
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -65,7 +66,13 @@ def db():
     )
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
+    before = set(threading.enumerate())
     yield factory
+    # 先等本测试起的后台 runner 线程结束再 dispose：结果回复在 mark_success 之前，
+    # 测试看到回复即通过，线程此时仍在写 audit；Linux 上 dispose 关闭 sqlite 连接
+    # 与并发执行会触发 C 层段错误（Windows 不崩纯属时序运气）。
+    for t in set(threading.enumerate()) - before:
+        t.join(timeout=10)
     engine.dispose()
 
 
