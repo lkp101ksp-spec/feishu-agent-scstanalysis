@@ -231,6 +231,21 @@ class Orchestrator:
             self.im.send_card(incoming.chat_id, card)
             return {"status": "model_switch_card_sent"}
 
+        # 1.72 未知斜杠命令兜底：已知指令此前已全部路由（市场 12 条 +
+        # /research、/code、/model），走到这里的 / 开头消息即未注册命令——
+        # 给可用命令提示，而非静默落入闲聊 LLM（Phase 39 真机 /clear 困惑暴露）。
+        if stripped.startswith("/"):
+            self.im.reply(
+                incoming.chat_id,
+                f"[未知命令] {stripped.split()[0]}\n"
+                "可用命令：/research <任务>（研究分析）· /code <任务>（代码任务）· "
+                "/code clear（清空工作区）· /model（模型切换，管理员）· "
+                "/bind-doc <doc_id>（绑定文档）· /template-list（我的模板）\n"
+                "或直接发自然语言，我会自动判断任务意图。",
+            )
+            return {"status": "unknown_command",
+                    "command": stripped.split()[0]}
+
         # 1.7 群聊门控：群聊只响应指令（/ 开头、#写到），闲聊静默忽略防刷屏；
         # 私聊（p2p）行为不变。指令此前已全部路由，走到这里的群消息即闲聊。
         if getattr(incoming, "chat_type", "") == "group" and not (

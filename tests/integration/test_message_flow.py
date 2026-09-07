@@ -556,3 +556,57 @@ def test_process_intent_gate_absent_keeps_old_behavior(orch):
     ))
     assert result["status"] == "success"
     orch.im.send_card.assert_not_called()
+
+
+# === Phase 40：未知斜杠命令兜底 ===
+
+
+def test_unknown_slash_command_replies_hint_and_skips_llm(orch):
+    """未注册 / 命令（如 /clear）：回可用命令提示，不落闲聊 LLM、不建 task。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_u1", chat_id="oc_1", sender_open_id="ou_1",
+        text="/clear",
+    ))
+    assert result["status"] == "unknown_command"
+    assert result["command"] == "/clear"
+    hint = orch.im.reply.call_args.args[1]
+    assert "未知命令" in hint and "/code clear" in hint
+    orch.llm.chat.assert_not_called()
+    # 不建 task：审计中无 create_task（session_service 为真实服务不可断言）
+    actions = [log.action for log in orch.task_service.audit_repo.list_recent(10)]
+    assert "create_task" not in actions
+
+
+def test_unknown_slash_command_with_args_only_echoes_command(orch):
+    """带参数的未知命令：提示中只回显命令词，不带参数体。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_u2", chat_id="oc_1", sender_open_id="ou_1",
+        text="/restart 全部服务",
+    ))
+    assert result["status"] == "unknown_command"
+    assert result["command"] == "/restart"
+    hint = orch.im.reply.call_args.args[1]
+    assert "/restart" in hint and "全部服务" not in hint
+
+
+def test_unknown_slash_command_in_group_also_gets_hint(orch):
+    """群聊中的未知 / 命令同样给提示（群门控在此之前不拦截 / 开头消息）。"""
+    result = orch.process(IncomingMessage(
+        message_id="om_u3", chat_id="oc_group", sender_open_id="ou_1",
+        text="/clear", chat_type="group",
+    ))
+    assert result["status"] == "unknown_command"
+    orch.im.reply.assert_called_once()
+
+
+def test_known_commands_not_caught_by_fallback(orch):
+    """回归保护：已注册命令不触发未知命令兜底。"""
+    from unittest.mock import MagicMock as _MM
+
+    orch.research_runner = _MM()
+    orch.research_runner.handle.return_value = {"status": "research_accepted"}
+    result = orch.process(IncomingMessage(
+        message_id="om_u4", chat_id="oc_1", sender_open_id="ou_1",
+        text="/research 分析数据",
+    ))
+    assert result["status"] == "research_accepted"
