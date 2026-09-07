@@ -25,3 +25,7 @@ providers:
     base_url_env: LLM_FALLBACK_BASE_URL
     api_key_env: LLM_FALLBACK_API_KEY
     model_env: LLM_FALLBACK_MODEL
+  - name: kimi
+    base_url_env: LLM_PROVIDER_KIMI_BASE_URL
+    api_key_env: LLM_PROVIDER_KIMI_API_KEY
+    model_env: LLM_PROVIDER_KIMI_MODEL
