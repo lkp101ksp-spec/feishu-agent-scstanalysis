@@ -355,6 +355,20 @@ class ResearchRunner:
                     "当前会话未绑定文档（涉及文档读取时应在回复中提示"
                     "用户先 /bind-doc）"
                 )
+        # Phase 42：数据画像注入——任务文本含 dataset_ref 时附真实统计
+        # （n_cells/genes_per_cell median 等），模型按数据实况选 sc_qc
+        # 阈值，根治 SC_QC_OVERFILTERED（真机 2026-09-07 默认 600 全过滤）
+        try:
+            from orchestrator.tools.bio.dataset_profile import (
+                build_profile_context,
+            )
+            profile_ctx = build_profile_context(
+                task_text,
+                getattr(self.orch.settings, "bio_workspace_root", ""))
+            if profile_ctx:
+                session_context += "\n" + profile_ctx
+        except Exception:  # noqa: BLE001 —— 画像是可选项，绝不影响规划
+            logger.warning("dataset profile inject failed", exc_info=True)
         # L2 副作用工具默认不可规划（名字与 schema 都不给模型）；
         # Phase 17 例外：开关开启且有 broker 时放行 write_doc（节点级审批，
         # 其余 L2——send_card/write_base_projection/upload_drive——仍不给）；

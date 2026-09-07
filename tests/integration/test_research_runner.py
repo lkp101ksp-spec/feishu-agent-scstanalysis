@@ -749,6 +749,54 @@ def test_progress_card_disabled_when_no_message_id(db):
     assert "执行完成" in final
 
 
+# === Phase 42：数据画像注入规划提示 ===
+
+
+def _write_tiny_h5ad(path, n_cells=3):
+    """写 tiny dense h5ad（每细胞非零 2/3/1 个基因，含 MT- 前缀基因）。"""
+    import h5py
+    import numpy as np
+
+    x = np.array([[5, 0, 3, 0], [0, 2, 1, 4], [0, 0, 7, 0]][:n_cells],
+                 dtype=np.float64)
+    with h5py.File(path, "w") as f:
+        f.create_dataset("X", data=x)
+        var = f.create_group("var")
+        var.attrs["_index"] = "_index"
+        var.create_dataset("_index",
+                           data=[g.encode() for g in ["MT-ND1", "G2", "G3", "G4"]])
+
+
+def test_dataset_profile_injected_into_planner_context(db, tmp_path):
+    """任务文本含 dataset_ref → planner session_context 带数据画像。"""
+    ds = tmp_path / "aaaaaaaaaaaa"
+    ds.mkdir()
+    _write_tiny_h5ad(ds / "raw.h5ad")
+
+    orch = _orch(db)
+    orch.settings.bio_workspace_root = str(tmp_path)
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 对数据集 aaaaaaaaaaaa 做质控"))
+
+    assert _wait_reply_count(orch.im, 2)
+    ctx = orch.planner.plan.call_args.kwargs["session_context"]
+    assert "数据画像" in ctx
+    assert "aaaaaaaaaaaa" in ctx
+    assert "median=2" in ctx
+    assert "min_genes" in ctx
+
+
+def test_dataset_profile_absent_for_plain_text(db):
+    """任务文本无 dataset_ref → session_context 不含画像段（零影响回归）。"""
+    orch = _orch(db)
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    ctx = orch.planner.plan.call_args.kwargs["session_context"]
+    assert "数据画像" not in ctx
+
+
 def test_non_sc_plan_keeps_default_timeout(db, monkeypatch):
     """纯检索任务：维持原超时（回归基线）。"""
     import asyncio
