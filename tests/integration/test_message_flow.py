@@ -512,7 +512,7 @@ def test_code_prefix_not_matched_by_plain_text(orch):
 # === Phase 38：意图预判闸 ===
 
 
-def _attach_gate(orch, classify='{"research": true}'):
+def _attach_gate(orch, classify='{"route": "research"}'):
     """给 orch 挂真 IntentGateService（mock LLM 分类 + 复用 mock im）。"""
     from orchestrator.intent_gate import IntentGateService
 
@@ -537,7 +537,7 @@ def test_process_research_intent_offers_card_and_skips_chat(orch):
 
 def test_process_chat_intent_falls_through_to_llm(orch):
     """意图闸未命中：落回普通闲聊路径（LLM 回复 + task 收尾）。"""
-    _attach_gate(orch, classify='{"research": false}')
+    _attach_gate(orch, classify='{"route": "chat"}')
     result = orch.process(IncomingMessage(
         message_id="om_i2", chat_id="oc_1", sender_open_id="ou_1",
         text="今天天气怎么样",

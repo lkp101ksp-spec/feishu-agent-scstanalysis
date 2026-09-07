@@ -27,35 +27,55 @@ from shared.ulid_ import new_ulid
 logger = logging.getLogger(__name__)
 
 _CLASSIFY_SYSTEM = (
-    "判断用户消息是否是「研究/数据分析任务」意图。\n"
-    "研究意图：要求对数据集/文档执行分析、检测、计算、绘图、总结等具体操作，"
-    "常含数据集引用（12 位 hex 编号）、工具名（sc_*/st_*）、分析名词"
-    "（如双联体检测、细胞周期评分、富集分析、聚类、差异表达、细胞注释）。\n"
-    "非研究意图：问候、闲聊、概念提问、用法咨询、情绪表达等。\n"
-    '只输出 JSON：{"research": true} 或 {"research": false}'
+    "判断用户消息该走哪条处理路径，三选一。\n"
+    'research（研究/数据分析任务）：要求对数据集/文档执行分析、检测、计算、'
+    "绘图、总结等具体操作，常含数据集引用（12 位 hex 编号）、生信工具名"
+    "（sc_*/st_*）、分析名词（如双联体检测、细胞周期评分、富集分析、聚类、"
+    "差异表达、细胞注释）。\n"
+    "code（代码任务）：明确要求写代码、修 bug、重构、生成/解释脚本、"
+    "操作本项目工作区文件。\n"
+    "chat（闲聊/咨询）：问候、概念提问、用法咨询、情绪表达等。\n"
+    '只输出 JSON：{"route": "research"} / {"route": "code"} / {"route": "chat"}'
 )
+
+_ROUTES = ("research", "code")
+_ROUTE_LABEL = {"research": "/research", "code": "/code"}
+_ROUTE_TITLE = {"research": "研究任务", "code": "代码任务"}
 
 # 卡片正文指令预览长度上限（完整原文进内存 store，不受此限）
 _PREVIEW_CAP = 200
 
 
-def _offer_card(intent_id: str, owner: str, text: str) -> dict:
-    """意图确认卡：指令预览 + 确认执行/忽略按钮（value 内嵌 owner 比对）。"""
+def _offer_card(intent_id: str, owner: str, text: str, route: str) -> dict:
+    """意图确认卡：指令预览 + 确认执行/改用另一路径/忽略（value 内嵌 owner）。
+
+    三按钮（Feishu 单组上限 4）：主按钮按分类路径执行；纠偏按钮一键切换到
+    另一条路（research↔code 误判时可不换卡片直接改道）；忽略回落闲聊。
+    """
     preview = text[:_PREVIEW_CAP] + ("…" if len(text) > _PREVIEW_CAP else "")
     base = {"action": "research_intent", "intent_id": intent_id, "owner": owner}
+    alt = "code" if route == "research" else "research"
     return {
         "config": {"wide_screen_mode": True},
-        "header": {"title": {"tag": "plain_text", "content": "检测到研究任务意图"}},
+        "header": {"title": {"tag": "plain_text", "content":
+                             f"检测到{_ROUTE_TITLE[route]}意图"}},
         "elements": [
             {"tag": "div", "text": {"tag": "lark_md", "content": (
-                f"这条消息看起来像数据分析/研究任务：\n> {preview}\n\n"
-                "确认后将作为 /research 任务受理（后台执行，完成自动回复）；"
-                "若是闲聊请点忽略。")}},
+                f"这条消息看起来像{_ROUTE_TITLE[route]}：\n> {preview}\n\n"
+                f"确认后将作为 {_ROUTE_LABEL[route]} 任务受理"
+                "（后台执行，完成自动回复）；"
+                f"分类不对可改用 {_ROUTE_LABEL[alt]}；若是闲聊请点忽略。")}},
             {"tag": "action", "actions": [
                 {"tag": "button",
-                 "text": {"tag": "plain_text", "content": "确认执行"},
+                 "text": {"tag": "plain_text", "content":
+                          f"确认执行（{_ROUTE_LABEL[route]}）"},
                  "type": "primary",
-                 "value": {**base, "decision": "approve"}},
+                 "value": {**base, "decision": "approve", "route": route}},
+                {"tag": "button",
+                 "text": {"tag": "plain_text", "content":
+                          f"改用 {_ROUTE_LABEL[alt]}"},
+                 "type": "default",
+                 "value": {**base, "decision": "approve", "route": alt}},
                 {"tag": "button",
                  "text": {"tag": "plain_text", "content": "忽略"},
                  "type": "default",
@@ -65,11 +85,13 @@ def _offer_card(intent_id: str, owner: str, text: str) -> dict:
     }
 
 
-def _result_card(text: str, approved: bool) -> dict:
+def _result_card(text: str, approved: bool, route: str = "research") -> dict:
     """点击后的原地换面卡（去按钮防重复点击；服务端幂等仍兜底）。"""
     preview = text[:_PREVIEW_CAP] + ("…" if len(text) > _PREVIEW_CAP else "")
-    title, note = (("研究任务已受理", "正在规划执行，完成后自动回复。")
-                   if approved else ("已忽略", "该消息按普通聊天处理。"))
+    title, note = (
+        (f"{_ROUTE_TITLE[route]}已受理",
+         f"已按 {_ROUTE_LABEL[route]} 受理，正在执行，完成后自动回复。")
+        if approved else ("已忽略", "该消息按普通聊天处理。"))
     return {
         "config": {"wide_screen_mode": True},
         "header": {"title": {"tag": "plain_text", "content": title}},
@@ -104,16 +126,18 @@ class IntentGateService:
         if not text or text.startswith("/"):
             return None
         try:
-            if not self._classify(text):
-                return None
+            route = self._classify(text)
         except Exception:  # noqa: BLE001 —— 分类失败回退闲聊，绝不阻断
             logger.exception("intent classify failed (fallback to chat)")
+            return None
+        if route not in _ROUTES:
             return None
         intent_id = new_ulid()
         with self._lock:
             self._purge_expired()
             self._pending[intent_id] = {
                 "text": text,
+                "route": route,
                 "chat_id": incoming.chat_id,
                 "sender_open_id": incoming.sender_open_id,
                 "message_id": incoming.message_id,
@@ -124,29 +148,33 @@ class IntentGateService:
         try:
             self.im.send_card(
                 incoming.chat_id,
-                _offer_card(intent_id, incoming.sender_open_id, text))
+                _offer_card(intent_id, incoming.sender_open_id, text, route))
         except Exception:  # noqa: BLE001 —— 发卡失败清理挂起项并回退闲聊
             logger.exception("intent offer card send failed")
             with self._lock:
                 self._pending.pop(intent_id, None)
             return None
-        return {"status": "intent_offered", "intent_id": intent_id}
+        return {"status": "intent_offered", "intent_id": intent_id,
+                "route": route}
 
-    def _classify(self, text: str) -> bool:
-        """LLM 轻量分类：True=研究意图；解析失败/缺字段按 False 保守处理。"""
+    def _classify(self, text: str) -> str:
+        """LLM 轻量分类：返回 research/code/chat；解析失败按 chat 保守处理。"""
         resp = self.llm.chat([
             ChatMessage(role="system", content=_CLASSIFY_SYSTEM),
             ChatMessage(role="user", content=text),
         ])
-        return bool(_extract_json_object(resp).get("research"))
+        route = str(_extract_json_object(resp).get("route", "chat")).strip()
+        return route if route in _ROUTES else "chat"
 
     # === 回调路径 ===
 
     def decide(self, intent_id: str, decision: str, *,
-               operator: str, owner: str = "") -> dict:
+               operator: str, owner: str = "", route: str = "") -> dict:
         """确认卡点击：owner 比对 + 内存幂等 + TTL 失效。
 
-        返回 status：intent_approved（附 incoming_kwargs 与换面卡）/
+        route 为卡片 value 里的最终执行路径（用户可点纠偏按钮改道），
+        非法值回退到分类时的 entry["route"]。
+        返回 status：intent_approved（附 route/incoming_kwargs 与换面卡）/
         intent_denied（附换面卡）/ forbidden / already_handled / intent_expired。
         """
         with self._lock:
@@ -162,17 +190,20 @@ class IntentGateService:
         if decision != "approve":
             return {"ok": True, "status": "intent_denied",
                     "card": _result_card(entry["text"], approved=False)}
+        final_route = route if route in _ROUTES else entry["route"]
         return {
             "ok": True,
             "status": "intent_approved",
+            "route": final_route,
             "incoming_kwargs": {
                 "message_id": entry["message_id"],
                 "chat_id": entry["chat_id"],
                 "sender_open_id": entry["sender_open_id"],
                 "chat_type": entry["chat_type"],
-                "text": "/research " + entry["text"],
+                "text": f"{_ROUTE_LABEL[final_route]} " + entry["text"],
             },
-            "card": _result_card(entry["text"], approved=True),
+            "card": _result_card(entry["text"], approved=True,
+                                 route=final_route),
         }
 
     def _purge_expired(self) -> None:

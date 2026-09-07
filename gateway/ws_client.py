@@ -294,10 +294,13 @@ def card_result_to_response(result: dict) -> P2CardActionTriggerResponse | None:
         return resp
     # Phase 38：意图预判确认卡反馈（批准/忽略均原地换面去按钮）
     if status in ("intent_approved", "intent_denied"):
+        route_label = {"research": "/research", "code": "/code"}.get(
+            result.get("route", ""), "")
         toast = CallBackToast({})
         toast.type = "success" if status == "intent_approved" else "info"
-        toast.content = ("已受理，开始规划执行…" if status == "intent_approved"
-                         else "已忽略，按普通聊天处理")
+        toast.content = (
+            f"已受理，按 {route_label} 开始执行…"
+            if status == "intent_approved" else "已忽略，按普通聊天处理")
         resp = P2CardActionTriggerResponse({})
         resp.toast = toast
         if result.get("card"):

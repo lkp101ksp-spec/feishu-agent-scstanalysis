@@ -20,9 +20,9 @@ def _incoming(text="对数据集 f1e89bf88edc 做双联体检测", **kw):
 
 @pytest.fixture
 def gate():
-    """LLM 判 true + 发卡成功的意图闸（可控时钟）。"""
+    """LLM 判 research + 发卡成功的意图闸（可控时钟）。"""
     llm = MagicMock()
-    llm.chat.return_value = '{"research": true}'
+    llm.chat.return_value = '{"route": "research"}'
     im = MagicMock()
     clock = {"t": 1000.0}
     svc = IntentGateService(llm=llm, im=im, ttl_sec=1800,
@@ -40,19 +40,34 @@ class TestMaybeOffer:
         svc, llm, im = gate
         r = svc.maybe_offer(_incoming())
         assert r["status"] == "intent_offered" and r["intent_id"]
+        assert r["route"] == "research"
         im.send_card.assert_called_once()
         card = im.send_card.call_args.args[1]
+        assert card["header"]["title"]["content"] == "检测到研究任务意图"
         buttons = card["elements"][1]["actions"]
         values = [b["value"] for b in buttons]
-        assert [v["action"] for v in values] == ["research_intent"] * 2
-        assert [v["decision"] for v in values] == ["approve", "deny"]
+        assert [v["action"] for v in values] == ["research_intent"] * 3
+        # 三按钮：确认（分类路径）/ 纠偏（另一路径）/ 忽略
+        assert [v["decision"] for v in values] == ["approve", "approve", "deny"]
+        assert [v.get("route") for v in values] == ["research", "code", None]
         assert all(v["owner"] == "ou_1" for v in values)
         assert all(v["intent_id"] == r["intent_id"] for v in values)
+
+    def test_code_intent_offer_card_route(self, gate):
+        """代码意图：卡标题/主按钮走 /code，纠偏按钮给 /research。"""
+        svc, llm, im = gate
+        llm.chat.return_value = '{"route": "code"}'
+        r = svc.maybe_offer(_incoming("帮我写个脚本统计文件行数"))
+        assert r["route"] == "code"
+        card = im.send_card.call_args.args[1]
+        assert card["header"]["title"]["content"] == "检测到代码任务意图"
+        values = [b["value"] for b in card["elements"][1]["actions"]]
+        assert [v.get("route") for v in values] == ["code", "research", None]
 
     def test_chat_intent_falls_through(self, gate):
         """闲聊意图：返回 None 且不发卡。"""
         svc, llm, im = gate
-        llm.chat.return_value = '{"research": false}'
+        llm.chat.return_value = '{"route": "chat"}'
         assert svc.maybe_offer(_incoming("今天天气怎么样")) is None
         im.send_card.assert_not_called()
 
@@ -64,9 +79,16 @@ class TestMaybeOffer:
         im.send_card.assert_not_called()
 
     def test_bad_json_falls_back_to_chat(self, gate):
-        """分类响应非 JSON：保守按非研究意图处理。"""
+        """分类响应非 JSON：保守按闲聊处理。"""
         svc, llm, im = gate
         llm.chat.return_value = "我觉得是吧"
+        assert svc.maybe_offer(_incoming()) is None
+        im.send_card.assert_not_called()
+
+    def test_unknown_route_falls_back_to_chat(self, gate):
+        """分类返回未知路由值：按闲聊保守处理。"""
+        svc, llm, im = gate
+        llm.chat.return_value = '{"route": "whatever"}'
         assert svc.maybe_offer(_incoming()) is None
         im.send_card.assert_not_called()
 
@@ -95,8 +117,10 @@ class TestDecide:
         """确认执行：返回 /research 化的消息要素 + 原地换面卡。"""
         svc, llm, im = gate
         iid = self._offer(svc)
-        r = svc.decide(iid, "approve", operator="ou_1", owner="ou_1")
+        r = svc.decide(iid, "approve", operator="ou_1", owner="ou_1",
+                       route="research")
         assert r["ok"] and r["status"] == "intent_approved"
+        assert r["route"] == "research"
         kw = r["incoming_kwargs"]
         assert kw["text"].startswith("/research ")
         assert "双联体检测" in kw["text"]
@@ -104,6 +128,25 @@ class TestDecide:
         assert r["card"]["header"]["title"]["content"] == "研究任务已受理"
         # 换面卡不含按钮（防重复点击；服务端幂等另兜底）
         assert all(e["tag"] != "action" for e in r["card"]["elements"])
+
+    def test_approve_with_route_override_switches_to_code(self, gate):
+        """纠偏按钮：分类为 research 但用户点「改用 /code」→ 按 /code 受理。"""
+        svc, llm, im = gate
+        iid = self._offer(svc)
+        r = svc.decide(iid, "approve", operator="ou_1", owner="ou_1",
+                       route="code")
+        assert r["status"] == "intent_approved" and r["route"] == "code"
+        assert r["incoming_kwargs"]["text"].startswith("/code ")
+        assert r["card"]["header"]["title"]["content"] == "代码任务已受理"
+
+    def test_invalid_route_falls_back_to_classified(self, gate):
+        """回调 route 非法：回退分类时的路由（不放任任意前缀注入）。"""
+        svc, llm, im = gate
+        iid = self._offer(svc)
+        r = svc.decide(iid, "approve", operator="ou_1", owner="ou_1",
+                       route="/etc/passwd")
+        assert r["route"] == "research"
+        assert r["incoming_kwargs"]["text"].startswith("/research ")
 
     def test_deny_returns_result_card(self, gate):
         svc, llm, im = gate

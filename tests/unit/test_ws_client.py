@@ -191,9 +191,11 @@ def test_card_result_to_response_intent_approved_toast_and_card():
     card = {"header": {"title": {"tag": "plain_text", "content": "研究任务已受理"}},
             "elements": []}
     resp = card_result_to_response(
-        {"ok": True, "status": "intent_approved", "card": card})
+        {"ok": True, "status": "intent_approved", "route": "code",
+         "card": card})
     assert resp is not None
-    assert resp.toast.type == "success" and "已受理" in resp.toast.content
+    assert resp.toast.type == "success"
+    assert "已受理" in resp.toast.content and "/code" in resp.toast.content
     assert resp.card.type == "raw" and resp.card.data == card
 
 

@@ -291,10 +291,11 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         return {"ok": True, "status": "applied",
                 "file": applied.get("file", ""),
                 "backup": applied.get("backup", "")}
-    # Phase 38：research_intent 分支（意图预判确认卡）。
-    # owner 内嵌比对 + 内存幂等（同 code_approval 模式）；批准后直接转
-    # ResearchRunner.handle（受理即回 + 后台线程），等同用户发了 /research。
-    # 单挂载点：gate 只挂 orch，此处经 ctx.orchestrator 取同实例。
+    # Phase 38：research_intent 分支（意图预判确认卡，research/code 双路由）。
+    # owner 内嵌比对 + 内存幂等（同 code_approval 模式）；批准后按路由转
+    # ResearchRunner 或 CodingRunner.handle（受理即回 + 后台线程），等同
+    # 用户发了 /research 或 /code。单挂载点：gate 只挂 orch，此处经
+    # ctx.orchestrator 取同实例。
     if action == "research_intent":
         orch = ctx.orchestrator
         gate = getattr(orch, "intent_gate", None)
@@ -303,10 +304,13 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         result = gate.decide(
             payload.get("intent_id", ""), payload.get("decision", ""),
             operator=payload.get("open_id", ""),
-            owner=payload.get("owner", ""))
+            owner=payload.get("owner", ""),
+            route=payload.get("route", ""))
         if result.get("status") != "intent_approved":
             return result
-        runner = getattr(orch, "research_runner", None)
+        route = result.get("route", "research")
+        runner = getattr(orch, "research_runner" if route == "research"
+                         else "coding_runner", None)
         if runner is None:
             return {"ok": False, "status": "intent_unavailable"}
         from shared.schemas import IncomingMessage
@@ -314,10 +318,10 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         runner.handle(incoming)
         _audit_event(
             app, actor_type="user", actor_id=payload.get("open_id", ""),
-            action="research_intent_approved", target_type="research_intent",
+            action="intent_approved", target_type="research_intent",
             target_id=payload.get("intent_id", ""),
-            detail={"text": incoming.text[:200]})
-        return {"ok": True, "status": "intent_approved",
+            detail={"route": route, "text": incoming.text[:200]})
+        return {"ok": True, "status": "intent_approved", "route": route,
                 "card": result.get("card")}
     # Phase 30：model_switch 分支（/model 状态卡按钮热切换主备模型）。
     # admin 校验在 service 内（复用 FEISHU_ADMIN_OPEN_IDS）；成败均落专项审计，
