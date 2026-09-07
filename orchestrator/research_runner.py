@@ -43,6 +43,11 @@ def _fmt_elapsed(sec: float) -> str:
     return f"{sec // 3600}h{sec % 3600 // 60:02d}m"
 
 
+def _research_llm(orch):
+    """Phase 44：/research 场景 llm——orch.research_llm 优先，缺省回退 orch.llm。"""
+    return getattr(orch, "research_llm", None) or getattr(orch, "llm", None)
+
+
 class _ResearchProgressCard:
     """/research 进度卡（Phase 41）：受理即发卡，原地刷新，终态定格。
 
@@ -424,8 +429,8 @@ class ResearchRunner:
         scheduler = Scheduler(
             plan=plan, executor=self.orch.executor,
             max_concurrent=self.orch.settings.max_concurrent_nodes,
-            condition_llm=getattr(self.orch, "llm", None),
-            code_repair_llm=getattr(self.orch, "llm", None),
+            condition_llm=_research_llm(self.orch),
+            code_repair_llm=_research_llm(self.orch),
             node_repair_max_retries=getattr(
                 self.orch.settings, "node_repair_max_retries", 1),
             l2_gate=l2_gate,

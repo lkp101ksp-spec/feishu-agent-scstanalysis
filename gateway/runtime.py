@@ -139,6 +139,26 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         },
         max_retries=settings.llm.max_retries,
     )
+    # --- Phase 44：场景级 provider 静态双绑（CODE_PROVIDER/RESEARCH_PROVIDER 填池内
+    # name；空 = 跟随全局 router，/model 热切换语义不变） ---
+    from orchestrator.scene_router import build_scene_router
+    _scene_pool = {p.name: p for p in settings.llm.providers}
+    _scene_fallback = {
+        "base_url": settings.llm.fallback_base_url,
+        "api_key": settings.llm.fallback_api_key,
+        "model": settings.llm.fallback_model,
+        "timeout_sec": settings.llm_timeout_sec,
+    }
+    llm_code = build_scene_router(getattr(settings, "code_provider", ""),
+                                  _scene_pool, _scene_fallback,
+                                  max_retries=settings.llm.max_retries)
+    llm_research = build_scene_router(getattr(settings, "research_provider", ""),
+                                      _scene_pool, _scene_fallback,
+                                      max_retries=settings.llm.max_retries)
+    if llm_code or llm_research:
+        logger.info("scene llm bound: code=%s research=%s",
+                    getattr(settings, "code_provider", "") or "-",
+                    getattr(settings, "research_provider", "") or "-")
     audit_repo = AuditRepo(session)
     session_service = SessionService(SessionRepo(session), audit_repo=audit_repo)
     task_service = TaskService(TaskRepo(session), audit_repo)
@@ -156,6 +176,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         llm, session_service, task_service, bind_doc_service, doc_write_service, im,
         settings=settings, doc_adapter=doc, base_adapter=base, drive_adapter=drive,
         audit_repo=audit_repo, artifact_repo=artifact_repo,
+        research_llm=llm_research,
     )
 
     # --- Phase 5-6：模板库 ---
@@ -339,10 +360,10 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     from orchestrator.coding.coding_runner import CodingRunner
     from orchestrator.coding.skill_diagnoser import SkillDiagnoser
     orch.coding_runner = CodingRunner(
-        llm=llm, im=im, tool_handler=orch.tool_handler,
+        llm=llm_code or llm, im=im, tool_handler=orch.tool_handler,
         registry=orch.registry, broker=approval_broker, settings=settings,
         diagnoser=SkillDiagnoser(
-            llm=llm,
+            llm=llm_code or llm,
             skills_dir=Path(getattr(settings, "code_skills_dir", "./skills"))),
     )
     # --- Phase 30：模型热切换（/model 管理卡 + model_switch 卡片回调） ---

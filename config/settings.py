@@ -148,6 +148,9 @@ class Settings:
     code_timeout_sec: int = 3600
     # /code 专用模型（空 = 用 router 主模型）
     code_model: str = ""
+    # Phase 44 场景级 provider 静态双绑（值 = llm.yaml providers 池 name；空 = 跟随全局 router）
+    code_provider: str = ""
+    research_provider: str = ""
     # registry 工具白名单（逗号分隔前缀通配；AgentLoop 额外可调的既有工具）
     code_registry_tools: str = "sc_*"
     # Phase 30 admin 名单复用 FEISHU_ADMIN_OPEN_IDS（runtime 装配处解析，
@@ -300,6 +303,8 @@ def load_settings() -> Settings:
         code_token_budget=int(os.environ.get("CODE_TOKEN_BUDGET", "200000")),
         code_timeout_sec=int(os.environ.get("CODE_TIMEOUT_SEC", "3600")),
         code_model=os.environ.get("CODE_MODEL", ""),
+        code_provider=os.environ.get("CODE_PROVIDER", ""),
+        research_provider=os.environ.get("RESEARCH_PROVIDER", ""),
         code_registry_tools=os.environ.get("CODE_REGISTRY_TOOLS", "sc_*"),
         # Phase 38：意图预判闸（INTENT_GATE_ENABLED=0 关闭）
         intent_gate_enabled=os.environ.get(

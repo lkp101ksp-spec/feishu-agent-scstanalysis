@@ -55,8 +55,12 @@ class Orchestrator:
         drive_adapter=None,
         audit_repo=None,
         artifact_repo=None,
+        research_llm=None,
     ):
         self.llm = llm_router
+        # Phase 44：/research 场景 router（planner + scheduler 条件/修复判定）；
+        # 缺省跟随全局（/model 热切换语义不变）
+        self.research_llm = research_llm or llm_router
         self.session_service = session_service
         self.task_service = task_service
         self.bind_doc_service = bind_doc_service
@@ -157,7 +161,7 @@ class Orchestrator:
             self.executor = LocalExecutor(
                 kernel_pool=self.kernel_pool, tool_handler=self.tool_handler
             )
-            self.planner = Planner(llm_router=llm_router)
+            self.planner = Planner(llm_router=self.research_llm)
             self.template = TemplateEngine()
 
     def process(self, incoming: IncomingMessage) -> dict:

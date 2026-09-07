@@ -29,3 +29,8 @@ providers:
     base_url_env: LLM_PROVIDER_KIMI_BASE_URL
     api_key_env: LLM_PROVIDER_KIMI_API_KEY
     model_env: LLM_PROVIDER_KIMI_MODEL
+  # Phase 44：/code 场景专用（与 kimi 条目共享 base_url/key env，仅 model 不同）
+  - name: kimi-coding
+    base_url_env: LLM_PROVIDER_KIMI_BASE_URL
+    api_key_env: LLM_PROVIDER_KIMI_API_KEY
+    model_env: LLM_PROVIDER_KIMI_CODING_MODEL
