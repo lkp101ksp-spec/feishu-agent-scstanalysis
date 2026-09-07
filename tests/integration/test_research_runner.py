@@ -3,6 +3,7 @@
 假 Executor 直接返回 SUCCESS 句柄（不起线程跑真实工具），
 验证受理即回、后台执行、结果回复与文档写回语义。
 """
+import sys
 import threading
 import time
 from datetime import UTC, datetime
@@ -672,6 +673,9 @@ def test_send_sc_images_ignores_non_sc_tools(tmp_path):
     orch.im.upload_image.assert_not_called()
 
 
+@pytest.mark.skipif(sys.platform != "win32",
+                    reason="盘符根（D:/bio_ws）语义仅 Windows 可验；"
+                           "posix 根路径由 sc/st 图片测试用 tmp_path 覆盖")
 def test_container_to_host_path_mapping():
     """容器 /ws 前缀剥离 + 非 /ws 路径返回 None。"""
     assert ResearchRunner._container_to_host_path(

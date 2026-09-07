@@ -21,12 +21,17 @@ def _init_engine() -> Engine:
 
     from config.settings import load_settings
     settings = load_settings()
+    # pool_size/max_overflow 仅对 QueuePool 方言（pg 等）合法；
+    # sqlite 用 SingletonThreadPool/StaticPool，传了直接 TypeError。
+    pool_kwargs = (
+        {} if settings.database_url.startswith("sqlite")
+        else {"pool_size": 5, "max_overflow": 10}
+    )
     _engine = create_engine(
         settings.database_url,
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=10,
         future=True,
+        **pool_kwargs,
     )
     _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False, autoflush=False)
     return _engine

@@ -288,21 +288,31 @@ def _repair_llm(fixed: str):
 
 
 async def _run_with_drive(sch: Scheduler) -> PlanResult:
-    """后台协程把 RUNNING 句柄翻成 SUCCESS，主协程等计划终态。"""
+    """后台协程把 RUNNING 句柄翻成 SUCCESS，主协程等计划终态。
+
+    drive 不能以 _all_terminal() 为退出条件：FAILED 也是终态，自愈把句柄
+    弹回 PENDING 前存在"全终态"瞬时窗口；Linux 下 drive 的 5ms sleep 先于
+    调度循环 repair（~10ms）触发，撞上该窗口退出后 RUNNING 句柄永远没人
+    翻转 → run_until_done 挂死（Windows 靠 ~15ms 定时器分辨率侥幸通过）。
+    改为由主协程返回后置 done 停止，彻底消竞态。
+    """
+    done = False
+
     async def drive():
-        for _ in range(500):
+        while not done:
             await asyncio.sleep(0.005)
             for h in ex.handles.values():
                 if h.state == ExecutionState.RUNNING and h.finished_at is None:
                     h.state = ExecutionState.SUCCESS
                     h.finished_at = dt.datetime.now(dt.UTC)
-            if sch._all_terminal():
-                return
 
     ex = sch.executor
-    asyncio.create_task(drive())
-    # 15s 仅是上限兜底（正常亚秒级完成）：CI 慢机 + --cov 下 3s 曾误伤
-    return await asyncio.wait_for(sch.run_until_done(), timeout=15.0)
+    t = asyncio.create_task(drive())
+    try:
+        return await asyncio.wait_for(sch.run_until_done(), timeout=15.0)
+    finally:
+        done = True
+        await t
 
 
 async def test_node_repair_recovers_run_python_failure():
