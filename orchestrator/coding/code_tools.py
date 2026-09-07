@@ -72,9 +72,18 @@ class CodeTools:
         }},
         {"type": "function", "function": {
             "name": "run_cmd",
-            "description": "在会话工作区执行命令（参数数组）；非白名单命令需人工审批",
+            "description": (
+                "在会话工作区执行命令；cmd 为参数数组，每个元素是独立参数"
+                "（正确：[\"python\", \"gen.py\"]）；不支持 shell 连接符"
+                "（&&、||、|、>、;），需要管道/重定向/多步串联时请拆成多次调用"
+                "或用 [\"python\", \"-c\", \"...\"] 内联实现；非白名单命令需人工审批"
+            ),
             "parameters": {"type": "object", "properties": {
-                "cmd": {"type": "array", "items": {"type": "string"}},
+                "cmd": {"type": "array", "items": {"type": "string"},
+                        "description": (
+                            "命令参数数组：首元素为可执行名，其余为独立参数；"
+                            "禁止把 \"python && gen.py\" 这类整串塞进单个元素"
+                        )},
             }, "required": ["cmd"]},
         }},
     ]

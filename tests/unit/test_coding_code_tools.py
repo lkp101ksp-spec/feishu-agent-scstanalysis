@@ -114,3 +114,14 @@ class TestDispatch:
     def test_schema_covers_six_primitives(self, tools):
         names = {t["function"]["name"] for t in CodeTools.SCHEMA}
         assert names == {"read_file", "write_file", "edit_file", "list_dir", "search_files", "run_cmd"}
+
+    def test_run_cmd_schema_warns_against_shell_connectors(self):
+        """回归（Phase 39 真机）：LLM 曾把 "python && gen.py" 整串塞进单元素，
+        schema 描述须明确 cmd 为独立参数数组且不支持 shell 连接符。"""
+        spec = next(t["function"] for t in CodeTools.SCHEMA
+                    if t["function"]["name"] == "run_cmd")
+        desc = spec["description"]
+        cmd_desc = spec["parameters"]["properties"]["cmd"]["description"]
+        assert "&&" in desc and "独立参数" in desc
+        assert "python" in desc and "gen.py" in desc      # 正确示例
+        assert "整串" in cmd_desc                          # 反例警示
