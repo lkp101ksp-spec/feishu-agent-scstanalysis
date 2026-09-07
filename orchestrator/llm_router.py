@@ -8,6 +8,7 @@
 - 统一剥离 reasoning 模型的 <think>…</think> content 前缀
   （Phase 10 联调实测：MiniMax-M3 将思考过程内联在 content 中）
 """
+import logging
 import re
 from dataclasses import dataclass
 from typing import Iterable, Optional
@@ -16,6 +17,8 @@ import httpx
 
 from shared.errors import LLMCallError
 from shared.schemas import ChatMessage
+
+logger = logging.getLogger(__name__)
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", flags=re.DOTALL)
 
@@ -62,6 +65,7 @@ class LLMRouter:
             "Content-Type": "application/json",
         }
         payload = {"model": provider.model, "messages": messages}
+        logger.info("llm call: model=%s host=%s", provider.model, provider.base_url)
         with httpx.Client(timeout=provider.timeout_sec) as client:
             resp = client.post(url, headers=headers, json=payload)
             resp.raise_for_status()
@@ -103,6 +107,7 @@ class LLMRouter:
             "tools": tools,
             "tool_choice": "auto",
         }
+        logger.info("llm call: model=%s host=%s", payload["model"], provider.base_url)
         with httpx.Client(timeout=provider.timeout_sec) as client:
             resp = client.post(url, headers=headers, json=payload)
             resp.raise_for_status()

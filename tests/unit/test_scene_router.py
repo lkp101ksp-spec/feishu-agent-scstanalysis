@@ -50,7 +50,10 @@ class TestBuildSceneRouter:
 class TestSettingsEnvLoad:
     def test_code_and_research_provider_env(self, monkeypatch):
         """CODE_PROVIDER / RESEARCH_PROVIDER 环境变量进入 settings（默认空）。"""
+        import config.settings as settings_mod
         from config.settings import load_settings
+        # 隔离真实 .env：部署环境含 CODE_PROVIDER 时 load_env_file 会 setdefault 回注
+        monkeypatch.setattr(settings_mod, "load_env_file", lambda path=".env": None)
         for key in ("FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_WEBHOOK_SECRET",
                     "LLM_PRIMARY_BASE_URL", "LLM_PRIMARY_API_KEY", "LLM_PRIMARY_MODEL",
                     "LLM_FALLBACK_BASE_URL", "LLM_FALLBACK_API_KEY", "LLM_FALLBACK_MODEL"):
