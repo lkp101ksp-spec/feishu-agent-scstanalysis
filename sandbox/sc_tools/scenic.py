@@ -19,6 +19,8 @@ regulon_auc.csv / rss.csv / scenic_heatmap.png。n_regulons=0 不报错
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import time
 from pathlib import Path
@@ -98,10 +100,47 @@ def _prune(dbs, modules, motif_tbl: Path, n_workers: int) -> pd.DataFrame:
     另：默认 dask_multiprocessing 调度 spawn 的子进程不继承进程内
     numpy 别名 shim（worker import pyscenic.transform 时 np.object 即炸），
     改为传入自建的线程式 LocalCluster Client（processes=False，
-    与主进程同址，shim 生效；sitecustomize 仍是容器兜底）。"""
+    与主进程同址，shim 生效；sitecustomize 仍是容器兜底）。
+
+    ctxcore 0.2.0 增量 prefetch 缓存 bug：difference 未排除已加载列，
+    append_column 产生重名列后 select 报 'Field X exists 2 times in
+    schema'（或缓存状态错乱报 'does not exist'）；而逐模块全量重读
+    feather 太慢（实测 >3600s）。改为一次性预取「全模块基因并集」
+    （一次列存读），后续模块调用全部命中缓存、不再触碰增量分支。"""
     import pyscenic.prune as prune_mod
+    from ctxcore.ctdb import CisTargetDatabase
     from dask.distributed import Client, LocalCluster
     from pyscenic.prune import prune2df
+
+    union_genes = {g for m in modules for g in m.genes}
+    import threading
+    _prefetch_lock = threading.Lock()  # 防线程并发重复全读大表（OOM 风险）
+
+    def _log(msg: str) -> None:  # stderr 进度（stdout 是 JSON 契约，不能碰）
+        import sys
+        print(f"[scenic] {msg}", file=sys.stderr, flush=True)
+
+    def _union_prefetch(self, region_or_gene_ids, sort=False):
+        if getattr(self, "_scenic_union_done", False):
+            return  # 并集已覆盖所有模块基因，后续调用无需再取数
+        with _prefetch_lock:
+            if getattr(self, "_scenic_union_done", False):
+                return
+            import pyarrow.feather as pf
+            avail = set(self.all_region_or_gene_ids.ids)
+            want = sorted(union_genes & avail)
+            motif_col = self.all_motif_or_track_ids.type.value
+            # 顺序整表读（挂载盘上按列子集随机读极慢，实测卡 I/O 超 40min）；
+            # 全表 ~1GB 顺序读仅数秒，再在内存中 select 并集列
+            _log(f"union prefetch start: {len(want)} genes from "
+                 f"{Path(self.ct_db_filename).name}")
+            full = pf.read_table(self.ct_db_filename)
+            self.df_cached = full.select(want + [motif_col])
+            self._scenic_union_done = True
+            _log(f"union prefetch done: cached "
+                 f"{self.df_cached.num_columns} cols")
+
+    CisTargetDatabase._prefetch_as_pyarrow_table = _union_prefetch
 
     _orig_fd = prune_mod.from_delayed
 
@@ -112,13 +151,20 @@ def _prune(dbs, modules, motif_tbl: Path, n_workers: int) -> pd.DataFrame:
         return _orig_fd(dfs, *args, **kwargs)
 
     prune_mod.from_delayed = _fd_compat
+    _log(f"ctx start: {len(modules)} modules x {len(dbs)} db(s), "
+         f"workers={n_workers}")
+    # memory_limit=0 关闭 worker 内存管理：容器 --memory 16g 时 distributed
+    # 按 cgroup 限额算 spill 阈值（0.6×16=9.6GB），并集缓存表把 RSS 顶到
+    # 阈值后 worker 陷入 spill/pause 死循环（CPU 3% 假死，实测两物种复现）
     cluster = LocalCluster(n_workers=n_workers, threads_per_worker=1,
                            processes=False, dashboard_address=None,
-                           silence_logs=30)
+                           silence_logs=30, memory_limit=0)
     client = Client(cluster)
     try:
-        return prune2df(dbs, modules, str(motif_tbl),
-                        client_or_address=client, num_workers=n_workers)
+        df = prune2df(dbs, modules, str(motif_tbl),
+                      client_or_address=client, num_workers=n_workers)
+        _log(f"ctx done: {len(df)} enriched rows")
+        return df
     finally:
         client.close()
         cluster.close()
@@ -181,12 +227,16 @@ def main() -> None:
     ge3 = (X >= 3).sum(axis=0)
     keep = np.asarray(ge3 >= 3).ravel() if sp.issparse(X) \
         else np.asarray(ge3).ravel() >= 3
-    genes = sub.var_names[keep]
+    var_names = sub.var_names.astype(str)
+    dup = pd.Index(var_names).duplicated()
+    if dup.any():  # 同名基因（10x 常见）只留首个，否则 pyarrow schema 撞重名字段
+        keep = keep & ~dup
+    genes = var_names[keep]
     if len(genes) < 50:
         raise ValueError(f"too few genes after filtering: {len(genes)} (<50)")
     Xd = sub[:, genes].X
     Xd = Xd.toarray() if sp.issparse(Xd) else np.asarray(Xd)
-    expr = pd.DataFrame(Xd, index=cells, columns=genes.astype(str))
+    expr = pd.DataFrame(Xd, index=cells, columns=genes)
     labels = labels_all.loc[cells]
 
     t0 = time.time()
@@ -208,7 +258,9 @@ def main() -> None:
     t_ctx = time.time() - t1
 
     from pyscenic.prune import df2regulons
-    regulons = df2regulons(df) if not df.empty else []
+    # df2regulons 会往 stdout 打印（"Create regulons..."），污染 JSON 契约，屏蔽
+    with contextlib.redirect_stdout(io.StringIO()):
+        regulons = df2regulons(df) if not df.empty else []
 
     out_dir = WS_ROOT / args["dataset_id"] / "scenic"
     out_dir.mkdir(parents=True, exist_ok=True)

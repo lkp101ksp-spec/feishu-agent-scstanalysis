@@ -13,6 +13,11 @@ mt_thr <- as.numeric(args[7])
 
 suppressMessages(library(scTenifoldKnk))
 
+# 容器内 detectCores() 看到宿主核数（如 24），但 cgroups 限额仅 4 核，
+# parallelly>=1.37 的 checkNumberOfLocalWorkers 会因超 300% 硬限制报错。
+# 覆盖 maxWorkers.localhost 上限放行（CPU 饱和下墙钟时间等价，不超用）。
+options(parallelly.maxWorkers.localhost = max(96L, parallel::detectCores()))
+
 mat <- as.matrix(read.csv(input_csv, row.names = 1, check.names = FALSE))
 storage.mode(mat) <- "numeric"
 

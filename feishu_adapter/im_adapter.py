@@ -79,11 +79,18 @@ class IMAdapter:
                          json.dumps({"image_key": image_key}))
 
     def send_card(self, chat_id: str, card: dict) -> str:
-        """发送交互卡片。card 为简化结构 {header, elements}，此处补齐为合法卡片 JSON。"""
+        """发送交互卡片。card 为简化结构 {header, elements}，此处补齐为合法卡片 JSON。
+
+        header 兼容两种形态：字符串标题（旧调用方）与完整 dict
+        （{"title": {...}}，/model、/code 审批卡）。dict 形态直接透传——
+        此前 str(dict) 会把 Python repr 渲染进卡片标题（ut-7 真机发现）。
+        """
+        header = card.get("header", "")
+        if not isinstance(header, dict):
+            header = {"title": {"tag": "plain_text", "content": str(header)}}
         card_json = json.dumps({
-            "config": {"wide_screen_mode": True},
-            "header": {"title": {"tag": "plain_text",
-                                 "content": str(card.get("header", ""))}},
+            "config": card.get("config") or {"wide_screen_mode": True},
+            "header": header,
             "elements": card.get("elements", []),
         }, ensure_ascii=False)
         if self.sdk_client is not None:

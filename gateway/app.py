@@ -294,6 +294,26 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
     # Phase 30：model_switch 分支（/model 状态卡按钮热切换主备模型）。
     # admin 校验在 service 内（复用 FEISHU_ADMIN_OPEN_IDS）；成败均落专项审计，
     # 结果经 toast 反馈（卡片无 update 能力，同 skill_improve 模式）。
+    # 双卡片流程（ut-7）：model_pick/model_back 经回调响应卡原地换卡面。
+    if action == "model_pick":
+        svc = ctx.model_switch_service
+        if svc is None:
+            return {"ok": False, "status": "model_switch_unavailable"}
+        card = svc.picker_card(payload.get("open_id", ""),
+                               payload.get("slot", ""))
+        if card is None:
+            return {"ok": False, "status": "model_switch_denied",
+                    "reason": "forbidden"}
+        return {"ok": True, "status": "model_pick", "card": card}
+    if action == "model_back":
+        svc = ctx.model_switch_service
+        if svc is None:
+            return {"ok": False, "status": "model_switch_unavailable"}
+        card = svc.status_card(payload.get("open_id", ""))
+        if card is None:
+            return {"ok": False, "status": "model_switch_denied",
+                    "reason": "forbidden"}
+        return {"ok": True, "status": "model_back", "card": card}
     if action == "model_switch":
         svc = ctx.model_switch_service
         if svc is None:
@@ -310,8 +330,10 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
                 target_id=f"{slot}:{name}",
                 detail={"slot": slot, "from": result.get("from", ""),
                         "to": result.get("to", "")})
+            # 切换成功：附最新状态卡，回调响应把选模型卡原地刷回状态卡
             return {"ok": True, "status": "model_switched",
-                    "slot": slot, "to": name}
+                    "slot": slot, "to": name,
+                    "card": svc.status_card(operator)}
         _audit_event(
             app, actor_type="user", actor_id=operator,
             action="llm_model_switch_denied", target_type="llm_config",

@@ -1,8 +1,9 @@
 """sc_metabolism：KEGG 代谢通路活性打分（Phase 32，对齐 server_metabolism/scMetabolism）。
 
-stdin: {"dataset_id": ..., "top_n": 30}
-需 processed.h5ad；通路库用镜像 /opt/gene_sets/kegg.json
-（Enrichr KEGG_2021_Human，构建期预取，运行期离线可用）。
+stdin: {"dataset_id": ..., "top_n": 30, "species": "human"|"mouse"}
+需 processed.h5ad；通路库按 species 选镜像 /opt/gene_sets/kegg.json
+（Enrichr KEGG_2021_Human）或 kegg_mouse.json（KEGG_2019_Mouse），
+构建期预取，运行期离线可用。
 逐通路 score_genes（单细胞通路活性，等价 scMetabolism 概念的均值差实现）；
 细胞×通路全矩阵只落 csv，JSON/热图只带簇均值与簇间方差 top_n 通路（防膨胀）。
 """
@@ -13,10 +14,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from common import WS_ROOT, emit, load_adata, read_args, run
+from common import WS_ROOT, emit, load_adata, read_args, run, upper_gene_map
 
 GENE_SET_DIR = Path("/opt/gene_sets")
 MIN_PATHWAY_GENES = 5  # 与 scMetabolism/GSEA min_size 惯例一致
+SPECIES_LIB = {"human": "kegg.json", "mouse": "kegg_mouse.json"}
 
 
 def main() -> None:
@@ -26,8 +28,12 @@ def main() -> None:
 
     args = read_args()
     top_n = int(args.get("top_n", 30))
+    species = str(args.get("species", "human")).strip().lower()
+    if species not in SPECIES_LIB:
+        raise ValueError(
+            f"species must be one of {sorted(SPECIES_LIB)}; got {species!r}")
 
-    lib_path = GENE_SET_DIR / "kegg.json"
+    lib_path = GENE_SET_DIR / SPECIES_LIB[species]
     if not lib_path.exists():
         raise FileNotFoundError(
             f"{lib_path} not found; rebuild bio image with gene_sets stage "
@@ -47,7 +53,12 @@ def main() -> None:
     terms: list[str] = []
     cols: list[str] = []
     for i, (term, genes) in enumerate(pathways.items()):
-        matched = [g for g in genes if g in raw_vars]
+        # mouse 库符号全大写（ABCA2 式），数据 var 是 Mki67 式，
+        # 用 upper_gene_map 大写对齐并返回原始 var 名；human 保持精确匹配
+        if species == "mouse":
+            matched = upper_gene_map(sorted(raw_vars), genes)
+        else:
+            matched = [g for g in genes if g in raw_vars]
         if len(matched) < MIN_PATHWAY_GENES:
             continue
         col = f"pw_{i:03d}"
@@ -122,6 +133,7 @@ def main() -> None:
     emit({
         "ok": True,
         "dataset_ref": args["dataset_id"],
+        "species": species,
         "n_cells": int(adata.n_obs),
         "n_pathways_total": len(pathways),
         "n_pathways_scored": len(terms),

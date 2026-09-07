@@ -137,18 +137,18 @@ class TestStatusCard:
         assert "api_key" not in blob
 
     def test_card_shape_and_current_markers(self, svc):
-        """卡片含当前主备标注 + 候选按钮 value 形状（action/name/slot）。"""
+        """卡 1（双卡片流程）：状态行 + 两个槽位入口按钮（model_pick）。"""
         card = svc.status_card(ADMIN)
         assert card["header"]["title"]["content"].startswith("/model")
         btns = [b for el in card["elements"] if el.get("tag") == "action"
                 for b in el["actions"]]
         values = [b["value"] for b in btns]
-        assert {"action": "model_switch", "name": "kimi",
-                "slot": "primary"} in values
-        # 当前主 a 的「设为主」按钮禁用并带 ✓
-        cur_p = next(b for b in btns if b["value"]["name"] == "a"
-                     and b["value"]["slot"] == "primary")
-        assert cur_p["disabled"] is True and "✓" in cur_p["text"]["content"]
+        assert values == [
+            {"action": "model_pick", "slot": "primary"},
+            {"action": "model_pick", "slot": "fallback"},
+        ]
+        # 卡 1 不再直接放模型切换按钮（选模型在卡 2）
+        assert not [v for v in values if v["action"] == "model_switch"]
 
     def test_empty_providers_shows_hint(self, svc):
         """候选池为空：提示配置路径，无按钮。"""
@@ -157,6 +157,48 @@ class TestStatusCard:
         assert not [el for el in card["elements"] if el.get("tag") == "action"]
         blob = json.dumps(card, ensure_ascii=False)
         assert "providers" in blob
+
+
+# ------------------------------------------------------------ picker card #
+
+
+class TestPickerCard:
+    def test_non_admin_gets_none(self, svc):
+        assert svc.picker_card(OTHER, "primary") is None
+
+    def test_bad_slot_gets_none(self, svc):
+        assert svc.picker_card(ADMIN, "middle") is None
+
+    def test_lists_all_providers_with_switch_values(self, svc):
+        """卡 2：候选池全部模型各一个 model_switch 按钮 + 返回按钮。"""
+        card = svc.picker_card(ADMIN, "primary")
+        assert "选择主模型" in card["header"]["title"]["content"]
+        btns = [b for el in card["elements"] if el.get("tag") == "action"
+                for b in el["actions"]]
+        values = [b["value"] for b in btns]
+        for name in ("a", "b", "kimi"):
+            assert {"action": "model_switch", "name": name,
+                    "slot": "primary"} in values
+        assert {"action": "model_back"} in values
+        # 当前主 a：禁用 + ✓
+        cur = next(b for b in btns if b["value"].get("name") == "a")
+        assert cur["disabled"] is True and "✓" in cur["text"]["content"]
+
+    def test_fallback_slot_marks_current_fallback(self, svc):
+        """备槽位卡：✓ 标当前备 b 而非主 a。"""
+        card = svc.picker_card(ADMIN, "fallback")
+        btns = [b for el in card["elements"] if el.get("tag") == "action"
+                for b in el["actions"]]
+        cur = next(b for b in btns if b["value"].get("name") == "b")
+        assert cur["disabled"] is True and "✓" in cur["text"]["content"]
+        other = next(b for b in btns if b["value"].get("name") == "a")
+        assert other["disabled"] is False
+
+    def test_picker_never_contains_api_key(self, svc):
+        blob = json.dumps(svc.picker_card(ADMIN, "primary"), ensure_ascii=False)
+        for key in ("sk-primary", "sk-fallback", "sk-kimi"):
+            assert key not in blob
+        assert "api_key" not in blob
 
 
 # -------------------------------------------------------------- startup #

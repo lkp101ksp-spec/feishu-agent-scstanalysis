@@ -158,6 +158,31 @@ def test_card_result_to_response_writeback_forbidden():
     assert resp.toast.content == "仅任务发起者可操作"
 
 
+# --- Phase 30 ut-7：模型切换双卡片（回调响应卡原地换卡面） ---
+
+def test_card_result_to_response_model_pick_swaps_card():
+    """model_pick → 无 toast，响应卡 = 选模型卡（type=raw 原地替换）。"""
+    picker = {"header": {"title": {"tag": "plain_text", "content": "选择主模型"}},
+              "elements": []}
+    resp = card_result_to_response(
+        {"ok": True, "status": "model_pick", "card": picker})
+    assert resp is not None
+    assert resp.toast is None
+    assert resp.card.type == "raw" and resp.card.data == picker
+
+
+def test_card_result_to_response_model_switched_toast_and_card():
+    """切换成功 → success toast + 附带最新状态卡刷回卡 1。"""
+    status_card = {"header": {"title": {"tag": "plain_text", "content": "/model"}},
+                   "elements": []}
+    resp = card_result_to_response(
+        {"ok": True, "status": "model_switched", "slot": "primary",
+         "to": "kimi", "card": status_card})
+    assert resp is not None
+    assert resp.toast.type == "success" and "kimi" in resp.toast.content
+    assert resp.card is not None and resp.card.data == status_card
+
+
 def test_build_dispatcher_smoke():
     """dispatcher 可构造（注册 IM + 卡片回调，不建立连接）。"""
     rt = Runtime(app=FastAPI(), orchestrator=object(), settings=object())
@@ -300,6 +325,9 @@ def test_build_runtime_assembles_real_graph(_runtime_env):
     assert rt.app.state.ctx.comment_service is not None
     assert rt.app.state.ctx.unified_search_service is not None
     assert rt.app.state.ctx.bind_doc_service is not None
+    # Phase 30：模型热切换双通道挂载（orch 出卡 + ctx 回调，ut-7 修复）
+    assert rt.orchestrator.model_switch_service is not None
+    assert rt.app.state.ctx.model_switch_service is not None
     # health 路由可用
     from fastapi.testclient import TestClient
     assert TestClient(rt.app).get("/health").json() == {"status": "ok"}

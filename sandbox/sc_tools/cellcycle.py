@@ -10,7 +10,7 @@ stdin: {"dataset_id": ..., "celltype_col": "leiden"}
 from __future__ import annotations
 
 import pandas as pd
-from common import WS_ROOT, emit, load_adata, read_args, run
+from common import WS_ROOT, emit, load_adata, read_args, run, upper_gene_map
 
 S_GENES = [
     "MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG",
@@ -44,9 +44,11 @@ def main() -> None:
     adata = load_adata({"dataset_id": args["dataset_id"], "file": "processed"})
     if adata.raw is None:
         raise ValueError("processed.h5ad missing raw; re-run sc_process")
-    raw_genes = set(adata.raw.var_names.astype(str))
-    s_found = [g for g in S_GENES if g in raw_genes]
-    g_found = [g for g in G2M_GENES if g in raw_genes]
+    raw_genes_list = [str(g) for g in adata.raw.var_names.astype(str)]
+    s_found = upper_gene_map(raw_genes_list, S_GENES)
+    g_found = upper_gene_map(raw_genes_list, G2M_GENES)
+    case_mapped = (any(g not in S_GENES for g in s_found)
+                   or any(g not in G2M_GENES for g in g_found))
     if len(s_found) < 5 or len(g_found) < 5:
         raise ValueError(
             f"too few cell-cycle genes found (S={len(s_found)}, "
@@ -92,6 +94,7 @@ def main() -> None:
         "dataset_ref": args["dataset_id"],
         "s_genes_found": len(s_found),
         "g2m_genes_found": len(g_found),
+        "case_mapped": case_mapped,
         "phase_counts": {str(k): int(v) for k, v in counts.items()},
         "csv": str(csv_path),
         "umap_png": str(png_path),

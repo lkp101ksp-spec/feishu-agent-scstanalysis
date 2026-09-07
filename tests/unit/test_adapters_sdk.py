@@ -88,6 +88,17 @@ def test_im_send_card_sdk_interactive():
     assert card["header"]["title"]["content"] == "续期"
 
 
+def test_im_send_card_sdk_dict_header_passthrough():
+    """header 为完整 dict 时原样透传（/model、/code 审批卡形态）。"""
+    sdk = _im_sdk(message_id="om_card2")
+    adapter = IMAdapter(cli=MagicMock(), sdk_client=sdk)
+    header = {"title": {"tag": "plain_text", "content": "/model 模型切换"}}
+    adapter.send_card("oc_x", {"header": header, "elements": []})
+    req = sdk.im.v1.message.create.call_args.args[0]
+    card = json.loads(req.request_body.content)
+    assert card["header"] == header  # 不再 str(dict) 渲染 repr
+
+
 # === DocAdapter SDK 路径 ===
 
 def test_doc_append_plain_text_sdk_returns_block_id():

@@ -19,6 +19,9 @@ GS_KEYS = {
     "hallmark": ("MSigDB_Hallmark_2020", "hallmark.json"),
     "go_bp": ("GO_Biological_Process_2023", "go_bp.json"),
     "kegg": ("KEGG_2021_Human", "kegg.json"),
+    "kegg_mouse": ("KEGG_2019_Mouse", "kegg_mouse.json"),
+    "wikipathways_mouse": ("WikiPathways_2019_Mouse",
+                           "wikipathways_mouse.json"),
 }
 GENE_SET_DIR = Path("/opt/gene_sets")
 ORA_MAX_GENES = 300
@@ -58,7 +61,7 @@ def main() -> None:
                             use_raw=True)
     result = adata.uns["rank_genes_groups"]
     groups = [str(g) for g in result["names"].dtype.names]
-    group = str(args.get("group", groups[0]))
+    group = str(args.get("group") or groups[0])
     if group not in groups:
         raise ValueError(
             f"group {group!r} not in leiden clusters {groups}")
@@ -80,14 +83,18 @@ def main() -> None:
     gsea_rows: list[dict] = []
     for alias in aliases:
         lib = _load_lib(alias)
-        er = gp.enrich(gene_list=up, gene_sets=lib, outdir=None,
+        # 小鼠库符号全大写（ABCA2 式），DEG 基因名需 .upper() 对齐；人源库不动
+        is_mouse = alias.endswith("_mouse")
+        ora_input = [g.upper() for g in up] if is_mouse else up
+        er = gp.enrich(gene_list=ora_input, gene_sets=lib, outdir=None,
                        verbose=False).results
         df = pd.DataFrame(er)
         df = df[df["Adjusted P-value"] < 1.0].sort_values("Adjusted P-value")
         df.insert(0, "gene_set", alias)
         ora_rows.append(df)
 
-        rnk = pd.DataFrame({"gene": names, "score": np.asarray(
+        rnk_genes = [g.upper() for g in names] if is_mouse else names
+        rnk = pd.DataFrame({"gene": rnk_genes, "score": np.asarray(
             result["scores"][group], dtype=float)}).sort_values(
             "score", ascending=False)
         pre = gp.prerank(rnk=rnk, gene_sets=lib, outdir=None,

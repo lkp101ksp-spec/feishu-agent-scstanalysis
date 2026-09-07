@@ -91,3 +91,29 @@ def load_adata(input_ref: dict):
     raise FileNotFoundError(
         f"no h5ad under workspace for dataset {input_ref['dataset_id']}; "
         "run sc_load first")
+
+
+def upper_gene_map(var_names, target_genes) -> list:
+    """按 str.upper() 对齐匹配 target_genes 到 var_names，返回原始 var 名（保序去重）。
+
+    小鼠符号（Mki67）与人源资源（MKI67）的大小写桥接；跳过一对多/多对一的
+    大小写歧义冲突（如同一 upper 对应多个 var 名时全部丢弃，宁可少配不错配）。
+    """
+    upper_to_var: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for name in var_names:
+        key = str(name).upper()
+        if key in upper_to_var:
+            ambiguous.add(key)
+        else:
+            upper_to_var[key] = str(name)
+    for key in ambiguous:
+        upper_to_var.pop(key, None)
+    seen: set[str] = set()
+    matched: list[str] = []
+    for gene in target_genes:
+        var = upper_to_var.get(str(gene).upper())
+        if var is not None and var not in seen:
+            seen.add(var)
+            matched.append(var)
+    return matched

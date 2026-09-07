@@ -29,10 +29,13 @@ def register_l3_singlecell(
     bio_gpu_image: str = "feishu-research-agent/bio:gpu-latest",
     bio_scenic_db_root: str = "",
 ) -> None:
-    """注册 sc_* 6 工具（runner 由 runtime 装配后传入）。
+    """注册 sc_* 23 工具（runner 由 runtime 装配后传入）。
 
     bio_use_gpu=True 时 sc_process/sc_markers 切 GPU 镜像 + --gpus all
     （Phase 25，spec 2026-09-02-bio-gpu-image-design §1.5）。
+
+    约定：新增工具时 handler 的 runner.run timeout_sec 必须与
+    ToolSpec.timeout_sec 一致（缺失会静默回退 BioRunner 默认 900s）。
     """
 
     def _accel() -> tuple[str | None, bool]:
@@ -43,6 +46,18 @@ def register_l3_singlecell(
 
     def sc_load(*, path: str, format: str = "auto") -> dict:  # noqa: A002
         """读入本地单细胞数据 → dataset_ref + 概要统计。"""
+        # 规划纠偏：模型有时把既有 dataset_ref 当文件路径塞给 sc_load
+        # （ut-7 真机复现 SC_PATH_FORBIDDEN）——若 path 恰是 workspace 下
+        # 已存在的数据集目录名（纯名字、无路径分隔符），直通返回该 ref，
+        # 不重复加载。宽松匹配 hex 以外名字亦可，只要目录存在。
+        ref_candidate = path.strip()
+        ws_root = getattr(runner, "workspace_root", "")  # 单测 mock 可能无此属性
+        ws = Path(ws_root) if ws_root else None
+        if (ws is not None and ref_candidate and "/" not in ref_candidate
+                and "\\" not in ref_candidate and ".." not in ref_candidate
+                and (ws / ref_candidate).is_dir()):
+            return {"dataset_ref": ref_candidate,
+                    "note": "existing dataset (passthrough, skip reload)"}
         try:
             mount_root, rel, host = runner.resolve_data_path(path)
             dataset_id = compute_dataset_id(host)
@@ -50,6 +65,7 @@ def register_l3_singlecell(
                 "load",
                 {"path": rel, "dataset_id": dataset_id},
                 mounts=[(mount_root, "/data")],
+                timeout_sec=600,
             )
         except BioRunError as e:
             return _err(e)
@@ -64,7 +80,7 @@ def register_l3_singlecell(
                 "dataset_id": dataset_ref,
                 "min_genes": min_genes, "min_cells": min_cells,
                 "max_mt_pct": max_mt_pct,
-            }, image=None, gpus=False)
+            }, image=None, gpus=False, timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -80,7 +96,7 @@ def register_l3_singlecell(
                 "dataset_id": dataset_ref,
                 "n_top_hvg": n_top_hvg, "n_pcs": n_pcs,
                 "n_neighbors": n_neighbors, "resolution": resolution,
-            }, image=image, gpus=gpus)
+            }, image=image, gpus=gpus, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -94,7 +110,7 @@ def register_l3_singlecell(
             out = runner.run("markers", {
                 "dataset_id": dataset_ref, "method": method,
                 "top_n": top_n,
-            }, image=image, gpus=gpus)
+            }, image=image, gpus=gpus, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -107,7 +123,7 @@ def register_l3_singlecell(
             out = runner.run("plot", {
                 "dataset_id": dataset_ref,
                 "genes": parse_gene_list(genes), "kind": kind,
-            })
+            }, timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -124,7 +140,7 @@ def register_l3_singlecell(
                 "gene_sets": gene_sets or ["hallmark", "go_bp", "kegg"],
                 "top_n": top_n, "min_log2fc": min_log2fc,
                 "rank_method": method,
-            })
+            }, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -136,18 +152,20 @@ def register_l3_singlecell(
         try:
             out = runner.run("score", {
                 "dataset_id": dataset_ref, "gene_sets": gene_sets,
-            })
+            }, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
         return out
 
-    def sc_metabolism(*, dataset_ref: str, top_n: int = 30) -> dict:
+    def sc_metabolism(*, dataset_ref: str, top_n: int = 30,
+                      species: str = "human") -> dict:
         """代谢通路活性（Phase 32）：KEGG 逐通路打分 → 簇均值+热图。"""
         try:
             out = runner.run("metabolism", {
                 "dataset_id": dataset_ref, "top_n": top_n,
-            })
+                "species": species,
+            }, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -158,7 +176,7 @@ def register_l3_singlecell(
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
-            })
+            }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -172,7 +190,7 @@ def register_l3_singlecell(
                 "dataset_id": dataset_ref, "groupby": groupby,
                 "group_a": group_a, "group_b": group_b,
                 "method": method, "top_n": top_n,
-            })
+            }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -188,7 +206,7 @@ def register_l3_singlecell(
                 "dataset_id": dataset_ref, "clusters": clusters,
                 "n_top_hvg": n_top_hvg, "n_pcs": n_pcs,
                 "n_neighbors": n_neighbors, "resolution": resolution,
-            })
+            }, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -205,7 +223,7 @@ def register_l3_singlecell(
                 "method": method, "n_top_hvg": n_top_hvg,
                 "n_pcs": n_pcs, "n_neighbors": n_neighbors,
                 "resolution": resolution,
-            })
+            }, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -218,7 +236,7 @@ def register_l3_singlecell(
             out = runner.run("cellfreq", {
                 "dataset_id": dataset_ref, "by": by, "group": group,
                 "celltype_col": celltype_col,
-            })
+            }, timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -226,14 +244,16 @@ def register_l3_singlecell(
 
     def sc_cellchat(*, dataset_ref: str, celltype_col: str = "leiden",
                     species: str = "human", expr_prop: float = 0.1,
-                    min_cells: int = 10, top_n: int = 30) -> dict:
+                    min_cells: int = 10, top_n: int = 30,
+                    max_cells_per_group: int = 0) -> dict:
         """细胞通讯（Phase 34）：liana cellchat → LR 表+dotplot+热图。"""
         try:
             out = runner.run("cellchat", {
                 "dataset_id": dataset_ref, "celltype_col": celltype_col,
                 "species": species, "expr_prop": expr_prop,
                 "min_cells": min_cells, "top_n": top_n,
-            })
+                "max_cells_per_group": max_cells_per_group,
+            }, timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -241,14 +261,15 @@ def register_l3_singlecell(
 
     def sc_milo(*, dataset_ref: str, sample_col: str, group_col: str,
                 group_a: str, group_b: str, k: int = 0,
-                top_n: int = 20) -> dict:
+                top_n: int = 20, max_cells_per_sample: int = 0) -> dict:
         """差异丰度（Phase 34）：KNN 邻域 + NB-GLM → da csv+UMAP。"""
         try:
             out = runner.run("milo", {
                 "dataset_id": dataset_ref, "sample_col": sample_col,
                 "group_col": group_col, "group_a": group_a,
                 "group_b": group_b, "k": k, "top_n": top_n,
-            })
+                "max_cells_per_sample": max_cells_per_sample,
+            }, timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -269,6 +290,7 @@ def register_l3_singlecell(
                  "celltype_col": celltype_col, "method": method,
                  "top_n": top_n},
                 mounts=[(mount_root, "/data")],
+                timeout_sec=1200,
             )
         except BioRunError as e:
             return _err(e)
@@ -286,7 +308,7 @@ def register_l3_singlecell(
                 "dataset_id": dataset_ref, "method": method,
                 "model": model, "marker_sets": marker_sets,
                 "celltype_col": celltype_col, "out_col": out_col,
-            })
+            }, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -307,9 +329,10 @@ def register_l3_singlecell(
                 mount_root, rel, host = runner.resolve_data_path(csv_file)
                 payload["csv_path"] = rel
                 out = runner.run("meta", payload,
-                                 mounts=[(mount_root, "/data")])
+                                 mounts=[(mount_root, "/data")],
+                                 timeout_sec=600)
             else:
-                out = runner.run("meta", payload)
+                out = runner.run("meta", payload, timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -323,7 +346,7 @@ def register_l3_singlecell(
             out = runner.run("doublet", {
                 "dataset_id": dataset_ref, "expected_rate": expected_rate,
                 "n_prin_comps": n_prin_comps, "celltype_col": celltype_col,
-            })
+            }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -335,7 +358,7 @@ def register_l3_singlecell(
         try:
             out = runner.run("cellcycle", {
                 "dataset_id": dataset_ref, "celltype_col": celltype_col,
-            })
+            }, timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -429,6 +452,9 @@ def register_l3_singlecell(
             "读入本地单细胞数据（.h5ad 或 10x mtx 目录）。"
             "输出 dataset_ref（下游 sc_* 工具用 <node_id>.dataset_ref 引用）、"
             "n_cells、n_genes、mt_pct 概要。path 必须在管理员允许的数据目录内。"
+            "注意：若用户给的是此前分析过的数据集引用（12 位 hex，如 "
+            "f1e89bf88edc），不要重新 sc_load——直接把该 ref 作为下游工具的 "
+            "dataset_ref 参数；sc_load 仅用于首次读入原始数据文件。"
         ),
         parameters={
             "type": "object",
@@ -554,8 +580,13 @@ def register_l3_singlecell(
                 "gene_sets": {
                     "type": "array", "uniqueItems": True,
                     "items": {"type": "string",
-                              "enum": ["hallmark", "go_bp", "kegg"]},
-                    "default": ["hallmark", "go_bp", "kegg"]},
+                              "enum": ["hallmark", "go_bp", "kegg",
+                                       "kegg_mouse", "wikipathways_mouse"]},
+                    "default": ["hallmark", "go_bp", "kegg"],
+                    "description": "基因集别名组合；小鼠数据用 kegg_mouse"
+                                   "（KEGG_2019_Mouse）/ wikipathways_mouse"
+                                   "（WikiPathways_2019_Mouse），人源三库"
+                                   " hallmark/go_bp/kegg"},
                 "top_n": {"type": "integer", "default": 15,
                           "maximum": 30,
                           "description": "每基因集返回/绘图的通路数"},
@@ -607,10 +638,12 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_metabolism",
         description=(
-            "代谢通路活性分析（Phase 32，对齐 scMetabolism）：基于 KEGG 2021 "
+            "代谢通路活性分析（Phase 32，对齐 scMetabolism）：基于 KEGG "
             "通路库（镜像内置，离线）逐通路单细胞打分，输出代谢活性全矩阵 csv、"
             "簇×通路均值 csv、簇间方差 top_n 通路热图与 top 通路 UMAP 图。"
             "比较各簇代谢重编程（糖酵解/OXPHOS 等）首选。需先跑 sc_process。"
+            "物种经 species 选择：human→KEGG_2021_Human / "
+            "mouse→KEGG_2019_Mouse（基因符号按数据物种对应）。"
         ),
         parameters={
             "type": "object",
@@ -619,6 +652,9 @@ def register_l3_singlecell(
                                 "description": "sc_process 输出的 dataset_ref"},
                 "top_n": {"type": "integer", "default": 30, "maximum": 100,
                           "description": "返回/绘图的高方差通路数"},
+                "species": {"type": "string", "default": "human",
+                            "enum": ["human", "mouse"],
+                            "description": "物种（选 KEGG 人/小鼠通路库）"},
             },
             "required": ["dataset_ref"],
         },
@@ -796,12 +832,17 @@ def register_l3_singlecell(
                 "min_cells": {"type": "integer", "default": 10,
                               "description": "细胞类型最少细胞数（低于剔除）"},
                 "top_n": {"type": "integer", "default": 30, "maximum": 100},
+                "max_cells_per_group": {
+                    "type": "integer", "default": 0,
+                    "description": "每组（细胞类型）抽样上限，0=全量。"
+                                   "大数据集可设 100 显著加速，"
+                                   "结果为抽样估计"},
             },
             "required": ["dataset_ref"],
         },
         risk_level="L1_compute",
         handler=sc_cellchat,
-        timeout_sec=1800,
+        timeout_sec=3600,
     ))
     registry.register(ToolSpec(
         name="sc_milo",
@@ -828,13 +869,17 @@ def register_l3_singlecell(
                       "description": "邻域大小；0=自动 clip(0.1×最小样本量,"
                                      "10,50)"},
                 "top_n": {"type": "integer", "default": 20, "maximum": 100},
+                "max_cells_per_sample": {
+                    "type": "integer", "default": 0,
+                    "description": "每样本抽样上限，0=全量。"
+                                   "多样本大数据集可设 100-500 加速"},
             },
             "required": ["dataset_ref", "sample_col", "group_col",
                          "group_a", "group_b"],
         },
         risk_level="L1_compute",
         handler=sc_milo,
-        timeout_sec=1800,
+        timeout_sec=3600,
     ))
     registry.register(ToolSpec(
         name="sc_deconv",

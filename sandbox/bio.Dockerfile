@@ -59,6 +59,10 @@ RUN apt-get update \
 # 以覆盖 dask worker 子进程。宿主 probe 实测：pandas 2.3.3/numpy 2.5.2/
 # dask 2026.8.0 下三幕全绿（GRNBoost2 走 create_graph 绕路、prune2df
 # from_delayed 物化 monkeypatch——均在 scenic.py 内）。
+# 注：ctxcore 0.2.0（当前 PyPI 最新）增量 prefetch 缓存有 bug
+# （difference 未排除已加载列 → append_column 重名 → select KeyError），
+# 0.1.1 sdist 在 Py3.12 下拉老 numpy 源码编译失败——不修版本，
+# 在 scenic.py _prune 内 monkeypatch 禁用增量缓存（每次全量重读列）。
 RUN pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple \
     pyscenic "setuptools<81"

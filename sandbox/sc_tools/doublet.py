@@ -10,6 +10,9 @@ obs 增 doublet_score / predicted_doublet（只标记不删除，过滤走 sc_qc
 """
 from __future__ import annotations
 
+import contextlib
+import io
+
 import numpy as np
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
@@ -37,19 +40,23 @@ def main() -> None:
     npc = max(2, min(n_prin_comps, sub.n_vars - 1, sub.n_obs - 1))
 
     note = ""
-    while True:  # 基因过滤后特征数可能 < npc（小数据），PCA 失败则减半重试
-        scrub = scr.Scrublet(sub.X, expected_doublet_rate=expected_rate)
-        try:
-            score, pred = scrub.scrub_doublets(
-                min_counts=2, min_cells=3, min_gene_variability_pctl=85,
-                n_prin_comps=npc)
-            break
-        except ValueError as e:
-            if "n_components" in str(e) and npc > 2:
-                npc = max(2, npc // 2)
-                note = f"n_prin_comps reduced to {npc} (few genes after filter)"
-                continue
-            raise
+    # scrublet 把进度打印到 stdout（Preprocessing.../Simulating doublets...），
+    # 会污染 JSON 输出契约 → 整体重定向吞掉
+    with contextlib.redirect_stdout(io.StringIO()):
+        while True:  # 基因过滤后特征数可能 < npc（小数据），PCA 失败则减半重试
+            scrub = scr.Scrublet(sub.X, expected_doublet_rate=expected_rate)
+            try:
+                score, pred = scrub.scrub_doublets(
+                    min_counts=2, min_cells=3, min_gene_variability_pctl=85,
+                    n_prin_comps=npc)
+                break
+            except ValueError as e:
+                if "n_components" in str(e) and npc > 2:
+                    npc = max(2, npc // 2)
+                    note = (f"n_prin_comps reduced to {npc} "
+                            f"(few genes after filter)")
+                    continue
+                raise
     if pred is None:  # 自动阈值失败（双峰不明显）→ 分位数回退
         thr = float(np.quantile(score, 1.0 - expected_rate))
         pred = score > thr

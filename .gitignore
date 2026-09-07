@@ -52,6 +52,13 @@ dev.db
 bio_test_data/
 bio_workspace/
 
+# 统一测试轮运行时产物（SCENIC DB 运行时挂载 / /code 会话工作区 / pytest 临时目录）
+cisTarget_databases/
+motifAnnotations/
+code_workspace/
+.pytest_tmp/
+.pytest_basetemp/
+
 # 临时提交信息
 _commit_msg.txt
 

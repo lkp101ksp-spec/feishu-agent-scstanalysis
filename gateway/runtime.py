@@ -348,6 +348,9 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
             bind=get_engine(), expire_on_commit=False, autoflush=False),
     )
     orch.model_switch_service = model_switch_service
+    # ut-7 修复：卡片回调走 app.state.ctx（process_card_payload），
+    # 只挂 orch 会导致回调分支 ctx.model_switch_service=None 报「切换不可用」
+    app.state.ctx.model_switch_service = model_switch_service
     try:
         model_switch_service.apply_startup()
     except Exception:

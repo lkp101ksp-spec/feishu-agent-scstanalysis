@@ -60,6 +60,20 @@ def test_sc_load_path_forbidden(tmp_path):
     }
 
 
+def test_sc_load_passthrough_existing_dataset_ref(tmp_path):
+    """path 恰为既有 dataset_ref（workspace 下目录名）→ 直通返回，不进容器。"""
+    reg, runner = _registry(tmp_path)
+    ws = tmp_path / "ws"
+    (ws / "f1e89bf88edc").mkdir(parents=True)
+    runner.workspace_root = str(ws)
+
+    out = reg.get("sc_load").handler(path="f1e89bf88edc")
+
+    assert out["dataset_ref"] == "f1e89bf88edc"
+    runner.run.assert_not_called()
+    runner.resolve_data_path.assert_not_called()
+
+
 def test_sc_qc_forwards_params(tmp_path):
     reg, runner = _registry(tmp_path)
     runner.run.return_value = {
@@ -183,11 +197,11 @@ def test_sc_enrichment_error_passthrough(tmp_path):
 
 
 def test_sc_enrichment_schema_enum(tmp_path):
-    """基因集参数 enum 锁定三个别名，防 planner 幻觉库名。"""
+    """基因集参数 enum 锁定白名单别名（人源三库+小鼠两库），防 planner 幻觉库名。"""
     reg, _ = _registry(tmp_path)
     props = reg.get("sc_enrichment").parameters["properties"]
     assert set(props["gene_sets"]["items"]["enum"]) == {
-        "hallmark", "go_bp", "kegg"}
+        "hallmark", "go_bp", "kegg", "kegg_mouse", "wikipathways_mouse"}
     assert reg.get("sc_enrichment").timeout_sec == 1800
 
 
@@ -397,7 +411,7 @@ def test_sc_cellchat_forwards_params(tmp_path):
     assert args[1]["species"] == "human"
     assert "ok" not in out
     assert out["top"][0]["ligand"] == "CXCL12"
-    assert reg.get("sc_cellchat").timeout_sec == 1800
+    assert reg.get("sc_cellchat").timeout_sec == 3600
 
 
 def test_sc_cellchat_error_lists_columns(tmp_path):
@@ -427,7 +441,7 @@ def test_sc_milo_forwards_params(tmp_path):
     assert args[1]["sample_col"] == "sample"
     assert args[1]["group_a"] == "treated"
     assert out["n_sig_fdr01"] == 3
-    assert reg.get("sc_milo").timeout_sec == 1800
+    assert reg.get("sc_milo").timeout_sec == 3600
 
 
 def test_sc_milo_error_passthrough(tmp_path):
@@ -747,3 +761,81 @@ def test_sc_knockout_error_passthrough(tmp_path):
         "SC_SCRIPT_ERROR", "RuntimeError: Rscript knk.R failed")
     out = reg.get("sc_knockout").handler(dataset_ref="d", gko="XX")
     assert out["error_code"] == "SC_SCRIPT_ERROR"
+
+
+# === 统一测试轮前置：物种适配 ===
+
+
+def test_sc_metabolism_forwards_species_mouse(tmp_path):
+    """handler 转发 species=mouse 到 payload；schema enum 锁定 human/mouse。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "species": "mouse",
+        "n_pathways_scored": 200, "top_pathways": []}
+    out = reg.get("sc_metabolism").handler(
+        dataset_ref="d", top_n=20, species="mouse")
+    args = runner.run.call_args.args
+    assert args[0] == "metabolism"
+    assert args[1]["species"] == "mouse"
+    assert args[1]["top_n"] == 20
+    assert "ok" not in out
+    assert out["species"] == "mouse"
+    props = reg.get("sc_metabolism").parameters["properties"]
+    assert props["species"]["enum"] == ["human", "mouse"]
+    assert props["species"]["default"] == "human"
+
+
+def test_sc_cellchat_forwards_species_mouse(tmp_path):
+    """sc_cellchat 已支持 species：断言 handler 转发 mouse 现状。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "resource": "consensus",
+        "species": "mouse", "n_sig": 8, "top": []}
+    out = reg.get("sc_cellchat").handler(
+        dataset_ref="d", species="mouse")
+    args = runner.run.call_args.args
+    assert args[0] == "cellchat"
+    assert args[1]["species"] == "mouse"
+    assert "ok" not in out
+    assert out["species"] == "mouse"
+    props = reg.get("sc_cellchat").parameters["properties"]
+    assert props["species"]["enum"] == ["human", "mouse"]
+
+
+# === 耗时工具抽样上限（默认 0=全量，显式抽样加速） ===
+
+
+def test_sc_cellchat_forwards_max_cells_per_group(tmp_path):
+    """handler 转发 max_cells_per_group=100 到 payload；schema 默认 0。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "resource": "consensus",
+        "n_cells_used": 800, "subsampled": True, "n_sig": 12, "top": []}
+    out = reg.get("sc_cellchat").handler(
+        dataset_ref="d", species="mouse", max_cells_per_group=100)
+    args = runner.run.call_args.args
+    assert args[0] == "cellchat"
+    assert args[1]["max_cells_per_group"] == 100
+    assert "ok" not in out
+    assert out["subsampled"] is True
+    props = reg.get("sc_cellchat").parameters["properties"]
+    assert props["max_cells_per_group"]["default"] == 0
+
+
+def test_sc_milo_forwards_max_cells_per_sample(tmp_path):
+    """handler 转发 max_cells_per_sample=100 到 payload；schema 默认 0。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "comparison": "A_vs_B",
+        "n_cells_used": 600, "subsampled": True, "n_nhoods": 40,
+        "n_sig_fdr01": 3, "top": []}
+    out = reg.get("sc_milo").handler(
+        dataset_ref="d", sample_col="sample", group_col="condition",
+        group_a="A", group_b="B", max_cells_per_sample=100)
+    args = runner.run.call_args.args
+    assert args[0] == "milo"
+    assert args[1]["max_cells_per_sample"] == 100
+    assert "ok" not in out
+    assert out["subsampled"] is True
+    props = reg.get("sc_milo").parameters["properties"]
+    assert props["max_cells_per_sample"]["default"] == 0

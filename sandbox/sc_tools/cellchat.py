@@ -1,7 +1,8 @@
 """sc_cellchat：细胞通讯分析（Phase 34，对齐 toolsv1 server_cellchat 单组推断）。
 
 stdin: {"dataset_id": ..., "celltype_col": "leiden", "species": "human",
-        "expr_prop": 0.1, "min_cells": 10, "top_n": 30}
+        "expr_prop": 0.1, "min_cells": 10, "top_n": 30,
+        "max_cells_per_group": 0}
 需 processed.h5ad（sc_process 产物，含 raw）。
 liana 内置 cellchat 方法 + 随包资源库（human=consensus / mouse=mouseconsensus），
 容器断网可用。多组比较（toolsv1 part1-5 套件）本版不做。
@@ -46,6 +47,7 @@ def main() -> None:
     expr_prop = float(args.get("expr_prop", 0.1))
     min_cells = int(args.get("min_cells", 10))
     top_n = int(args.get("top_n", 30))
+    max_cells_per_group = int(args.get("max_cells_per_group", 0))
     resource = {"human": "consensus", "mouse": "mouseconsensus"}.get(species)
     if resource is None:
         raise ValueError(f"species must be human or mouse, got {species!r}")
@@ -64,6 +66,18 @@ def main() -> None:
         raise ValueError(
             f"need >=2 cell types with >= {min_cells} cells each; "
             f"dropped too-small: {dropped}")
+
+    # 分层抽样（可选）：每组取 min(max_cells_per_group, 组大小)，
+    # 固定 random_state=42 保证可复现；0=全量。
+    n_cells_total = adata.n_obs
+    if max_cells_per_group > 0:
+        idx: list = []
+        for _, g in adata.obs.groupby(celltype_col):
+            idx.extend(g.sample(n=min(max_cells_per_group, len(g)),
+                                random_state=42).index)
+        adata = adata[idx].copy()
+        labels = adata.obs[celltype_col].astype(str)
+    subsampled = adata.n_obs < n_cells_total
 
     li.mt.cellchat(adata, groupby=celltype_col, resource_name=resource,
                    expr_prop=expr_prop, use_raw=True, verbose=False)
@@ -138,20 +152,27 @@ def main() -> None:
          "pval": float(f"{r['pval']:.2e}")}
         for _, r in lr.head(top_n).iterrows()]
 
-    emit({
+    payload = {
         "ok": True,
         "dataset_ref": args["dataset_id"],
         "celltype_col": celltype_col,
         "resource": resource,
         "n_celltypes": int(labels.nunique()),
         "dropped_small_types": [str(d) for d in dropped],
+        "n_cells_used": int(adata.n_obs),
+        "subsampled": subsampled,
         "n_pairs_tested": int(len(lr)),
         "n_sig": int(len(sig)),
         "top": top,
         "csv": str(csv_path),
         "dotplot_png": str(dot_png),
         "heatmap_png": str(heat_png),
-    })
+    }
+    if subsampled:
+        payload["note"] = (
+            f"按 {celltype_col} 分层抽样：每组最多 {max_cells_per_group} "
+            f"细胞（{n_cells_total}→{adata.n_obs}），结果为抽样估计")
+    emit(payload)
 
 
 if __name__ == "__main__":

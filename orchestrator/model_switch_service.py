@@ -80,34 +80,73 @@ class ModelSwitchService:
                 "content": "候选池为空：在 config/llm.yaml providers 段添加候选"
                            "（并在 .env 配置对应变量）后可切换。"}})
         else:
-            buttons = []
-            for name in self.providers:
-                buttons.append({
-                    "tag": "button",
-                    "text": {"tag": "plain_text",
-                             "content": f"{name}→主" + (" ✓" if name == cur_p else "")},
-                    "type": "primary" if name != cur_p else "default",
-                    "disabled": name == cur_p,
-                    "value": {"action": "model_switch", "name": name,
-                              "slot": "primary"},
-                })
-                buttons.append({
-                    "tag": "button",
-                    "text": {"tag": "plain_text",
-                             "content": f"{name}→备" + (" ✓" if name == cur_f else "")},
-                    "type": "default",
-                    "disabled": name == cur_f,
-                    "value": {"action": "model_switch", "name": name,
-                              "slot": "fallback"},
-                })
+            # 双卡片流程（ut-7 用户反馈）：卡 1 只放槽位入口，点后进卡 2 选模型
+            buttons = [
+                {"tag": "button",
+                 "text": {"tag": "plain_text", "content": "切换主模型"},
+                 "type": "primary",
+                 "value": {"action": "model_pick", "slot": "primary"}},
+                {"tag": "button",
+                 "text": {"tag": "plain_text", "content": "切换备模型"},
+                 "type": "default",
+                 "value": {"action": "model_pick", "slot": "fallback"}},
+            ]
             elements.append({"tag": "action", "actions": buttons})
         elements.append({"tag": "note", "elements": [
             {"tag": "plain_text",
-             "content": "点击按钮热切换（即时生效，无需重启）；api key 不显示"}]})
+             "content": "点击按钮进入候选池选模型；热切换即时生效，无需重启；api key 不显示"}]})
         return {
             "config": {"wide_screen_mode": True},
             "header": {"title": {"tag": "plain_text",
                                  "content": "/model 模型切换（管理员）"}},
+            "elements": elements,
+        }
+
+    def picker_card(self, open_id: str, slot: str) -> dict | None:
+        """选模型卡（卡片 2）：列出候选池全部模型，点击即切换到指定槽位。
+
+        admin 限定；非法槽位返回 None。当前在任模型禁用并带 ✓；
+        附「← 返回状态」按钮（model_back 回卡 1）。
+        """
+        if not self.is_admin(open_id):
+            return None
+        if slot not in _SLOTS:
+            return None
+        cur_p, cur_f = self._current()
+        current = cur_p if slot == "primary" else cur_f
+        slot_label = "主" if slot == "primary" else "备"
+        buttons: list[dict] = []
+        for name, cfg in self.providers.items():
+            buttons.append({
+                "tag": "button",
+                "text": {"tag": "plain_text",
+                         "content": (f"{name} · {cfg.model}"
+                                     + (" ✓" if name == current else ""))},
+                "type": "primary" if name != current else "default",
+                "disabled": name == current,
+                "value": {"action": "model_switch", "name": name, "slot": slot},
+            })
+        buttons.append({
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "← 返回状态"},
+            "type": "default",
+            "value": {"action": "model_back"},
+        })
+        # 飞书 action 布局每组最多 4 个按钮，候选多时分组
+        groups = [buttons[i:i + 4] for i in range(0, len(buttons), 4)]
+        elements: list[dict] = [
+            {"tag": "div", "text": {"tag": "lark_md",
+                "content": f"当前{slot_label}模型：**{current}**，点击下方模型即切换"}},
+        ]
+        elements += [{"tag": "action", "actions": g} for g in groups]
+        elements.append({"tag": "note", "elements": [
+            {"tag": "plain_text",
+             "content": "切换即时生效并持久化（重启保持）；api key 不显示"}]})
+        return {
+            "config": {"wide_screen_mode": True},
+            "header": {"title": {"tag": "plain_text",
+                                 "content": f"选择{slot_label}模型"
+                                            f"（候选池 {len(self.providers)} 个）"}},
             "elements": elements,
         }
 

@@ -23,6 +23,7 @@ from pathlib import Path
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
 from lark_oapi.event.callback.model.p2_card_action_trigger import (
+    CallBackCard,
     CallBackToast,
     P2CardActionTrigger,
     P2CardActionTriggerResponse,
@@ -262,6 +263,12 @@ def card_result_to_response(result: dict) -> P2CardActionTriggerResponse | None:
         resp.toast = toast
         return resp
     # Phase 30：模型切换 toast（成功即时生效；拒绝按 reason 提示）
+    # 双卡片流程（ut-7）：model_pick/model_back 原地换卡面；切换成功
+    # 附带最新状态卡把选模型卡刷回卡 1。
+    if status in ("model_pick", "model_back"):
+        resp = P2CardActionTriggerResponse({})
+        resp.card = CallBackCard({"type": "raw", "data": result["card"]})
+        return resp
     if status == "model_switched":
         slot = "主" if result.get("slot") == "primary" else "备"
         toast = CallBackToast({})
@@ -269,6 +276,8 @@ def card_result_to_response(result: dict) -> P2CardActionTriggerResponse | None:
         toast.content = f"已切换 {result.get('to', '')} 为{slot}模型（即时生效，无需重启）"
         resp = P2CardActionTriggerResponse({})
         resp.toast = toast
+        if result.get("card"):
+            resp.card = CallBackCard({"type": "raw", "data": result["card"]})
         return resp
     if status in ("model_switch_denied", "model_switch_unavailable"):
         reason = result.get("reason", "")

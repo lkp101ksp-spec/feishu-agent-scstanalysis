@@ -1,7 +1,8 @@
 """sc_milo：差异丰度分析（Phase 34，Python 复刻 miloR 思路）。
 
 stdin: {"dataset_id": ..., "sample_col": "sample", "group_col": "condition",
-        "group_a": "treated", "group_b": "control", "k": 0, "top_n": 20}
+        "group_a": "treated", "group_b": "control", "k": 0, "top_n": 20,
+        "max_cells_per_sample": 0}
 需 processed.h5ad。流程：KNN 图（复用 connectivities，缺则重建）→
 refined 式邻域采样（与已留邻域重叠>0.8 的种子跳过）→ 样本×邻域计数 →
 逐邻域 QP-GLM（Poisson + 全局 Pearson 离散度，offset=log 样本总细胞数）→ BH 校正。
@@ -51,6 +52,7 @@ def main() -> None:
             "'group_a': 'treated', 'group_b': 'control'}")
     k_arg = int(args.get("k", 0))
     top_n = int(args.get("top_n", 20))
+    max_cells_per_sample = int(args.get("max_cells_per_sample", 0))
 
     adata = load_adata({"dataset_id": args["dataset_id"], "file": "processed"})
     for col in (sample_col, group_col):
@@ -75,6 +77,19 @@ def main() -> None:
     if n_sa < 2 or n_sb < 2:
         raise ValueError(
             f"need >=2 samples per group: {group_a}={n_sa}, {group_b}={n_sb}")
+
+    # 分层抽样（可选）：按样本列（保留样本复制结构，milo 统计必需），
+    # 每样本取 min(max_cells_per_sample, 样本细胞数)，
+    # 固定 random_state=42 保证可复现；0=全量。
+    n_cells_total = adata.n_obs
+    if max_cells_per_sample > 0:
+        idx: list = []
+        for _, g in adata.obs.groupby(sample_col):
+            idx.extend(g.sample(n=min(max_cells_per_sample, len(g)),
+                                random_state=42).index)
+        adata = adata[idx].copy()
+        samples = adata.obs[sample_col].astype(str)
+    subsampled = adata.n_obs < n_cells_total
 
     # KNN 图：优先复用 sc_process 的 connectivities
     if "connectivities" not in adata.obsp:
@@ -205,6 +220,8 @@ def main() -> None:
         "comparison": f"{group_a}_vs_{group_b}",
         "sample_col": sample_col, "group_col": group_col,
         "n_samples_a": n_sa, "n_samples_b": n_sb,
+        "n_cells_used": int(adata.n_obs),
+        "subsampled": subsampled,
         "k": k, "n_nhoods": len(kept),
         "n_sig_fdr01": int((fdr < 0.1).sum()),
         "dispersion_scale": round(scale, 3),
@@ -213,7 +230,11 @@ def main() -> None:
         "umap_png": str(png_path),
         "method_note": ("Python 复刻：QP-GLM(Poisson+全局 Pearson 离散度 "
                         "floor=1)+BH；非 miloR edgeR QL 模型与 SpatialFDR "
-                        "加权校正，显著性口径偏保守"),
+                        "加权校正，显著性口径偏保守"
+                        + (f"；按 {sample_col} 分层抽样：每样本最多 "
+                           f"{max_cells_per_sample} 细胞"
+                           f"（{n_cells_total}→{adata.n_obs}）"
+                           if subsampled else "")),
     })
 
 
