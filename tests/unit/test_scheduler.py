@@ -301,7 +301,8 @@ async def _run_with_drive(sch: Scheduler) -> PlanResult:
 
     ex = sch.executor
     asyncio.create_task(drive())
-    return await asyncio.wait_for(sch.run_until_done(), timeout=3.0)
+    # 15s 仅是上限兜底（正常亚秒级完成）：CI 慢机 + --cov 下 3s 曾误伤
+    return await asyncio.wait_for(sch.run_until_done(), timeout=15.0)
 
 
 async def test_node_repair_recovers_run_python_failure():

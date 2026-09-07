@@ -79,11 +79,12 @@ class TestRunCmd:
         assert r["ok"] is False and "APPROVAL_DENIED" in r["error"]
 
     def test_need_approval_approved_executes(self, tmp_path):
-        """approve_fn 返回 True → need_approval 命令照常执行（cmd /c 非白名单）。"""
+        """approve_fn 返回 True → need_approval 命令照常执行。"""
         ws = WorkspaceManager(tmp_path / "ws2")
         tools = CodeTools(ws, "s2", approve_fn=lambda info: True)
-        r = tools.dispatch("run_cmd", {"cmd": ["cmd", "/c", "echo approved_ok"]})
-        assert r["ok"] is True and "approved_ok" in r["stdout"]
+        # curl 在 need_approval 名单且 Win/Linux 均可用（cmd /c 仅 Windows 存在）
+        r = tools.dispatch("run_cmd", {"cmd": ["curl", "--version"]})
+        assert r["ok"] is True and "curl" in r["stdout"].lower()
 
     def test_bare_command_resolved_via_path(self, tmp_path):
         """裸命令名（curl/git 等）经 shutil.which 解析为绝对路径后执行。"""

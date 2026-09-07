@@ -11,7 +11,7 @@ import logging
 import threading
 import time
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from orchestrator.planner.scheduler import Scheduler
 from orchestrator.tools.tool_registry import parse_disabled_tools
@@ -717,7 +717,9 @@ class ResearchRunner:
             rel = p[len("ws/"):]
         else:
             return None
-        return str(Path(ws_root).resolve() / rel)
+        # 纯字符串映射，固定 Windows 语义：ws_root 是 Windows 主机路径（bio 容器
+        # 挂载源），用 PureWindowsPath 保证跨平台结果确定（CI ubuntu 可测）。
+        return str(PureWindowsPath(ws_root) / rel)
 
     # === Phase 17：节点级 L2 审批（write_doc 卡片确认） ===
 

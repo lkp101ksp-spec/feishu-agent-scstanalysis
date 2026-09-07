@@ -8,7 +8,7 @@ spec 2026-09-03-phase26-code-agent-design §5：
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,10 @@ class WorkspaceManager:
     def resolve_safe(self, session_id: str, rel: str) -> Path:
         """解析会话内相对路径；越界（../、绝对盘符）抛 PathEscapeError。"""
         base = self.session_dir(session_id).resolve()
+        # 跨平台拒绝绝对路径：Linux 下 "C:/..." 非绝对，须按 Windows 语义显式判
+        if PureWindowsPath(rel).is_absolute() or rel.startswith(("/", "\\")):
+            logger.warning("path escape blocked: session=%s rel=%r", session_id, rel)
+            raise PathEscapeError(f"path escapes workspace: {rel!r}")
         # Windows 下 "/".join 语义：绝对盘符路径会整体替换 base，仍能被
         # is_relative_to 检出越界
         p = (base / rel).resolve()
