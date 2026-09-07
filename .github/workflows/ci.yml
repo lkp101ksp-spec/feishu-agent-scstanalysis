@@ -1,0 +1,52 @@
+# CI 工作流（预置）：当前仓库无远程，推送到 GitHub 后立即生效。
+# 与本地质量门 scripts/check.ps1 完全对齐：ruff check → pytest 默认层（+cov）→ pg 真库层。
+# 注意：依赖安装用 pip install -e .[dev]，不用 requirements-lock.txt——
+# lock 文件含 "-e i:\飞书agent" 本地绝对路径自引用，仅用于本机环境复现。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      # pg 真库层（-m pg）：端口/账号与 tests/pg/conftest.py 默认 PG_TEST_URL 完全匹配，
+      # 无需额外环境变量；docker 测试因 kernel 镜像不存在自动 skip（见 test_sandbox_docker.py）。
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: agent
+          POSTGRES_DB: agent
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U agent -d agent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖（pyproject 声明，含 dev extras）
+        run: pip install -e .[dev]
+
+      - name: ruff check（lint 硬门禁）
+        run: ruff check .
+
+      - name: pytest 默认层 + cov（与 check.ps1 一致）
+        run: python -m pytest -q -m "not pg" --cov --cov-report=term
+
+      - name: pytest pg 真库层
+        run: python -m pytest tests/pg -m pg -q

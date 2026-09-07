@@ -48,7 +48,6 @@ def _pick_h5ad(ds_dir: Path) -> Path | None:
 
 def _gene_names(var) -> list[str] | None:
     """var 组取基因名：优先 _index 数据集，其次 attrs['_index'] 指向列。"""
-    import h5py  # 局部导入：模块加载不强依赖 h5py（无画像需求时零开销）
 
     if "_index" in var:
         raw = var["_index"][:]

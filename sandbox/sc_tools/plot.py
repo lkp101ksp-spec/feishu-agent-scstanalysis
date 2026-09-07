@@ -5,7 +5,7 @@ stdin: {"dataset_id": ..., "genes": ["CD3D", ...], "kind": "violin"|"umap_gene"}
 """
 from __future__ import annotations
 
-from common import WS_ROOT, emit, fail, load_adata, run, read_args
+from common import WS_ROOT, emit, fail, load_adata, read_args, run
 
 
 def main() -> None:

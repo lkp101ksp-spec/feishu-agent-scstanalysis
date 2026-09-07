@@ -208,7 +208,11 @@ class CodeTools:
             try:
                 cmd = shlex.split(cmd)
             except ValueError:
-                return {"ok": False, "error": f"BAD_CMD: cannot parse shell string: {cmd[:100]!r}", "cmd": cmd}
+                return {
+                    "ok": False,
+                    "error": f"BAD_CMD: cannot parse shell string: {cmd[:100]!r}",
+                    "cmd": cmd,
+                }
         verdict, reason = CommandPolicy.verdict(cmd)
         if verdict == "block":
             logger.warning("run_cmd blocked: %r (%s)", cmd, reason)

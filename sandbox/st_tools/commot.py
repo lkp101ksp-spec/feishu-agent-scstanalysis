@@ -85,8 +85,8 @@ def main() -> None:
         lig, _, rec = lr.rpartition("-")
         scores.append((lig, rec, float(expr.obsp[key].sum())))
     scores.sort(key=lambda t: -t[2])
-    top_lr = [{"ligand": l, "receptor": r, "score": round(s, 4)}
-              for l, r, s in scores[:10]]
+    top_lr = [{"ligand": lig, "receptor": r, "score": round(s, 4)}
+              for lig, r, s in scores[:10]]
     # COMMOT 0.0.3：sender/receiver 边际和存 obsm（列带 s-/r- 前缀，
     # 含每 LR 对列 + total-total + pathway_sum=True 时的通路级列），
     # 非旧教程示例的 uns 键（真机 KeyError: sum-sender 修正点）

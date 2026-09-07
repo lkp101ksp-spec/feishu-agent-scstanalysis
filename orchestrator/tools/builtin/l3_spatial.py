@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 from orchestrator.tools.bio.bio_runner import (
-    BioRunner,
     BioRunError,
+    BioRunner,
     compute_dataset_id_dir,
     parse_gene_list,
 )

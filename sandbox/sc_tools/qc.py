@@ -5,7 +5,7 @@ stdin: {"dataset_id": ..., "min_genes": 600, "min_cells": 3,
 """
 from __future__ import annotations
 
-from common import WS_ROOT, emit, fail, load_adata, run, read_args
+from common import WS_ROOT, emit, fail, load_adata, read_args, run
 
 
 def main() -> None:

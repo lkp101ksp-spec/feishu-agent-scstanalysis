@@ -6,8 +6,12 @@
 """
 import json
 
-from lark_oapi.api.im.v1 import (CreateMessageRequest, CreateMessageRequestBody,
-                                 PatchMessageRequest, PatchMessageRequestBody)
+from lark_oapi.api.im.v1 import (
+    CreateMessageRequest,
+    CreateMessageRequestBody,
+    PatchMessageRequest,
+    PatchMessageRequestBody,
+)
 
 from feishu_adapter.client import LarkCLI, LarkCLIError
 

@@ -5,10 +5,9 @@ BioRunner 预计算注入；path 已是容器内 /data 视角路径）
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from common import DATA_ROOT, WS_ROOT, emit, fail, run, ws_path
+from common import DATA_ROOT, WS_ROOT, emit, fail, run
 
 
 def _detect_and_read(path: str):
@@ -32,7 +31,7 @@ def _detect_and_read(path: str):
 
         mtx_dir = p
         if (p / "matrix.mtx").exists() and not (p / "matrix.mtx.gz").exists():
-            tmp = tempfile.TemporaryDirectory()  # noqa: SIM115（读毕即弃）
+            tmp = tempfile.TemporaryDirectory()  # 读毕即弃
             mtx_dir = Path(tempfile.gettempdir()) / tmp.name
             for name in ("matrix.mtx", "barcodes.tsv", "features.tsv",
                          "genes.tsv"):

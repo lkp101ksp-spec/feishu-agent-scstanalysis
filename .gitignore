@@ -58,6 +58,7 @@ motifAnnotations/
 code_workspace/
 .pytest_tmp/
 .pytest_basetemp/
+logs/
 
 # 临时提交信息
 _commit_msg.txt

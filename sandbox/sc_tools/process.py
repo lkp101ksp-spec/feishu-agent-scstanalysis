@@ -8,7 +8,7 @@ Phase 25：import 探测 rapids_singlecell——GPU 镜像走 rsc 加速分支
 """
 from __future__ import annotations
 
-from common import WS_ROOT, emit, load_adata, run, read_args
+from common import WS_ROOT, emit, load_adata, read_args, run
 
 
 def main() -> None:

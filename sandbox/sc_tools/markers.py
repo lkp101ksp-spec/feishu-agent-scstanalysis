@@ -7,13 +7,12 @@ CPU 镜像维持 use_raw=True（归一化 log 全基因快照）。
 """
 from __future__ import annotations
 
-from common import WS_ROOT, emit, load_adata, run, read_args
+from common import WS_ROOT, emit, load_adata, read_args, run
 
 
 def main() -> None:
     """主流程：import 探测 rapids_singlecell 决定 GPU/CPU 分支。"""
     import matplotlib.pyplot as plt
-    import pandas as pd
     import scanpy as sc
 
     try:

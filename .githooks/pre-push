@@ -1,0 +1,14 @@
+#!/bin/sh
+# pre-push 质量门：push 前自动执行 scripts/check.ps1（ruff check + pytest 默认层）。
+# 启用（仓库内一次性配置）：git config core.hooksPath .githooks
+# 紧急跳过：SKIP_PRE_PUSH=1 git push
+# 注：本地仓库无 remote 时钩子不触发；配置远程后立即生效。
+
+if [ "$SKIP_PRE_PUSH" = "1" ]; then
+    echo "[pre-push] SKIP_PRE_PUSH=1，跳过质量门"
+    exit 0
+fi
+
+echo "[pre-push] 运行质量门 scripts/check.ps1（SKIP_PRE_PUSH=1 可跳过）..."
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
+exit $?

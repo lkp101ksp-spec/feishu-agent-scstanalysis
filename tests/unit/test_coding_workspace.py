@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 
 from orchestrator.coding.workspace import (
-    CommandPolicy, PathEscapeError, WorkspaceManager,
+    CommandPolicy,
+    PathEscapeError,
+    WorkspaceManager,
 )
 
 

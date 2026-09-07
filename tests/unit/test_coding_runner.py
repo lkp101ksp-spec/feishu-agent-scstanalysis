@@ -7,7 +7,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from orchestrator.coding.coding_runner import (
-    CodingRunner, _toolresult_to_dict,
+    CodingRunner,
+    _toolresult_to_dict,
 )
 from orchestrator.tools.tool_handler import ToolHandler, ToolResult
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
@@ -205,7 +206,8 @@ class TestHelpers:
 from types import SimpleNamespace  # noqa: E402
 
 from orchestrator.coding.coding_runner import (  # noqa: E402
-    _ProgressCard, _ProgressReporter,
+    _ProgressCard,
+    _ProgressReporter,
 )
 
 

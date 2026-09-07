@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from orchestrator.tools.bio.bio_runner import BioRunner, BioRunError
+from orchestrator.tools.bio.bio_runner import BioRunError, BioRunner
 from orchestrator.tools.builtin.l3_spatial import register_l3_spatial
 from orchestrator.tools.tool_registry import ToolRegistry
 

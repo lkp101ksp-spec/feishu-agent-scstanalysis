@@ -105,16 +105,18 @@ def test_compute_dataset_id_dir_aggregate(tmp_path):
 
 
 def test_compute_dataset_id_dir_missing_raises(tmp_path):
-    from orchestrator.tools.bio.bio_runner import BioRunError, compute_dataset_id_dir
     import pytest
+
+    from orchestrator.tools.bio.bio_runner import BioRunError, compute_dataset_id_dir
     with pytest.raises(BioRunError, match="not found"):
         compute_dataset_id_dir(str(tmp_path / "nope"))
 
 
 def test_compute_dataset_id_missing_file_raises(tmp_path):
     """单文件版对齐目录版：不存在路径抛 BioRunError 而非原生 OSError。"""
-    from orchestrator.tools.bio.bio_runner import BioRunError
     import pytest
+
+    from orchestrator.tools.bio.bio_runner import BioRunError
     with pytest.raises(BioRunError, match="not found"):
         compute_dataset_id(str(tmp_path / "nope.h5ad"))
 

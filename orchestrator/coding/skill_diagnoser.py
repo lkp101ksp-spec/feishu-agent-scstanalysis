@@ -50,7 +50,7 @@ PROMPT_TEMPLATE = """你是 skill 诊断专家。任务失败轨迹如下：
 command / timeout_sec。patch 中不得出现其他字段（如 max_retries、retry_on、
 param_variants 均不支持，写了也会被丢弃）；重试策略类建议请改写到 SKILL.md。
 
-只以 JSON 返回：{{"skill": "...", "issue": "...", "fix": "...", "file": "SKILL.md|tools.yaml", "patch": "..."}}"""
+只以 JSON 返回：{{"skill": "...", "issue": "...", "fix": "...", "file": "SKILL.md|tools.yaml", "patch": "..."}}"""  # noqa: E501
 
 
 class SkillDiagnoser:

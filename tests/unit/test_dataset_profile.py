@@ -5,7 +5,6 @@ var 为 dataframe 组含 _index）验证统计正确性与容错。
 """
 import h5py
 import numpy as np
-import pytest
 
 from orchestrator.tools.bio.dataset_profile import (
     build_profile_context,

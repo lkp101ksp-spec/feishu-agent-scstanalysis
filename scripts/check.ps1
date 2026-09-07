@@ -36,8 +36,9 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # 4) pytest 默认层（SQLite）+ 覆盖率摘要（硬门禁；pg 层靠 -m 隔离，Docker 起着也不混入）
+#    --basetemp 钉仓库内 .pytest_tmp：Windows 默认 Temp\pytest-of-* 曾遇 WinError 5 权限拒绝
 Write-Host "`n== [3/3] pytest 默认层 + cov ==" -ForegroundColor Cyan
-& $py -m pytest -q -m "not pg" --cov --cov-report=term
+& $py -m pytest -q -m "not pg" --basetemp="$root\.pytest_tmp" --cov --cov-report=term
 if ($LASTEXITCODE -ne 0) { Write-Host "[FAIL] pytest 默认层未通过" -ForegroundColor Red; exit 2 }
 
 # 5) pg 层：可选执行，否则给出提示

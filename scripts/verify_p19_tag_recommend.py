@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from orchestrator.templates.tag_recommend_service import TagRecommendService
 from persistence.engine import get_engine
-from persistence.models import TemplateRow, TemplateTagRow
+from persistence.models import TemplateRow
 from persistence.repositories.template_repo import TemplateRepo
 from persistence.repositories.template_tag_repo import TemplateTagRepo
 

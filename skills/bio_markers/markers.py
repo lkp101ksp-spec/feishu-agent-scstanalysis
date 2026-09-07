@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import scanpy as sc
 
@@ -36,8 +37,8 @@ def main() -> None:
         scores = list(rgg["scores"][cluster])[: args.top_n]
         logfcs = list(rgg["logfoldchanges"][cluster])[: args.top_n]
         markers[str(cluster)] = [
-            {"gene": g, "score": round(float(s), 2), "log2fc": round(float(l), 2)}
-            for g, s, l in zip(genes, scores, logfcs)
+            {"gene": g, "score": round(float(s), 2), "log2fc": round(float(fc), 2)}
+            for g, s, fc in zip(genes, scores, logfcs)
         ]
 
     out_dir = Path(args.output_dir)

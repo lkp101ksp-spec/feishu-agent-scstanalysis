@@ -14,6 +14,9 @@ dependencies = [
     "psycopg[binary]>=3.1.0",
     "alembic>=1.13.0",
     "lark-oapi>=1.7.0",
+    # Phase 42 数据画像（dataset_profile.py）：h5py 直读 h5ad + numpy 统计
+    "h5py>=3.10.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]

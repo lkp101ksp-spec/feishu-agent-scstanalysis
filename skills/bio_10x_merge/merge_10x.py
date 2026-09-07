@@ -3,8 +3,8 @@ import argparse
 import json
 from pathlib import Path
 
-import scanpy as sc
 import anndata as ad
+import scanpy as sc
 
 
 def main() -> None:
