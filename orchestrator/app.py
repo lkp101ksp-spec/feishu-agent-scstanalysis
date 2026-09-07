@@ -239,6 +239,14 @@ class Orchestrator:
                 or incoming.write_anchor):
             return {"status": "skipped", "reason": "group_non_command"}
 
+        # 1.8 意图预判闸（Phase 38）：疑似研究意图发确认卡，用户点「确认执行」
+        # 才转 /research；未命中/未装配/分类失败均落回普通闲聊路径。
+        gate = getattr(self, "intent_gate", None)
+        if gate is not None:
+            offered = gate.maybe_offer(incoming)
+            if offered is not None:
+                return offered
+
         # 2. 普通消息：创建 session + task
         session_id = self.session_service.get_or_create(
             owner_open_id=incoming.sender_open_id,

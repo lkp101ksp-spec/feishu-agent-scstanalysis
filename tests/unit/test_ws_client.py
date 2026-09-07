@@ -183,6 +183,45 @@ def test_card_result_to_response_model_switched_toast_and_card():
     assert resp.card is not None and resp.card.data == status_card
 
 
+# --- Phase 38：意图预判确认卡反馈 ---
+
+
+def test_card_result_to_response_intent_approved_toast_and_card():
+    """确认执行 → success toast + 原地换面卡（研究任务已受理）。"""
+    card = {"header": {"title": {"tag": "plain_text", "content": "研究任务已受理"}},
+            "elements": []}
+    resp = card_result_to_response(
+        {"ok": True, "status": "intent_approved", "card": card})
+    assert resp is not None
+    assert resp.toast.type == "success" and "已受理" in resp.toast.content
+    assert resp.card.type == "raw" and resp.card.data == card
+
+
+def test_card_result_to_response_intent_denied_info_toast():
+    """忽略 → info toast + 换面卡（已忽略）。"""
+    card = {"header": {"title": {"tag": "plain_text", "content": "已忽略"}},
+            "elements": []}
+    resp = card_result_to_response(
+        {"ok": True, "status": "intent_denied", "card": card})
+    assert resp is not None
+    assert resp.toast.type == "info" and "已忽略" in resp.toast.content
+    assert resp.card.data == card
+
+
+def test_card_result_to_response_intent_expired_toast():
+    """过期/失效 → info toast 提示重发，无换面卡。"""
+    resp = card_result_to_response({"ok": False, "status": "intent_expired"})
+    assert resp is not None
+    assert resp.toast.type == "info" and "已失效" in resp.toast.content
+    assert resp.card is None
+
+
+def test_card_result_to_response_intent_unavailable_error_toast():
+    resp = card_result_to_response({"ok": False, "status": "intent_unavailable"})
+    assert resp is not None
+    assert resp.toast.type == "error" and "未配置" in resp.toast.content
+
+
 def test_build_dispatcher_smoke():
     """dispatcher 可构造（注册 IM + 卡片回调，不建立连接）。"""
     rt = Runtime(app=FastAPI(), orchestrator=object(), settings=object())
@@ -328,6 +367,9 @@ def test_build_runtime_assembles_real_graph(_runtime_env):
     # Phase 30：模型热切换双通道挂载（orch 出卡 + ctx 回调，ut-7 修复）
     assert rt.orchestrator.model_switch_service is not None
     assert rt.app.state.ctx.model_switch_service is not None
+    # Phase 38：意图预判闸单挂载（只挂 orch，回调经 ctx.orchestrator 同源取）
+    assert rt.orchestrator.intent_gate is not None
+    assert rt.app.state.ctx.orchestrator is rt.orchestrator
     # health 路由可用
     from fastapi.testclient import TestClient
     assert TestClient(rt.app).get("/health").json() == {"status": "ok"}

@@ -507,3 +507,52 @@ def test_code_prefix_not_matched_by_plain_text(orch):
                           text="请帮我 /code 一下")   # 前缀不在行首
     orch.process(msg)
     orch.coding_runner.handle.assert_not_called()
+
+
+# === Phase 38：意图预判闸 ===
+
+
+def _attach_gate(orch, classify='{"research": true}'):
+    """给 orch 挂真 IntentGateService（mock LLM 分类 + 复用 mock im）。"""
+    from orchestrator.intent_gate import IntentGateService
+
+    gate_llm = MagicMock()
+    gate_llm.chat.return_value = classify
+    orch.intent_gate = IntentGateService(llm=gate_llm, im=orch.im)
+    return gate_llm
+
+
+def test_process_research_intent_offers_card_and_skips_chat(orch):
+    """意图闸命中：发确认卡短路——不进闲聊 LLM、不建 task、不回 IM 文本。"""
+    _attach_gate(orch)
+    result = orch.process(IncomingMessage(
+        message_id="om_i1", chat_id="oc_1", sender_open_id="ou_1",
+        text="对 f1e89bf88edc 做双联体检测",
+    ))
+    assert result["status"] == "intent_offered" and result["intent_id"]
+    orch.im.send_card.assert_called_once()
+    orch.llm.chat.assert_not_called()
+    orch.im.reply.assert_not_called()
+
+
+def test_process_chat_intent_falls_through_to_llm(orch):
+    """意图闸未命中：落回普通闲聊路径（LLM 回复 + task 收尾）。"""
+    _attach_gate(orch, classify='{"research": false}')
+    result = orch.process(IncomingMessage(
+        message_id="om_i2", chat_id="oc_1", sender_open_id="ou_1",
+        text="今天天气怎么样",
+    ))
+    assert result["status"] == "success"
+    orch.llm.chat.assert_called_once()
+    orch.im.send_card.assert_not_called()
+
+
+def test_process_intent_gate_absent_keeps_old_behavior(orch):
+    """闸未装配（getattr 防御）：普通消息行为与 Phase 38 前完全一致。"""
+    assert not hasattr(orch, "intent_gate")
+    result = orch.process(IncomingMessage(
+        message_id="om_i3", chat_id="oc_1", sender_open_id="ou_1",
+        text="对 f1e89bf88edc 做双联体检测",
+    ))
+    assert result["status"] == "success"
+    orch.im.send_card.assert_not_called()

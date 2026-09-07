@@ -152,6 +152,11 @@ class Settings:
     code_registry_tools: str = "sc_*"
     # Phase 30 admin 名单复用 FEISHU_ADMIN_OPEN_IDS（runtime 装配处解析，
     # 与模板审核共用一份管理员概念，不另设变量）
+    # === Phase 38: 自然语言意图预判（普通私聊 → 确认卡 → 转 /research） ===
+    # 开关：False 时普通消息直接走闲聊路径（恢复 Phase 38 前行为）
+    intent_gate_enabled: bool = True
+    # 确认卡待决策有效期（秒），过期按钮失效
+    intent_gate_ttl_sec: int = 1800
 
 
 def _load_yaml(path: str) -> dict:
@@ -296,4 +301,9 @@ def load_settings() -> Settings:
         code_timeout_sec=int(os.environ.get("CODE_TIMEOUT_SEC", "3600")),
         code_model=os.environ.get("CODE_MODEL", ""),
         code_registry_tools=os.environ.get("CODE_REGISTRY_TOOLS", "sc_*"),
+        # Phase 38：意图预判闸（INTENT_GATE_ENABLED=0 关闭）
+        intent_gate_enabled=os.environ.get(
+            "INTENT_GATE_ENABLED", "1").lower() not in ("0", "false", "no"),
+        intent_gate_ttl_sec=int(
+            os.environ.get("INTENT_GATE_TTL_SEC", "1800")),
     )

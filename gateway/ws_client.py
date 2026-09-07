@@ -292,6 +292,25 @@ def card_result_to_response(result: dict) -> P2CardActionTriggerResponse | None:
         resp = P2CardActionTriggerResponse({})
         resp.toast = toast
         return resp
+    # Phase 38：意图预判确认卡反馈（批准/忽略均原地换面去按钮）
+    if status in ("intent_approved", "intent_denied"):
+        toast = CallBackToast({})
+        toast.type = "success" if status == "intent_approved" else "info"
+        toast.content = ("已受理，开始规划执行…" if status == "intent_approved"
+                         else "已忽略，按普通聊天处理")
+        resp = P2CardActionTriggerResponse({})
+        resp.toast = toast
+        if result.get("card"):
+            resp.card = CallBackCard({"type": "raw", "data": result["card"]})
+        return resp
+    if status in ("intent_expired", "intent_unavailable"):
+        toast = CallBackToast({})
+        toast.type = "info" if status == "intent_expired" else "error"
+        toast.content = ("该卡片已失效，请重新发送指令"
+                         if status == "intent_expired" else "意图预判服务未配置")
+        resp = P2CardActionTriggerResponse({})
+        resp.toast = toast
+        return resp
     return None
 
 

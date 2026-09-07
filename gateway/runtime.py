@@ -321,6 +321,15 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
     orch.research_runner = ResearchRunner(
         orchestrator=orch, session_factory=research_session_factory,
     )
+    # --- Phase 38：意图预判闸（自然语言 → 确认卡 → 转 /research） ---
+    # 单挂载点：只挂 orch.intent_gate，卡片回调经 ctx.orchestrator 取同实例
+    # （ut-7 教训：出卡/回调双挂载必须同源，此处从根上只有一处）
+    if getattr(settings, "intent_gate_enabled", True):
+        from orchestrator.intent_gate import IntentGateService
+        orch.intent_gate = IntentGateService(
+            llm=llm, im=orch.im,
+            ttl_sec=getattr(settings, "intent_gate_ttl_sec", 1800),
+        )
     # Phase 26：/code agentic coding 链路（CodingRunner 三层工具面拼装；
     # tool_handler/registry 复用 Orchestrator.__init__ 已装配的实例）
     # Phase 27：注入 SkillDiagnoser（任务失败时诊断 skill 并发改进审批卡；
