@@ -99,6 +99,44 @@ def test_im_send_card_sdk_dict_header_passthrough():
     assert card["header"] == header  # 不再 str(dict) 渲染 repr
 
 
+# === Phase 39：update_card（PATCH 原地更新，进度卡 v2） ===
+
+
+def _im_sdk_with_patch(patch_success: bool = True, code: int = 0, msg: str = "ok"):
+    """mock sdk client：im.v1.message.patch 返回指定结果。"""
+    sdk = _im_sdk()
+    sdk.im.v1.message.patch.return_value = SimpleNamespace(
+        success=lambda: patch_success, code=code, msg=msg)
+    return sdk
+
+
+def test_im_update_card_sdk_patches_message():
+    """SDK 路径：PATCH 指定 message_id，content 为归一化卡片 JSON。"""
+    sdk = _im_sdk_with_patch()
+    adapter = IMAdapter(cli=MagicMock(), sdk_client=sdk)
+    adapter.update_card("om_progress", {"header": "代码任务进行中 · step 3",
+                                        "elements": []})
+    req = sdk.im.v1.message.patch.call_args.args[0]
+    assert req.message_id == "om_progress"
+    card = json.loads(req.request_body.content)
+    assert card["header"]["title"]["content"] == "代码任务进行中 · step 3"
+    assert card["config"]["wide_screen_mode"] is True
+
+
+def test_im_update_card_sdk_failure_raises():
+    sdk = _im_sdk_with_patch(patch_success=False, code=230002, msg="msg gone")
+    adapter = IMAdapter(cli=MagicMock(), sdk_client=sdk)
+    with pytest.raises(LarkCLIError, match="230002"):
+        adapter.update_card("om_x", {"header": "t", "elements": []})
+
+
+def test_im_update_card_cli_path_not_supported():
+    """CLI 路径不支持原地更新：抛 NotImplementedError（调用方回退 v1）。"""
+    adapter = IMAdapter(cli=MagicMock())
+    with pytest.raises(NotImplementedError):
+        adapter.update_card("om_x", {"header": "t", "elements": []})
+
+
 # === DocAdapter SDK 路径 ===
 
 def test_doc_append_plain_text_sdk_returns_block_id():

@@ -4,7 +4,9 @@ spec 2026-09-03-phase26-code-agent-design §2/§6：
 - handle 受理即回，线程跑 run_sync（AgentLoop 全链）
 - 工具面三层：CodeTools 原语 + skills/ 热加载 L2 工具 + registry 白名单（sc_*）
 - L2 审批发卡（value 内嵌 owner，回调 code_approval 分支决策，不落库）
-- 过程反馈 v1：on_step 节流文本（卡片更新留 v2——IMAdapter 无 update_card）
+- 过程反馈 v2（Phase 39）：受理发进度卡，on_step 节流原地刷新
+  （IMAdapter.update_card / PATCH message），终态定格；发卡失败或无
+  message_id（CLI 路径/老部署）自动回退 v1 节流文本，主流程绝不受影响。
 """
 from __future__ import annotations
 
@@ -12,7 +14,9 @@ import json
 import logging
 import shutil
 import threading
+import time
 import zlib
+from collections import deque
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Callable
@@ -73,6 +77,142 @@ class _ProgressReporter:
             self.im.reply(self.chat_id, text)
         except Exception:  # noqa: BLE001
             logger.exception("progress reply failed")
+
+    def finish(self, result: LoopResult) -> None:
+        """v1 无终态动作（接口与 _ProgressCard 对齐，终态由结果文本承担）。"""
+
+    def finish_error(self) -> None:
+        """v1 无终态动作（接口与 _ProgressCard 对齐）。"""
+
+
+_TASK_PREVIEW_CAP = 120     # 进度卡任务描述预览长度
+_FINAL_PREVIEW_CAP = 300    # 终态卡最终答复预览长度
+_EVENT_KEEP = 5             # 卡面保留的最近事件条数
+
+
+def _fmt_elapsed(sec: float) -> str:
+    """耗时人性化：90 秒内显示秒，否则分。"""
+    return f"{sec:.0f}s" if sec < 90 else f"{sec / 60:.1f}min"
+
+
+class _ProgressCard:
+    """on_step 进度卡 v2：受理发一张卡，节流原地刷新，终态定格。
+
+    节流双条件：每 every 个工具事件且距上次刷新 ≥ min_interval_sec（PATCH
+    限频护栏）；关键事件（tools_disabled/compressed）即时刷新（仍受频率
+    护栏约束）。update_card 任何失败 → broken 停止后续刷新（卡面停在最后
+    状态，终态结果仍以文本兜底回复），主流程绝不受影响。
+    """
+
+    def __init__(self, im, chat_id: str, task_text: str,
+                 every: int = 3, min_interval_sec: float = 2.0,
+                 now=time.monotonic) -> None:
+        self.im = im
+        self.chat_id = chat_id
+        self.task_text = task_text
+        self.every = every
+        self.min_interval = min_interval_sec
+        self._now = now  # 时间注入（测试可控，同 IntentGateService 惯例）
+        self._msg_id = ""
+        self._t0 = 0.0
+        self._last = 0.0
+        self._n = 0
+        self._step = 0
+        self._events: deque[str] = deque(maxlen=_EVENT_KEEP)
+        self._broken = False
+
+    def start(self) -> bool:
+        """发出初始进度卡；成功且拿到 message_id → True（走卡片路径）。"""
+        self._t0 = self._now()
+        try:
+            self._msg_id = self.im.send_card(self.chat_id, self._render(0))
+        except Exception:  # noqa: BLE001 —— 发卡失败回退 v1 文本节流
+            logger.exception("progress card send failed (fallback v1)")
+            return False
+        return bool(self._msg_id)
+
+    def __call__(self, step: int, event: dict) -> None:
+        if self._broken or not self._msg_id:
+            return
+        kind = event.get("event")
+        if kind == "tool":
+            self._n += 1
+            mark = "✓" if event.get("ok") else "✗"
+            self._events.append(f"{mark} {event.get('name')}")
+            if self._n % self.every != 0:
+                return
+        elif kind == "tools_disabled":
+            self._events.append("⚠ 工具连续失败已临时禁用")
+        elif kind == "compressed":
+            self._events.append("⚠ 上下文已压缩")
+        else:
+            return
+        self._step = step
+        now = self._now()
+        if now - self._last < self.min_interval:
+            return
+        self._update()
+
+    def finish(self, result: LoopResult) -> None:
+        """终态定格：完成/未完全成功 + steps + 耗时 + 最终答复预览。"""
+        if self._broken or not self._msg_id:
+            return
+        try:
+            self.im.update_card(self._msg_id, self._render(self._step,
+                                                           result=result))
+        except Exception:  # noqa: BLE001
+            logger.exception("progress card finish update failed (ignored)")
+
+    def finish_error(self) -> None:
+        """异常终止定格（AgentLoop 崩溃路径）。"""
+        if self._broken or not self._msg_id:
+            return
+        try:
+            self.im.update_card(self._msg_id, self._render(
+                self._step, error="任务异常终止，详见服务端日志"))
+        except Exception:  # noqa: BLE001
+            logger.exception("progress card error update failed (ignored)")
+
+    def _update(self) -> None:
+        try:
+            self.im.update_card(self._msg_id, self._render(self._step))
+            self._last = self._now()
+        except Exception:  # noqa: BLE001 —— 停更保主流程（卡面停最后状态）
+            logger.exception("progress card update failed (stop updating)")
+            self._broken = True
+
+    def _render(self, step: int, result: LoopResult | None = None,
+                error: str = "") -> dict:
+        """卡面渲染：进行中（任务预览 + 最近事件 + 耗时）/ 终态两形态。"""
+        preview = self.task_text[:_TASK_PREVIEW_CAP] + (
+            "…" if len(self.task_text) > _TASK_PREVIEW_CAP else "")
+        if result is None and not error:
+            lines = [f"**任务**：{preview}", ""]
+            if self._events:
+                lines.append("**最近事件**：")
+                lines += [f"- {e}" for e in self._events]
+                lines.append("")
+            lines.append(f"⏱ 已运行 {_fmt_elapsed(self._now() - self._t0)}"
+                         f" · step {step}")
+            return {"header": f"代码任务进行中 · step {step}",
+                    "elements": [{"tag": "div", "text": {
+                        "tag": "lark_md", "content": "\n".join(lines)}}]}
+        if error:
+            return {"header": "代码任务异常终止",
+                    "elements": [{"tag": "div", "text": {
+                        "tag": "lark_md", "content":
+                            f"**任务**：{preview}\n\n❌ {error}"}}]}
+        ok = result.status == "final"
+        final_preview = (result.final_text or "")[:_FINAL_PREVIEW_CAP]
+        lines = [f"**任务**：{preview}", "",
+                 f"{'✅ 完成' if ok else '⚠ 结束（未完全成功）'} · "
+                 f"{result.steps} steps · 耗时 "
+                 f"{_fmt_elapsed(self._now() - self._t0)}"]
+        if final_preview:
+            lines += ["", f"> {final_preview}"]
+        return {"header": "代码任务已完成" if ok else "代码任务结束",
+                "elements": [{"tag": "div", "text": {
+                    "tag": "lark_md", "content": "\n".join(lines)}}]}
 
 
 def _toolresult_to_dict(tr: ToolResult) -> dict:
@@ -228,7 +368,7 @@ class CodingRunner:
         knowledge = loader.build_system_knowledge(task_text, llm=self.llm)
         system = _SYSTEM_PROMPT + (f"\n\n{knowledge}" if knowledge else "")
 
-        reporter = _ProgressReporter(self.im, incoming.chat_id)
+        reporter = self._make_reporter(incoming, task_text)
         loop = AgentLoop(self.llm, tools_schema, dispatch,
                          max_steps=self.max_steps, token_budget=self.token_budget,
                          timeout_sec=self.timeout_sec, risk_map=risk_map,
@@ -237,8 +377,10 @@ class CodingRunner:
             result = loop.run(system, task_text)
         except Exception:  # noqa: BLE001 —— sync 全链兜底（线程体只做日志）
             logger.exception("agent loop crashed")
+            reporter.finish_error()
             self.im.reply(incoming.chat_id, "[错误] coding 任务异常终止，详见服务端日志")
             return {"status": "error", "steps": 0, "final_text": ""}
+        reporter.finish(result)
         self.im.reply(incoming.chat_id, _render_result(result))
         # Phase 27：任务失败时自动诊断 skill 并发出改进审批卡（纯增量，失败静默）
         self._maybe_diagnose_skill(incoming, result, task_text)
@@ -272,6 +414,14 @@ class CodingRunner:
             logger.exception("skill diagnose/card failed (ignored)")
 
     # ------------------------------------------------------------------ #
+    def _make_reporter(self, incoming, task_text: str):
+        """进度反馈器工厂（Phase 39）：优先 v2 进度卡；发卡失败或无
+        message_id（CLI 路径/老部署）自动回退 v1 节流文本。"""
+        card = _ProgressCard(self.im, incoming.chat_id, task_text)
+        if card.start():
+            return card
+        return _ProgressReporter(self.im, incoming.chat_id)
+
     def _session_id(self, chat_id: str) -> str:
         """同 chat 稳定会话 ID（工作区跨任务持久）。"""
         return f"code_{zlib.crc32(chat_id.encode('utf-8')):08x}"

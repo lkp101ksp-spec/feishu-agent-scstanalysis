@@ -6,7 +6,8 @@
 """
 import json
 
-from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+from lark_oapi.api.im.v1 import (CreateMessageRequest, CreateMessageRequestBody,
+                                 PatchMessageRequest, PatchMessageRequestBody)
 
 from feishu_adapter.client import LarkCLI, LarkCLIError
 
@@ -79,20 +80,13 @@ class IMAdapter:
                          json.dumps({"image_key": image_key}))
 
     def send_card(self, chat_id: str, card: dict) -> str:
-        """发送交互卡片。card 为简化结构 {header, elements}，此处补齐为合法卡片 JSON。
+        """发送交互卡片。card 为简化结构 {header, elements}，返回新消息 ID。
 
         header 兼容两种形态：字符串标题（旧调用方）与完整 dict
         （{"title": {...}}，/model、/code 审批卡）。dict 形态直接透传——
         此前 str(dict) 会把 Python repr 渲染进卡片标题（ut-7 真机发现）。
         """
-        header = card.get("header", "")
-        if not isinstance(header, dict):
-            header = {"title": {"tag": "plain_text", "content": str(header)}}
-        card_json = json.dumps({
-            "config": card.get("config") or {"wide_screen_mode": True},
-            "header": header,
-            "elements": card.get("elements", []),
-        }, ensure_ascii=False)
+        card_json = self._card_json(card)
         if self.sdk_client is not None:
             return self._sdk_send(chat_id, "chat_id", "interactive", card_json)
         result = self.cli.run([
@@ -103,6 +97,39 @@ class IMAdapter:
             "--content", card_json,
         ])
         return result.get("message_id", "")
+
+    def update_card(self, message_id: str, card: dict) -> None:
+        """原地更新已发出的交互卡片（PATCH im/v1/messages/:message_id）。
+
+        Phase 39：/code 进度卡 v2 原地刷新用（受理发一卡 → 节流刷新 →
+        终态定格，不再刷节流文本）。仅 SDK 路径；CLI 抛
+        NotImplementedError（调用方据此回退 v1 文本节流）。
+        """
+        if self.sdk_client is None:
+            raise NotImplementedError("update_card requires sdk_client")
+        body = (PatchMessageRequestBody.builder()
+                .content(self._card_json(card))
+                .build())
+        request = (PatchMessageRequest.builder()
+                   .message_id(message_id)
+                   .request_body(body)
+                   .build())
+        resp = self.sdk_client.im.v1.message.patch(request)
+        if not resp.success():
+            raise LarkCLIError(
+                f"im patch failed: code={resp.code} msg={resp.msg}")
+
+    @staticmethod
+    def _card_json(card: dict) -> str:
+        """简化卡片结构 → 合法卡片 JSON 串（header 字符串/dict 双形态归一）。"""
+        header = card.get("header", "")
+        if not isinstance(header, dict):
+            header = {"title": {"tag": "plain_text", "content": str(header)}}
+        return json.dumps({
+            "config": card.get("config") or {"wide_screen_mode": True},
+            "header": header,
+            "elements": card.get("elements", []),
+        }, ensure_ascii=False)
 
     @staticmethod
     def _ensure_text_json(content: str) -> str:

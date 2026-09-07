@@ -107,7 +107,9 @@ def test_e2e_code_primitives_and_final(e2e):
     assert (e2e["runner"].ws.session_dir(sid) / "calc.py").exists()
     texts = [str(c.args[1]) for c in e2e["im"].reply.call_args_list]
     assert any("42" in t or "计算结果" in t for t in texts)
-    assert not e2e["im"].send_card.called          # 全程无审批卡
+    # 全程无审批卡（Phase 39 起进度卡走 send_card，按 action 区分审批卡）
+    for c in e2e["im"].send_card.call_args_list:
+        assert "code_approval" not in json.dumps(c.args[1], ensure_ascii=False)
 
 
 def test_e2e_skill_tool_with_approval(e2e):
@@ -220,10 +222,16 @@ def test_e2e_failed_skill_triggers_improve_card_and_apply(e2e):
     # 3 连败 → 工具禁用 → 仍调工具 → no_tools；诊断发出 skill_improve 卡
     assert r["status"] == "no_tools"
     cards = [c.args[1] for c in e2e["im"].send_card.call_args_list]
-    assert len(cards) == 1
-    value = cards[0]["elements"][-1]["actions"][0]["value"]
+    # Phase 39 起首张为进度卡（无 actions），按 action 过滤出改进卡
+    improve_cards = [
+        c for c in cards
+        if c["elements"][-1].get("actions")
+        and c["elements"][-1]["actions"][0]["value"].get("action") == "skill_improve"
+    ]
+    assert len(improve_cards) == 1
+    value = improve_cards[0]["elements"][-1]["actions"][0]["value"]
     assert value["action"] == "skill_improve"
-    body = cards[0]["elements"][0]["text"]["content"]
+    body = improve_cards[0]["elements"][0]["text"]["content"]
     assert "reportgen" in body and "SKILL.md" in body
 
     # 模拟用户在飞书点「批准写回」：走真实 gateway 卡片管线
@@ -267,8 +275,14 @@ def test_e2e_final_after_tools_disabled_still_diagnoses(e2e):
 
     assert r["status"] == "final"
     cards = [c.args[1] for c in e2e["im"].send_card.call_args_list]
-    assert len(cards) == 1
-    value = cards[0]["elements"][-1]["actions"][0]["value"]
+    # Phase 39 起首张为进度卡（无 actions），按 action 过滤出改进卡
+    improve_cards = [
+        c for c in cards
+        if c["elements"][-1].get("actions")
+        and c["elements"][-1]["actions"][0]["value"].get("action") == "skill_improve"
+    ]
+    assert len(improve_cards) == 1
+    value = improve_cards[0]["elements"][-1]["actions"][0]["value"]
     assert value["action"] == "skill_improve"
 
 
@@ -321,7 +335,11 @@ def test_e2e_crashed_skill_subprocess_triggers_diagnose(e2e):
         while not stop.is_set():
             calls = e2e["im"].send_card.call_args_list
             for c in calls[seen:]:
-                value = c.args[1]["elements"][-1]["actions"][0]["value"]
+                # Phase 39：跳过进度卡（无 actions），只处理审批卡
+                last_el = c.args[1]["elements"][-1]
+                if not last_el.get("actions"):
+                    continue
+                value = last_el["actions"][0]["value"]
                 if value.get("action") == "code_approval":
                     e2e["broker"].decide(value["code_approval_id"], "approve",
                                          operator=value["owner"])
@@ -344,7 +362,8 @@ def test_e2e_crashed_skill_subprocess_triggers_diagnose(e2e):
     cards = [c.args[1] for c in e2e["im"].send_card.call_args_list]
     improve_cards = [
         c for c in cards
-        if c["elements"][-1]["actions"][0]["value"].get("action") == "skill_improve"
+        if c["elements"][-1].get("actions")
+        and c["elements"][-1]["actions"][0]["value"].get("action") == "skill_improve"
     ]
     assert len(improve_cards) == 1
     value = improve_cards[0]["elements"][-1]["actions"][0]["value"]
@@ -374,7 +393,12 @@ def test_e2e_final_status_skips_diagnose(e2e):
     r = runner.run_sync(FakeIncoming("/code 聊一句"), "聊一句")
     assert r["status"] == "final"
     runner.diagnoser.diagnose.assert_not_called()
-    assert not e2e["im"].send_card.called
+    # Phase 39：进度卡照常发，只断言无 skill_improve 卡
+    improve = [c for c in e2e["im"].send_card.call_args_list
+               if c.args[1]["elements"][-1].get("actions")
+               and c.args[1]["elements"][-1]["actions"][0]["value"].get(
+                   "action") == "skill_improve"]
+    assert not improve
 
 
 def test_e2e_diagnose_exception_does_not_break_run(e2e):
@@ -387,4 +411,9 @@ def test_e2e_diagnose_exception_does_not_break_run(e2e):
 
     r = runner.run_sync(FakeIncoming("/code 生成报表"), "生成报表")
     assert r["status"] == "no_tools"     # 主流程照常返回
-    assert not e2e["im"].send_card.called   # 诊断失败 → 无 skill_improve 卡
+    # 诊断失败 → 无 skill_improve 卡（Phase 39：进度卡照常发，按 action 区分）
+    improve = [c for c in e2e["im"].send_card.call_args_list
+               if c.args[1]["elements"][-1].get("actions")
+               and c.args[1]["elements"][-1]["actions"][0]["value"].get(
+                   "action") == "skill_improve"]
+    assert not improve
