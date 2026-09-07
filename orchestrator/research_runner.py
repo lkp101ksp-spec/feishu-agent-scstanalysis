@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from orchestrator.planner.scheduler import Scheduler
@@ -27,6 +28,185 @@ _USAGE_MSG = (
     "「/research」用法：/research <任务描述>，"
     "例如：/research 总结当前绑定文档的核心内容并给出三条研究建议"
 )
+
+_TASK_PREVIEW_CAP = 120
+_RECENT_KEEP = 5
+
+
+def _fmt_elapsed(sec: float) -> str:
+    """秒 → 人类可读耗时（12s / 5m08s / 1h02m）。"""
+    sec = max(int(sec), 0)
+    if sec < 60:
+        return f"{sec}s"
+    if sec < 3600:
+        return f"{sec // 60}m{sec % 60:02d}s"
+    return f"{sec // 3600}h{sec % 3600 // 60:02d}m"
+
+
+class _ResearchProgressCard:
+    """/research 进度卡（Phase 41）：受理即发卡，原地刷新，终态定格。
+
+    与 coding _ProgressCard 同构（节流/熔断/禁用回退），事件源为
+    plan/scheduler 节点状态快照而非工具事件流：
+    - start()：发「规划中」卡；拿不到 message_id 或发卡异常 → _disabled
+      （全程无卡，任务行为与旧版完全一致）；
+    - plan_done(plan)：转执行阶段，立即刷新一次；
+    - tick(snap)：观察线程周期喂快照；终态节点数变化立即刷新，否则
+      min_interval 节流（防飞书 PATCH 限流）；
+    - finish/finish_error：终态定格（完成/异常两类卡面）；
+    - 任何 PATCH 失败 → _broken 熔断不再更新（绝不影响任务本身）。
+    """
+
+    def __init__(self, im, chat_id: str, task_text: str, *,
+                 min_interval: float = 8.0, now=time.monotonic) -> None:
+        self.im = im
+        self.chat_id = chat_id
+        self.task_text = task_text
+        self.min_interval = min_interval
+        self._now = now
+        self._msg_id: str = ""
+        self._phase = "planning"
+        self._total = 0
+        self._last_push = 0.0
+        self._last_terminal = -1
+        self._t0 = 0.0
+        self._disabled = True   # start() 成功才启用（未 start 的卡全 no-op）
+        self._broken = False
+        self._finished = False
+
+    # === 生命周期 ===
+
+    def start(self) -> bool:
+        """发初始「规划中」卡；成功且拿到 message_id → True。"""
+        self._t0 = self._now()
+        try:
+            self._msg_id = self.im.send_card(
+                self.chat_id, self._render_planning())
+        except Exception:  # noqa: BLE001 —— 发卡失败保持禁用
+            logger.exception("research progress card send failed (disabled)")
+            return False
+        if not self._msg_id:
+            return False
+        self._disabled = False
+        return True
+
+    def plan_done(self, plan) -> None:
+        """规划完成 → 执行阶段（记录节点总数），立即刷新一次。"""
+        self._phase = "running"
+        self._total = len(plan.nodes)
+        self._push(self._render_running(
+            {"counts": {}, "running": [], "done": [], "total": self._total}))
+
+    def tick(self, snap: dict) -> None:
+        """观察线程喂快照：终态数变化立即刷新，否则按 min_interval 节流。"""
+        if self._disabled or self._broken or self._finished:
+            return
+        c = snap["counts"]
+        terminal = (c.get("success", 0) + c.get("failed", 0)
+                    + c.get("skipped", 0) + c.get("denied", 0))
+        now = self._now()
+        if (terminal != self._last_terminal
+                or now - self._last_push >= self.min_interval):
+            self._last_terminal = terminal
+            self._push(self._render_running(snap))
+
+    def finish(self, status: str, node_states: dict) -> None:
+        """终态定格：完成卡（状态 + 节点统计 + 耗时）。"""
+        self._finished = True
+        counts: dict[str, int] = {}
+        for v in node_states.values():
+            counts[v] = counts.get(v, 0) + 1
+        stat = " ".join(
+            f"{label}{counts.get(k, 0)}"
+            for k, label in (("success", "✓"), ("failed", "✗"),
+                             ("denied", "⊘"), ("skipped", "–")))
+        card = {
+            "header": "研究任务完成",
+            "elements": [
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": (
+                    f"**任务**：{self._task_short()}\n"
+                    f"**状态**：{status} · {stat}\n"
+                    f"**耗时**：{_fmt_elapsed(self._now() - self._t0)}"
+                )}},
+            ],
+        }
+        self._push(card)
+
+    def finish_error(self, reason: str) -> None:
+        """终态定格：异常/规划失败/超时卡。"""
+        self._finished = True
+        card = {
+            "header": "研究任务异常终止",
+            "elements": [
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": (
+                    f"**任务**：{self._task_short()}\n"
+                    f"**原因**：{reason[:200]}\n"
+                    f"**耗时**：{_fmt_elapsed(self._now() - self._t0)}"
+                )}},
+            ],
+        }
+        self._push(card)
+
+    # === 内部 ===
+
+    def _push(self, card_json: dict) -> None:
+        if self._disabled or self._broken:
+            return
+        try:
+            self.im.update_card(self._msg_id, card_json)
+            self._last_push = self._now()
+        except Exception:  # noqa: BLE001 —— 更新失败熔断
+            logger.exception("research progress card update failed (broken)")
+            self._broken = True
+
+    def _task_short(self) -> str:
+        t = self.task_text
+        return t[:_TASK_PREVIEW_CAP] + ("…" if len(t) > _TASK_PREVIEW_CAP else "")
+
+    def _render_planning(self) -> dict:
+        return {
+            "header": "研究任务执行中",
+            "elements": [
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md", "content": (
+                    f"**任务**：{self._task_short()}\n"
+                    "**阶段**：规划中（LLM 生成执行计划）…\n"
+                    f"**已用时**：{_fmt_elapsed(self._now() - self._t0)}"
+                )}},
+            ],
+        }
+
+    def _render_running(self, snap: dict) -> dict:
+        c = snap["counts"]
+        terminal = (c.get("success", 0) + c.get("failed", 0)
+                    + c.get("skipped", 0) + c.get("denied", 0))
+        total = snap.get("total") or self._total
+        lines = [
+            f"**任务**：{self._task_short()}",
+            f"**阶段**：执行中 · 节点 {terminal}/{total}"
+            f"（✓{c.get('success', 0)} ✗{c.get('failed', 0)}"
+            f" ⊘{c.get('denied', 0)} –{c.get('skipped', 0)}）",
+        ]
+        if snap["running"]:
+            lines.append("**运行中**：")
+            lines.extend(
+                f"- {label}（{_fmt_elapsed(el)}）"
+                for label, el in snap["running"][:4])
+        if snap["done"]:
+            lines.append("**最近完成**：")
+            lines.extend(
+                f"- {mark} {label}" for mark, label in snap["done"][-_RECENT_KEEP:])
+        lines.append(f"**已用时**：{_fmt_elapsed(self._now() - self._t0)}")
+        return {
+            "header": "研究任务执行中",
+            "elements": [
+                {"tag": "hr"},
+                {"tag": "div", "text": {"tag": "lark_md",
+                                        "content": "\n".join(lines)}},
+            ],
+        }
 
 
 class ResearchRunner:
@@ -68,23 +248,30 @@ class ResearchRunner:
             return {"status": "research_engine_unavailable"}
 
         self.im.reply(incoming.chat_id, _ACCEPT_MSG)
+        # Phase 41：受理即建进度卡（「规划中」卡面）；发卡失败/无 message_id
+        # 自动禁用，任务走旧版纯文本路径
+        card = _ResearchProgressCard(self.im, incoming.chat_id, task_text)
+        card.start()
         t = threading.Thread(
-            target=self._run, args=(incoming, task_text), daemon=True
+            target=self._run, args=(incoming, task_text, card), daemon=True
         )
         t.start()
         return {"status": "research_accepted", "task_text": task_text}
 
     # === 后台执行 ===
 
-    def _run(self, incoming: IncomingMessage, task_text: str) -> None:
+    def _run(self, incoming: IncomingMessage, task_text: str,
+             card: "_ResearchProgressCard | None" = None) -> None:
         """后台线程主体：独立 session 落库，plan→schedule→render→写文档→回复。"""
+        card = card or _ResearchProgressCard(self.im, incoming.chat_id, task_text)
         session = self.session_factory()
         try:
-            out = self._execute(incoming, task_text, session)
+            out = self._execute(incoming, task_text, session, card)
             session.commit()
             logger.info("research task done: %s", out.get("status"))
         except Exception:
             logger.exception("research task failed")
+            card.finish_error("执行异常（详见服务端日志）")
             try:
                 session.rollback()
             except Exception:
@@ -99,8 +286,12 @@ class ResearchRunner:
             except Exception:
                 pass
 
-    def _execute(self, incoming: IncomingMessage, task_text: str, session) -> dict:
+    def _execute(self, incoming: IncomingMessage, task_text: str, session,
+                 card: "_ResearchProgressCard | None" = None) -> dict:
         """主链路：session/task 落库 → plan → schedule → 渲染 → 写文档 → 回复。"""
+        # Phase 41：card 缺省时给禁用卡（下游调用点零判断）
+        if card is None:
+            card = _ResearchProgressCard(self.im, incoming.chat_id, task_text)
         from orchestrator.session_service import SessionService
         from orchestrator.task_service import TaskService
         from persistence.repositories.audit_repo import AuditRepo
@@ -191,6 +382,7 @@ class ResearchRunner:
             task_service.mark_failed(
                 task_id=task_id, error_code="PLAN_FAILED", error_message=str(e)
             )
+            card.finish_error(f"规划失败：{e}")
             self.im.reply(
                 incoming.chat_id,
                 f"[错误] 研究任务规划失败：{e}\n"
@@ -201,6 +393,7 @@ class ResearchRunner:
         # plan 落日志：真机排障需要看到模型到底规划了什么（输出字段引用
         # 是否正确只能靠它判断，2026-08-30）
         logger.info("research plan: %s", plan.model_dump_json())
+        card.plan_done(plan)  # Phase 41：进度卡转「执行中」
 
         # 2. 执行（整体 wall-clock 超时保护）
         # T3：condition_llm 注入——branch/while 条件判定器（orch.llm 即 LLMRouter）
@@ -224,6 +417,12 @@ class ResearchRunner:
             l2_gate=l2_gate,
         )
         loop = asyncio.new_event_loop()
+        # Phase 41：节点状态观察线程（每 2s 快照喂进度卡；卡内部节流/熔断）
+        watch_stop = threading.Event()
+        watcher = threading.Thread(
+            target=self._watch_nodes, args=(scheduler, card, watch_stop),
+            daemon=True)
+        watcher.start()
         # Phase 20/21：plan 含 sc_*/st_* 节点时放宽 wall-clock（单细胞/
         # 空间转录组分析单节点可达数百秒；纯检索任务维持原超时不受影响）
         wall_timeout = self.timeout_sec
@@ -245,6 +444,7 @@ class ResearchRunner:
                 task_id=task_id, error_code="RESEARCH_TIMEOUT",
                 error_message=f"exceeded {wall_timeout}s",
             )
+            card.finish_error(f"超过 {wall_timeout}s 超时终止")
             self.im.reply(
                 incoming.chat_id,
                 f"[超时] 研究任务超过 {wall_timeout}s 未完成，已终止。"
@@ -252,6 +452,8 @@ class ResearchRunner:
             )
             return {"status": "research_timeout", "task_id": task_id}
         finally:
+            watch_stop.set()
+            watcher.join(timeout=2)
             loop.close()
 
         # 2.5 Phase 17：write_doc 节点审批记录收尾（按节点终态补状态机）
@@ -347,6 +549,10 @@ class ResearchRunner:
         # 5.5 Phase 20：sc_* 节点产图回传（umap/dotplot/violin → IM 图片消息）
         images_sent = self._send_sc_images(incoming, plan, scheduler)
 
+        # Phase 41：终态定格（完成卡）
+        card.finish(result.status,
+                    {k: v.value for k, v in result.node_states.items()})
+
         # 6. task 收尾
         task_service.mark_success(
             task_id=task_id, reply_text="\n".join(reply_lines[:20])
@@ -359,6 +565,53 @@ class ResearchRunner:
             "node_states": {k: v.value for k, v in result.node_states.items()},
             "doc_written": doc_written,
             "images_sent": images_sent,
+        }
+
+    # === Phase 41：节点状态观察线程（进度卡数据源） ===
+
+    def _watch_nodes(self, scheduler: Scheduler, card: _ResearchProgressCard,
+                     stop: threading.Event) -> None:
+        """每 2s 拍 scheduler 节点快照喂进度卡（卡内部节流/熔断/禁用）。
+
+        观察失败只记日志——绝不影响研究任务本身。
+        """
+        while not stop.wait(2.0):
+            try:
+                card.tick(self._snapshot_nodes(scheduler))
+            except Exception:  # noqa: BLE001
+                logger.exception("research progress watch tick failed")
+
+    @staticmethod
+    def _snapshot_nodes(scheduler: Scheduler) -> dict:
+        """scheduler 节点状态快照：分类计数 + 运行中（含已耗时）+ 完成序列。
+
+        观察线程与单测共用；total 动态取 len(plan.nodes)（控制流展开
+        会追加节点）。done 按 handles 插入序（≈提交序），卡片自取尾部。
+        """
+        tool_names = {
+            n.node_id: (n.tool_name or n.kind) for n in scheduler.plan.nodes
+        }
+        counts: dict[str, int] = {}
+        running: list[tuple[str, float]] = []
+        done: list[tuple[str, str]] = []
+        now = datetime.now(UTC)
+        for nid, h in list(scheduler._handles.items()):
+            label = f"{nid} {tool_names.get(nid, '')}".strip()
+            state = h.state
+            if state == ExecutionState.RUNNING:
+                counts["running"] = counts.get("running", 0) + 1
+                started = h.started_at
+                el = (now - started).total_seconds() if started else 0.0
+                running.append((label, max(el, 0.0)))
+                continue
+            key = state.value  # success/failed/skipped/denied
+            counts[key] = counts.get(key, 0) + 1
+            mark = {"success": "✓", "failed": "✗",
+                    "denied": "⊘", "skipped": "–"}.get(key, "?")
+            done.append((mark, label))
+        return {
+            "counts": counts, "running": running, "done": done,
+            "total": len(scheduler.plan.nodes),
         }
 
     # === Phase 20：sc_* 分析图 IM 回传 ===

@@ -260,13 +260,22 @@ def test_outputs_digest_later_nodes_not_starved():
 
 # === Phase 14：card_confirm 卡片确认写回 ===
 
+def _approval_cards(im) -> list:
+    """所有审批卡（末元素含 actions）；Phase 41 进度卡无 actions 被排除。"""
+    return [c.args[1] for c in im.send_card.call_args_list
+            if c.args[1]["elements"][-1].get("actions")]
+
+
 def _wait_card_sent(im, timeout: float = 10.0) -> dict:
-    """轮询等待审批卡发出，返回首个按钮的 value（含 doc_write_id/decision）。"""
+    """轮询等待审批卡发出，返回首个按钮的 value（含 doc_write_id/decision）。
+
+    Phase 41：进度卡先发（无 actions），须过滤。
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if im.send_card.call_count >= 1:
-            card = im.send_card.call_args.args[1]
-            return card["elements"][-1]["actions"][0]["value"]
+        cards = _approval_cards(im)
+        if cards:
+            return cards[0]["elements"][-1]["actions"][0]["value"]
         time.sleep(0.02)
     raise AssertionError("approval card not sent in time")
 
@@ -316,8 +325,8 @@ def test_card_confirm_deny_skips_write(db):
     runner.handle(_incoming("/research 总结要点"))
 
     value = _wait_card_sent(orch.im)
-    # 点「跳过」按钮（actions[1]，decision=deny）
-    deny_value = orch.im.send_card.call_args.args[1]["elements"][-1]["actions"][1]["value"]
+    # 点「跳过」按钮（actions[1]，decision=deny）；Phase 41：过滤审批卡
+    deny_value = _approval_cards(orch.im)[-1]["elements"][-1]["actions"][1]["value"]
     assert deny_value["decision"] == "deny"
     assert broker.decide(value["doc_write_id"], "deny", "ou_r") is True
 
@@ -354,7 +363,7 @@ def test_card_confirm_approval_card_structured_content(db):
     runner.handle(_incoming("/research 总结要点"))
 
     assert _wait_reply_count(orch.im, 2)
-    card = orch.im.send_card.call_args.args[1]
+    card = _approval_cards(orch.im)[-1]  # Phase 41：跳过进度卡
     # 卡片结构：hr + div(lark_md) + hr + action(两按钮)
     assert card["elements"][-1]["tag"] == "action"
     assert len(card["elements"][-1]["actions"]) == 2
@@ -385,7 +394,10 @@ def test_card_confirm_without_broker_falls_back_to_direct_write(db):
 
 
 def test_bind_scope_mode_unchanged_regression(db):
-    """bind_scope 模式：无卡片，直写（Phase 13 行为回归基线）。"""
+    """bind_scope 模式：无审批卡，直写（Phase 13 行为回归基线）。
+
+    Phase 41：进度卡（无 actions）正常发送，本断言只锁定无审批卡。
+    """
     from orchestrator.approval_broker import ApprovalBroker
 
     orch = _orch(db, bound_doc="doccnR1", writeback="bind_scope")
@@ -394,7 +406,7 @@ def test_bind_scope_mode_unchanged_regression(db):
     runner.handle(_incoming("/research 总结要点"))
 
     assert _wait_reply_count(orch.im, 2)
-    orch.im.send_card.assert_not_called()
+    assert not _approval_cards(orch.im)
 
 
 # === Phase 17：节点级 L2 审批（write_doc 开放规划） ===
@@ -513,8 +525,8 @@ def test_node_l2_wrong_doc_id_denied_without_card(db):
     runner.handle(_incoming("/research 把结论写入文档"))
 
     assert _wait_reply_count(orch.im, 2)
-    # 不发审批卡（仅受理语与结果回复两条 reply，零 send_card）
-    orch.im.send_card.assert_not_called()
+    # 不发审批卡（Phase 41：进度卡照常发，此处锁定零审批卡）
+    assert not _approval_cards(orch.im)
     assert orch.executor.calls == ["summarize_text"]
     final = orch.im.reply.call_args_list[1].args[1]
     assert "n2: denied" in final
@@ -683,6 +695,58 @@ def test_sc_plan_extends_wall_timeout(db, monkeypatch):
 
     assert _wait_reply_count(orch.im, 2)
     assert captured["timeout"] == 3600
+
+
+# === Phase 41：/research 进度卡（受理即发 + 原地刷新 + 终态定格） ===
+
+
+def test_progress_card_full_flow(db):
+    """受理即发「规划中」卡；完成后 PATCH 定格「研究任务完成」。"""
+    orch = _orch(db)
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    # 第一张卡即进度卡（无 actions），header 为「研究任务执行中」
+    first_card = orch.im.send_card.call_args_list[0].args[1]
+    assert first_card["header"] == "研究任务执行中"
+    assert not first_card["elements"][-1].get("actions")
+    assert "规划中" in first_card["elements"][-1]["text"]["content"]
+
+    assert _wait_reply_count(orch.im, 2)
+    # plan_done 立即刷新 + finish 定格 → 至少两次 PATCH
+    assert orch.im.update_card.call_count >= 2
+    final_card = orch.im.update_card.call_args_list[-1].args[1]
+    assert final_card["header"] == "研究任务完成"
+    body = final_card["elements"][-1]["text"]["content"]
+    assert "success" in body and "✓1" in body
+
+
+def test_progress_card_plan_failed_shows_error_card(db):
+    """规划失败：进度卡定格「异常终止」，原错误文本回复照常。"""
+    orch = _orch(db)
+    orch.planner.plan.side_effect = RuntimeError("LLM 超时")
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    final_card = orch.im.update_card.call_args_list[-1].args[1]
+    assert final_card["header"] == "研究任务异常终止"
+    assert "规划失败" in final_card["elements"][-1]["text"]["content"]
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "规划失败" in final
+
+
+def test_progress_card_disabled_when_no_message_id(db):
+    """发卡未得 message_id：全程无 PATCH，任务行为与旧版一致。"""
+    orch = _orch(db)
+    orch.im.send_card.return_value = ""  # 模拟 CLI 通道无 message_id
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    orch.im.update_card.assert_not_called()
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "执行完成" in final
 
 
 def test_non_sc_plan_keeps_default_timeout(db, monkeypatch):
