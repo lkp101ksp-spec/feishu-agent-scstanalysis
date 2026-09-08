@@ -72,3 +72,30 @@ def test_maybe_compress_above_freeze_raises():
     ]
     with pytest.raises(FreezeRequired):
         comp.maybe_compress(msgs)
+
+
+def test_summarize_only_calls_llm():
+    """freeze 前强制摘要：直接调 LLM，不做 ratio 判断。"""
+    llm = MagicMock()
+    llm.call.return_value = "摘要：讨论了单细胞质控"
+    comp = ContextCompressor(
+        llm_router=llm, session_repo=MagicMock(), audit_repo=MagicMock(),
+        token_budget=1000,
+    )
+    msgs = [ChatMessage(role="user", content="qc 怎么做"),
+            ChatMessage(role="assistant", content="先跑 sc_qc")]
+    out = comp.summarize_only(msgs)
+    assert out == "摘要：讨论了单细胞质控"
+    llm.call.assert_called_once()
+    assert llm.call.call_args.kwargs["role"] == "context_compressor"
+
+
+def test_summarize_only_empty_messages():
+    """空历史不调用 LLM，直接返回空串。"""
+    llm = MagicMock()
+    comp = ContextCompressor(
+        llm_router=llm, session_repo=MagicMock(), audit_repo=MagicMock(),
+        token_budget=1000,
+    )
+    assert comp.summarize_only([]) == ""
+    llm.call.assert_not_called()

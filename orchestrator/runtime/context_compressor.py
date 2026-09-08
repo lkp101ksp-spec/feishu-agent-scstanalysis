@@ -77,3 +77,16 @@ class ContextCompressor:
                 f"ratio after compress {new_ratio:.2f} >= freeze {self.freeze_trigger_ratio}"
             )
         return new_messages
+
+    def summarize_only(self, messages: list[ChatMessage]) -> str:
+        """不做 ratio 判断，直接把 messages 压缩成 500 字内摘要（freeze 前调用）。
+
+        空历史直接返回空串；LLM 异常向调用方传播（由 ChatMemory 降级处理）。
+        """
+        if not messages:
+            return ""
+        prompt = (
+            "将以下对话压缩到500 字以内：\n\n"
+            + "\n".join(f"[{m.role}] {m.content}" for m in messages)
+        )
+        return self.llm_router.call(role="context_compressor", prompt=prompt)
