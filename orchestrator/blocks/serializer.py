@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Union
+from typing import Any
 
 from orchestrator.blocks.schemas import (
     AnyBlock,
@@ -24,24 +24,19 @@ from orchestrator.blocks.schemas import (
     VideoBlock,
 )
 
-# schemas.AnyBlock 停留在 Phase 5 的 8 类；本模块实际支持 16 类（Phase 6 增量），
-# 纯注解别名，标注解析函数的真实返回范围
-FullBlock = Union[AnyBlock, EmbedBlock, DividerBlock, CalloutBlock,
-                  EquationBlock, MathBlock, MermaidBlock, VideoBlock, FileBlock]
-
 
 def blocks_to_json(blocks: list[AnyBlock]) -> str:
     """list[Block] → JSON 字符串。"""
     return json.dumps([b.model_dump() for b in blocks], ensure_ascii=False)
 
 
-def json_to_blocks(s: str) -> list[FullBlock]:
+def json_to_blocks(s: str) -> list[AnyBlock]:
     """JSON 字符串 → list[Block]。"""
     data = json.loads(s)
     return [_parse_block(b) for b in data]
 
 
-def parse_blocks(raw) -> list[FullBlock]:
+def parse_blocks(raw) -> list[AnyBlock]:
     """宽松解析 blocks 参数：JSON/Python repr 字符串、dict、list[dict] → list[Block]。
 
     planner 生成的工具 inputs 统一 str() 强转，经 scheduler 引用替换后
@@ -65,7 +60,7 @@ def parse_blocks(raw) -> list[FullBlock]:
     return [_parse_block(b if isinstance(b, dict) else dict(b)) for b in data]
 
 
-def _parse_block(d: dict[str, Any]) -> FullBlock:
+def _parse_block(d: dict[str, Any]) -> AnyBlock:
     t = d.get("type")
     match t:
         case "heading": return HeadingBlock(**d)

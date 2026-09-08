@@ -84,10 +84,6 @@ class ImageBlock(BaseModel):
         return self
 
 
-AnyBlock = Union[HeadingBlock, TextBlock, CodeBlock, QuoteBlock,
-                  QuoteContainerBlock, TableBlock, ListBlock, ImageBlock]
-
-
 # === Phase 6: 8 类增量 ===
 
 class EmbedBlock(BaseModel):
@@ -137,3 +133,11 @@ class FileBlock(BaseModel):
     file_token: str
     name: str
     size: int = 0
+
+
+# 全部块类型的判别联合（Phase 5 基础 8 类 + Phase 6 增量 8 类）；
+# 定义必须在所有 Block 类之后——Union 成员运行时求值
+AnyBlock = Union[HeadingBlock, TextBlock, CodeBlock, QuoteBlock,
+                 QuoteContainerBlock, TableBlock, ListBlock, ImageBlock,
+                 EmbedBlock, DividerBlock, CalloutBlock, EquationBlock,
+                 MathBlock, MermaidBlock, VideoBlock, FileBlock]

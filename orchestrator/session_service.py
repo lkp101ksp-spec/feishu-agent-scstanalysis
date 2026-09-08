@@ -98,10 +98,8 @@ class SessionService:
         origin = self.repo.get(session_id)
         # freeze 目标 session 必然存在（调用方从活跃 session 触发）；None 属编程错误
         assert origin is not None
-        # 1. 旧 session 标 archived
-        # 跨文件依赖：archived_at/status 需 SessionRepo.upsert 扩展支持
-        # （SessionRow 已有对应列；repo 文件由另一代理负责，此处暂豁免）
-        self.repo.upsert(  # type: ignore[call-arg]
+        # 1. 旧 session 标 archived（upsert 部分更新：bind 字段未传则保留原值）
+        self.repo.upsert(
             session_id=session_id,
             archived_at=datetime.now(timezone.utc),
             status="archived",
@@ -109,11 +107,15 @@ class SessionService:
         # 2. 决定 bind_doc 是否继承
         inherited_bind = None
         inherited_expires = None
+        # DB 读回可能是 naive datetime（sqlite 丢时区），与 bound_doc_id() 同样补 UTC
+        expires_at = origin.bind_expires_at
+        if expires_at is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
         if (origin.bound_doc_id
-                and origin.bind_expires_at is not None
-                and origin.bind_expires_at > datetime.now(timezone.utc)):
+                and expires_at is not None
+                and expires_at > datetime.now(timezone.utc)):
             inherited_bind = origin.bound_doc_id
-            inherited_expires = origin.bind_expires_at
+            inherited_expires = expires_at
         # 3. 开新 session
         new_sid = new_ulid()
         self.repo.upsert(
