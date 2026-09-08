@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import atexit
-import ctypes
 import logging
 import os
 import sys
@@ -366,13 +365,18 @@ def build_dispatcher(rt: Runtime) -> lark.EventDispatcherHandler:
 
 
 _PIDFILE = Path(__file__).resolve().parent.parent / ".ws_client.pid"
-# kernel32 仅 Windows 存在；CI（ubuntu）下置 None 保证模块可 import——
-# _pid_alive/_terminate 只在 Windows 生产路径调用，测试一律 monkeypatch。
-_KERNEL32 = (
-    ctypes.WinDLL("kernel32", use_last_error=True)
-    if sys.platform == "win32"
-    else None
-)
+# kernel32 与 get_last_error 均 Windows 专属符号（Linux typeshed 无此属性）。
+# mypy 按运行平台对 sys.platform 守卫做可达性分析——三元表达式不触发该
+# 特判，必须用 if/else 块：Linux CI 跳过 win32 分支，本机 Windows 跳过
+# else 分支，双平台过门禁。_pid_alive/_terminate 只在 Windows 生产路径
+# 调用，测试一律 monkeypatch。
+if sys.platform == "win32":
+    from ctypes import WinDLL, get_last_error
+
+    _KERNEL32: WinDLL | None = WinDLL("kernel32", use_last_error=True)
+else:
+    _KERNEL32 = None
+    get_last_error = None  # 类型占位：调用点在 assert 之后，非 Windows 不可达
 _ERROR_INVALID_PARAMETER = 87
 
 
@@ -389,7 +393,7 @@ def _pid_alive(pid: int) -> bool:
     h = _KERNEL32.OpenProcess(
         SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not h:
-        return ctypes.get_last_error() != _ERROR_INVALID_PARAMETER
+        return get_last_error() != _ERROR_INVALID_PARAMETER
     _KERNEL32.CloseHandle(h)
     return True
 
