@@ -179,6 +179,23 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         research_llm=llm_research,
     )
 
+    # --- 长会话记忆（2026-09-08 spec）：ChatMemory 装配 ---
+    from orchestrator.chat_memory import ChatMemory
+    from orchestrator.runtime.context_compressor import ContextCompressor
+    from persistence.repositories.message_repo import MessageRepo
+
+    context_compressor = ContextCompressor(
+        llm_router=llm, session_repo=SessionRepo(session), audit_repo=audit_repo,
+        token_budget=settings.context_token_budget,
+        compress_trigger_ratio=settings.context_compress_trigger_ratio,
+        freeze_trigger_ratio=settings.context_freeze_trigger_ratio,
+        preserve_recent_n=settings.context_preserve_recent_n,
+    )
+    orch.chat_memory = ChatMemory(
+        message_repo=MessageRepo(session), compressor=context_compressor,
+        session_service=session_service, im=im, audit_repo=audit_repo,
+    )
+
     # --- Phase 5-6：模板库 ---
     template_repo = TemplateRepo(session)
     version_service = VersionService(TemplateVersionRepo(session), template_repo)

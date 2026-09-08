@@ -562,13 +562,13 @@ def test_process_intent_gate_absent_keeps_old_behavior(orch):
 
 
 def test_unknown_slash_command_replies_hint_and_skips_llm(orch):
-    """未注册 / 命令（如 /clear）：回可用命令提示，不落闲聊 LLM、不建 task。"""
+    """未注册 / 命令（如 /reboot）：回可用命令提示，不落闲聊 LLM、不建 task。"""
     result = orch.process(IncomingMessage(
         message_id="om_u1", chat_id="oc_1", sender_open_id="ou_1",
-        text="/clear",
+        text="/reboot",
     ))
     assert result["status"] == "unknown_command"
-    assert result["command"] == "/clear"
+    assert result["command"] == "/reboot"
     hint = orch.im.reply.call_args.args[1]
     assert "未知命令" in hint and "/code clear" in hint
     orch.llm.chat.assert_not_called()
@@ -593,7 +593,7 @@ def test_unknown_slash_command_in_group_also_gets_hint(orch):
     """群聊中的未知 / 命令同样给提示（群门控在此之前不拦截 / 开头消息）。"""
     result = orch.process(IncomingMessage(
         message_id="om_u3", chat_id="oc_group", sender_open_id="ou_1",
-        text="/clear", chat_type="group",
+        text="/reboot", chat_type="group",
     ))
     assert result["status"] == "unknown_command"
     orch.im.reply.assert_called_once()
