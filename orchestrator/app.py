@@ -524,7 +524,9 @@ class Orchestrator:
         与 process_phase2 区别：
         - 新增 /bind-doc-renew 指令分支
         - Scheduler 注入 PlanRuntime（动态追加 / 循环 / 冻结 hook）
-        - ContextCompressor 在 LLM 调用前监控
+        - 注：ContextCompressor/freeze 未接线（Phase 3.1 归档挂起 2026-09-08）——
+          生产无多轮历史宿主：闲聊单轮无状态、coding 循环自带压缩，
+          组件与测试保留备用，真做长会话时再接
         """
         if not hasattr(self, "planner"):
             raise FeishuAgentError(
