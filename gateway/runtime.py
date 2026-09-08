@@ -63,6 +63,7 @@ from persistence.repositories.audit_repo import AuditRepo
 from persistence.repositories.comment_notify_repo import CommentNotifyRepo
 from persistence.repositories.comment_repo import CommentRepo
 from persistence.repositories.doc_write_repo import DocWriteRepo
+from persistence.repositories.session_freeze_repo import SessionFreezeRepo
 from persistence.repositories.session_repo import SessionRepo
 from persistence.repositories.task_repo import TaskRepo
 from persistence.repositories.template_favorite_repo import TemplateFavoriteRepo
@@ -160,7 +161,9 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
                     getattr(settings, "code_provider", "") or "-",
                     getattr(settings, "research_provider", "") or "-")
     audit_repo = AuditRepo(session)
-    session_service = SessionService(SessionRepo(session), audit_repo=audit_repo)
+    session_service = SessionService(
+        SessionRepo(session), freeze_repo=SessionFreezeRepo(session),
+        audit_repo=audit_repo)
     task_service = TaskService(TaskRepo(session), audit_repo)
     bind_doc_service = BindDocService(
         session_service, audit_repo, settings.bind_doc_ttl_sec,
