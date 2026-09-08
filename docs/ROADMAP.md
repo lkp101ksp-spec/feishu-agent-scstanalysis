@@ -25,8 +25,8 @@ spec：`docs/superpowers/specs/2026-09-01-feishu-research-agent-phase15-ux-polis
 
 - [x] 单聊同意 → toast + IM 回执 + 文档写入（回归通过，card_confirm → success）
 - [x] 单聊重复点击 → toast「该卡片已处理过」（本轮修复 broker 终态幂等 + gateway 持久化兜底后通过）
-- [ ] 群聊非发起者点击 → toast「仅任务发起者可操作」，文档不写（顺延：需测试群 + 第二账号）
-- [ ] 群聊发起者点击 → 正常写入（顺延：同上）
+- [x] 群聊非发起者点击 → toast「仅任务发起者可操作」，文档不写（2026-09-08 真机通过：日志 WARNING research_writeback forbidden operator≠owner）
+- [x] 群聊发起者点击 → 正常写入（2026-09-08 真机通过：decided approve → doc_writes 行 success；发起者复点 → already_handled，非发起者复点已完成卡仍 forbidden——owner 校验优先于 dup 检查）
 
 ---
 
@@ -272,8 +272,8 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 - [x] bind-doc 存在性校验（Phase 22 完成：bind() 时 list_root_children 探活，2026-09-01 nzb/nkb 一字之差踩坑闭环）
 - [x] 双 ws_client 防复发（Phase 22 完成：pidfile + OpenProcess 探活互斥；另查明历史"双实例"部分为 venv shim 父子进程对，非真双连接）
 - [x] FastAPI `on_event` → lifespan 迁移（Phase 22 完成，警告 8→3）
-- [ ] 模板/评论命令 IM 路由 vs REST API 集成验证（需人工参与）
-- [ ] 幂等重传手动测试（飞书事件重发，需人工触发）
+- [x] 模板/评论命令 IM 路由真机验收（2026-09-08）：/template-list、/template-favorites、/comments-sync、/comments 四命令 IM 回复与 ws 日志 status 一一对应；裸 /template-rollback 走 unknown_command 兜底给可用命令列表（行为正确，非静默落闲聊）
+- [x] 幂等重传验证（2026-09-08）：消息幂等真库级双投 PASS（r1 success/r2 duplicate、orchestrator 调用恒 1、pg idempotency_keys 留行正确）；卡片幂等 2026-09-01 单聊已验（already_handled toast）
 - [ ] fasta 长度回填使每次检索多一次 efetch 调用——如做批量检索再评估合并请求
 
 ## 远期池（默认不做，出现真实需求再捞）
