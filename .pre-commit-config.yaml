@@ -12,3 +12,10 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
+      # mypy 需整包分析不能按文件名跑；全量走 pyproject [tool.mypy] 配置
+      - id: mypy
+        name: mypy 基线
+        entry: mypy
+        language: system
+        pass_filenames: false
+        always_run: true

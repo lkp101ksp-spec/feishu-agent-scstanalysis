@@ -202,6 +202,11 @@ class _ProgressCard:
                     "elements": [{"tag": "div", "text": {
                         "tag": "lark_md", "content":
                             f"**任务**：{preview}\n\n❌ {error}"}}]}
+        if result is None:  # 防御分支：result/error 双空上面已返回，此处理论不可达
+            return {"header": "代码任务异常终止",
+                    "elements": [{"tag": "div", "text": {
+                        "tag": "lark_md", "content":
+                            f"**任务**：{preview}\n\n❌ 任务未产出结果"}}]}
         ok = result.status == "final"
         final_preview = (result.final_text or "")[:_FINAL_PREVIEW_CAP]
         lines = [f"**任务**：{preview}", "",

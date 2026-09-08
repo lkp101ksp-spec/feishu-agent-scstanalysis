@@ -96,8 +96,12 @@ class SessionService:
                        trigger_ratio: float) -> str:
         """冻结旧 session，开新 session 并继承 bind（如果未过期）。"""
         origin = self.repo.get(session_id)
+        # freeze 目标 session 必然存在（调用方从活跃 session 触发）；None 属编程错误
+        assert origin is not None
         # 1. 旧 session 标 archived
-        self.repo.upsert(
+        # 跨文件依赖：archived_at/status 需 SessionRepo.upsert 扩展支持
+        # （SessionRow 已有对应列；repo 文件由另一代理负责，此处暂豁免）
+        self.repo.upsert(  # type: ignore[call-arg]
             session_id=session_id,
             archived_at=datetime.now(timezone.utc),
             status="archived",

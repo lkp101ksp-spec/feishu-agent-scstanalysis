@@ -58,5 +58,15 @@ ignore = ["E701"]
 # 测试代码放宽行长与局部命名；docs/scripts 容忍部分风格
 "tests/**" = ["E501", "F841", "E741"]
 
+[tool.mypy]
+# 宽松基线门禁（2026-09-08 方案 A）：防 Optional 解引用/签名漂移类错误；
+# strict 全量为 679 错存量，留待后续分层推进，勿直接开
+explicit_package_bases = true  # sandbox\sc_tools 与 st_tools 各有 common.py，防模块名撞车
+ignore_missing_imports = true  # lark-oapi/anndata/squidpy 等 103 处无 stub 导入
+packages = [
+    "gateway", "orchestrator", "sandbox", "shared",
+    "persistence", "skills", "feishu_adapter", "config",
+]
+
 [tool.coverage.run]
 source = ["gateway", "orchestrator", "persistence", "feishu_adapter", "shared", "config"]

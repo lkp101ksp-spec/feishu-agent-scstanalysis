@@ -48,6 +48,9 @@ jobs:
       - name: ruff check（lint 硬门禁）
         run: ruff check .
 
+      - name: mypy 宽松基线（硬门禁；范围/开关见 pyproject [tool.mypy]）
+        run: python -m mypy
+
       - name: pytest 默认层 + cov（与 check.ps1 一致）
         # -v：段错误/崩溃时摘要不会打印，逐测试命名才能在日志里定位肇事测试
         run: python -m pytest -v -m "not pg" --cov --cov-report=term

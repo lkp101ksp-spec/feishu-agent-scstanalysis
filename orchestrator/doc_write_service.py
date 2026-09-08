@@ -146,6 +146,7 @@ class DocWriteService:
                 doc_write_id, reason)
             return {"doc_write_id": doc_write_id, "status": "failed",
                     "reason": reason}
+        # render_blocks CLI 路径合法返回 None（anchor_block_id 列 nullable）
         self.doc_repo.mark_success(doc_write_id, anchor_block_id=anchor)
         return {"doc_write_id": doc_write_id, "doc_id": row.doc_id,
                 "anchor_block_id": anchor, "status": "success"}

@@ -11,8 +11,17 @@ import re
 import shutil
 import time
 from pathlib import Path
+from typing import TypedDict
 
 logger = logging.getLogger(__name__)
+
+
+class _SweepResult(TypedDict):
+    """sweep 返回结构：TTL/LRU 删除名单 + 释放字节数 + 宽限跳过名单。"""
+    ttl_deleted: list[str]
+    lru_deleted: list[str]
+    freed_bytes: int
+    skipped: list[str]
 
 # 数据集目录名 = compute_dataset_id{,_dir} 的输出（sha1 hexdigest[:12]）；
 # smoke_st 等命名目录天然排除，无需白名单
@@ -48,15 +57,15 @@ def _delete(d: Path) -> int | None:
 
 
 def sweep(workspace_root, *, ttl_sec: int, cap_bytes: int, grace_sec: int,
-          now: float | None = None) -> dict:
+          now: float | None = None) -> _SweepResult:
     """单轮清理：TTL 阶段删到期目录，LRU 阶段超 cap 按 last_used 升序驱逐。
 
     两阶段均跳过宽限期（grace_sec）内动过的目录（活动任务保护）。
     返回 {"ttl_deleted", "lru_deleted", "freed_bytes", "skipped"}。
     """
     root = Path(workspace_root)
-    result = {"ttl_deleted": [], "lru_deleted": [],
-              "freed_bytes": 0, "skipped": []}
+    result: _SweepResult = {"ttl_deleted": [], "lru_deleted": [],
+                            "freed_bytes": 0, "skipped": []}
     if not root.is_dir():
         return result
     now = time.time() if now is None else now

@@ -16,6 +16,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException, Request
 from sqlalchemy.orm import sessionmaker
@@ -30,6 +31,13 @@ from shared.errors import (
     RateLimitExceededError,
     SignatureInvalidError,
 )
+
+if TYPE_CHECKING:
+    from orchestrator.app import Orchestrator
+    from orchestrator.approval_broker import ApprovalBroker
+    from orchestrator.bind_doc_service import BindDocService
+    from orchestrator.model_switch_service import ModelSwitchService
+    from orchestrator.templates.comment_event_service import CommentEventService
 
 logger = logging.getLogger(__name__)
 
@@ -406,8 +414,8 @@ class AppContext:
     secret: str
     rate: TokenBucket
     rate_per_min: int
-    orchestrator: object  # Orchestrator 实例，类型在 Phase 1 避免循环引用
-    bind_doc_service: object | None = None  # Phase 3：续期用
+    orchestrator: "Orchestrator"  # Orchestrator 实例，类型在 Phase 1 避免循环引用
+    bind_doc_service: "BindDocService | None" = None  # Phase 3：续期用
     template_service: object | None = None  # Phase 5：模板市场
     version_service: object | None = None  # Phase 6
     share_service: object | None = None  # Phase 6
@@ -423,10 +431,10 @@ class AppContext:
     favorite_service: object | None = None  # Phase 8
     unified_search_service: object | None = None  # Phase 9
     auto_sync_worker: object | None = None  # Phase 9
-    approval_broker: object | None = None  # Phase 14：写回审批决策传递
-    comment_event_service: object | None = None  # Phase 18：webhook 评论事件
+    approval_broker: "ApprovalBroker | None" = None  # Phase 14：写回审批决策传递
+    comment_event_service: "CommentEventService | None" = None  # Phase 18：webhook 评论事件
     tag_recommend_service: object | None = None  # Phase 19：标签推荐
-    model_switch_service: object | None = None  # Phase 30：模型热切换
+    model_switch_service: "ModelSwitchService | None" = None  # Phase 30：模型热切换
 
 
 def create_app(

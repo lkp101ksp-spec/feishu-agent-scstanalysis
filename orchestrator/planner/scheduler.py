@@ -22,7 +22,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Optional
+from typing import Any, Optional, cast
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan
 from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle
@@ -138,7 +138,7 @@ def _lookup_numeric(ref: str, context: str) -> Optional[float]:
             if obj is None:
                 return None
         try:
-            return float(obj)
+            return float(cast(Any, obj))
         except (TypeError, ValueError):
             return None
     return None
@@ -522,7 +522,7 @@ class Scheduler:
                                f"{node.condition_prompt!r}）")
             return
         chosen = "true_branch" if cond else "false_branch"
-        subs = node.true_branch if cond else (node.false_branch or [])
+        subs = (node.true_branch or []) if cond else (node.false_branch or [])
         prefix = f"{node.node_id}_{'t' if cond else 'f'}"
         self._install_copies(
             self._copy_subtree(subs, prefix=prefix, parent_node=node))
@@ -544,7 +544,7 @@ class Scheduler:
         placeholder = "{%s}" % node.iteration_var
         for i, item in enumerate(items):
             copies = self._copy_subtree(
-                node.body, prefix=f"{node.node_id}_i{i}_",
+                node.body or [], prefix=f"{node.node_id}_i{i}_",
                 parent_node=node, placeholder=placeholder, value=item,
             )
             self._install_copies(copies)
@@ -599,14 +599,14 @@ class Scheduler:
                                f"while 超 max_iterations={node.max_iterations}")
             return
         copies = self._copy_subtree(
-            node.body, prefix=f"{node.node_id}_r{ws['round']}_", parent_node=node)
+            node.body or [], prefix=f"{node.node_id}_r{ws['round']}_", parent_node=node)
         self._install_copies(copies)
         self._while_state[node.node_id] = {
             "round": ws["round"] + 1,
             "body_ids": [c.node_id for c in copies],
             # body 原始 id → 本轮副本 id（下一轮判定 prompt 引用重写用）
             "ref_map": {n.node_id: c.node_id
-                        for n, c in zip(node.body, copies)},
+                        for n, c in zip(node.body or [], copies)},
         }
 
     def _copy_subtree(self, nodes: list[DAGNode], *, prefix: str,
@@ -638,7 +638,7 @@ class Scheduler:
                 else:
                     deps.append(d)
             inputs = dict(n.inputs)
-            if subst is not None:
+            if subst is not None and placeholder is not None:
                 inputs = {k: v.replace(placeholder, subst)
                           for k, v in inputs.items() if isinstance(v, str)}
             out.append(DAGNode(

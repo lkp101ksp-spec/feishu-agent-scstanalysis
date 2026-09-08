@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from shared.ulid_ import new_ulid
 
@@ -68,15 +68,17 @@ class HotLoader:
         with open(path, "w", encoding="utf-8") as f:
             f.write(code)
         spec = importlib.util.spec_from_file_location(module_id, path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f'cannot create module spec for {path}')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         handle = getattr(module, "handle", None)
         if handle is None:
             raise ValueError("tool must define handle(**kwargs)")
-        from orchestrator.tools.tool_registry import ToolSpec
+        from orchestrator.tools.tool_registry import RiskLevel, ToolSpec
         self.tool_registry.register(ToolSpec(
             name=name, description="hot-loaded",
-            parameters=parameters, risk_level=risk_level,
+            parameters=parameters, risk_level=cast(RiskLevel, risk_level),
             handler=handle,
         ))
         if self.audit_repo is not None:

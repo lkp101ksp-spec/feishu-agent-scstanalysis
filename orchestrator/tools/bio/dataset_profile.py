@@ -84,7 +84,7 @@ def _row_stats_dense(x, n_obs: int, mt_mask) -> tuple[np.ndarray, np.ndarray | N
         idx = rows[off:off + _CHUNK_ROWS]
         block = np.asarray(x[idx, :])
         genes[off:off + len(idx)] = (block > 0).sum(axis=1)
-        if mt_mask is not None:
+        if mt_mask is not None and mt_pct is not None:
             total = block.sum(axis=1)
             mt = block[:, mt_mask].sum(axis=1) if mt_mask.any() else 0.0
             mt_pct[off:off + len(idx)] = np.where(

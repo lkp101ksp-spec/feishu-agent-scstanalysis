@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import case, func, literal, select
 from sqlalchemy.orm import Session
@@ -131,7 +131,7 @@ class TemplateRepo:
                 )
                 # 档位与 SQLite 分支对齐（name=2.0 / desc=1.0），
                 # ts_rank 仅作同档内细分排序（ADR-0026 融合公式）
-                text_score = case(
+                text_score: Any = case(
                     (name_vec.op("@@")(ts_query), 2.0 + func.ts_rank(ts_vec, ts_query)),
                     (ts_vec.op("@@")(ts_query), 1.0 + func.ts_rank(ts_vec, ts_query)),
                     else_=0.0,

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -43,6 +44,7 @@ def main() -> None:
     # scrublet 把进度打印到 stdout（Preprocessing.../Simulating doublets...），
     # 会污染 JSON 输出契约 → 整体重定向吞掉
     with contextlib.redirect_stdout(io.StringIO()):
+        pred: Any = None  # while/try 结构下 mypy 误报占位，break 出口必已赋值
         while True:  # 基因过滤后特征数可能 < npc（小数据），PCA 失败则减半重试
             scrub = scr.Scrublet(sub.X, expected_doublet_rate=expected_rate)
             try:

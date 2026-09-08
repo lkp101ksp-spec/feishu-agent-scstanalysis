@@ -6,6 +6,7 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import scanpy as sc
 
 
@@ -46,8 +47,8 @@ def main() -> None:
     dotplot_path = out_dir / "markers_dotplot.png"
     sc.pl.rank_genes_groups_dotplot(adata, n_genes=5, standard_scale="var",
                                     show=False, save=False)
-    matplotlib.pyplot.savefig(dotplot_path, bbox_inches="tight", dpi=120)
-    matplotlib.pyplot.close("all")
+    plt.savefig(dotplot_path, bbox_inches="tight", dpi=120)
+    plt.close("all")
 
     print(json.dumps({
         "ok": True,

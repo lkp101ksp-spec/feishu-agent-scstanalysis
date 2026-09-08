@@ -47,7 +47,9 @@ def coerce_params(parameters_schema: dict,
     coerced: list[str] = []
     for name, decl in props.items():
         try:
-            expected = _COERCIBLE.get((decl or {}).get("type"))
+            decl_type = (decl or {}).get("type")
+            expected = (_COERCIBLE.get(decl_type)
+                        if isinstance(decl_type, str) else None)
             if expected is None:
                 continue
             value = fixed.get(name)

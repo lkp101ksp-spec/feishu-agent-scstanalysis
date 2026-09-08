@@ -51,8 +51,8 @@ class DocWriteRepo:
         row.status = to_status
         self.session.flush()
 
-    def mark_success(self, doc_write_id: str, anchor_block_id: str) -> None:
-        """写入成功：填充 anchor_block_id。"""
+    def mark_success(self, doc_write_id: str, anchor_block_id: Optional[str]) -> None:
+        """写入成功：填充 anchor_block_id（CLI 渲染路径合法为 None，列 nullable）。"""
         row = self.get(doc_write_id)
         if row is None:
             return

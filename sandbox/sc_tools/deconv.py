@@ -122,7 +122,7 @@ def main() -> None:
     ax.legend(fontsize=7, loc="center left", bbox_to_anchor=(1.0, 0.5))
     ax.tick_params(axis="x", rotation=45, labelsize=7)
     for lbl in ax.get_xticklabels():
-        lbl.set_ha("right")
+        lbl.set_horizontalalignment("right")
     fig.tight_layout()
     bar_png = out_dir / f"deconv_barplot_{method}.png"
     fig.savefig(bar_png, dpi=150, bbox_inches="tight")

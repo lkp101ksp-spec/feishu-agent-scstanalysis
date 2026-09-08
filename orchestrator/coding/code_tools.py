@@ -27,7 +27,7 @@ class CodeTools:
     """code 域六原语；dispatch 为 AgentLoop 的统一工具入口。"""
 
     # OpenAI function calling schema（六原语静态声明）
-    SCHEMA = [
+    SCHEMA: list[dict] = [
         {"type": "function", "function": {
             "name": "read_file",
             "description": "读取工作区内文本文件；offset/limit 为 1-based 行号窗口",
@@ -166,7 +166,7 @@ class CodeTools:
              "size": 0 if c.is_dir() else c.stat().st_size}
             for c in d.iterdir()
         ]
-        entries.sort(key=lambda e: (e["type"] != "dir", e["name"].lower()))
+        entries.sort(key=lambda e: (e["type"] != "dir", str(e["name"]).lower()))
         return {"ok": True, "entries": entries[:200]}
 
     def _op_search_files(self, pattern: str, path: str = ".", glob: str = "*") -> dict:

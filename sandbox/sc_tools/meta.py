@@ -12,6 +12,8 @@ stdin: {"dataset_id": ..., "op": "merge_csv"|"map_values"|"rename_col", ...}
 """
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 from common import DATA_ROOT, WS_ROOT, emit, load_adata, read_args, run
 
@@ -51,7 +53,7 @@ def main() -> None:
         if conflicts:
             note = f"columns renamed with _csv suffix: {conflicts}"
         changed = [a["col"] for a in added]
-        detail = added
+        detail: Any = added
 
     elif op == "map_values":
         col = str(args.get("col", "")).strip()

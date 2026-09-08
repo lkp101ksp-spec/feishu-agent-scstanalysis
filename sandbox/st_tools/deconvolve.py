@@ -22,6 +22,8 @@ fail() 后 raise SystemExit(1)：批① fail() 模式（bio_runner 侧
 """
 from __future__ import annotations
 
+from typing import Any, cast
+
 from common import emit, run
 
 
@@ -38,6 +40,7 @@ def _load_ref(args: dict):
     统一产出 obs["c2l_label"]。
     """
     import anndata as ad
+    import pandas as pd
     from common import DATA_ROOT, WS_ROOT, fail
 
     label_col = str(args.get("ref_label_col") or "").strip()
@@ -56,7 +59,7 @@ def _load_ref(args: dict):
                  f"sc ref {args['sc_ref_dataset']} has no filtered/raw h5ad")
             raise SystemExit(1)
         ref = ad.read_h5ad(counts_p)
-        proc_obs = ad.read_h5ad(proc, backed="r").obs
+        proc_obs = cast(pd.DataFrame, ad.read_h5ad(proc, backed="r").obs)
         common = ref.obs_names.intersection(proc_obs.index)
         if len(common) < ref.n_obs * 0.5:
             fail("ST_REF_INVALID",
@@ -67,7 +70,8 @@ def _load_ref(args: dict):
         ref.obs["c2l_label"] = label.values
         return ref, "workspace sc dataset"
     ref = ad.read_h5ad(DATA_ROOT / args["sc_ref_path"])
-    if ref.X is not None and (ref.X.min() < 0 if ref.n_vars else False):
+    if ref.X is not None and (cast(Any, ref.X).min() < 0
+                              if ref.n_vars else False):
         if ref.raw is None:
             fail("ST_REF_INVALID",
                  "ref X contains negatives (scaled?) and no raw counts")

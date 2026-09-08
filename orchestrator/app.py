@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from feishu_adapter.im_adapter import IMAdapter
 from orchestrator.bind_doc_service import BindDocService
@@ -32,6 +32,27 @@ from orchestrator.tools.tool_registry import ToolRegistry, parse_disabled_tools
 from shared.errors import BindDocInvalidError, DocWriteError, FeishuAgentError, LLMCallError
 from shared.schemas import ChatMessage, IncomingMessage
 
+if TYPE_CHECKING:
+    # gateway/runtime.py 组装期挂载到 Orchestrator 的服务（仅类型注解用，
+    # 运行时不导入，避免循环依赖与启动开销）
+    from orchestrator.approval_broker import ApprovalBroker
+    from orchestrator.coding.coding_runner import CodingRunner
+    from orchestrator.intent_gate import IntentGateService
+    from orchestrator.model_switch_service import ModelSwitchService
+    from orchestrator.research_runner import ResearchRunner
+    from orchestrator.templates.comment_action_service import CommentActionService
+    from orchestrator.templates.comment_service import CommentService
+    from orchestrator.templates.comment_sync_service import CommentSyncService
+    from orchestrator.templates.diff_service import VersionDiffService
+    from orchestrator.templates.favorite_service import FavoriteService
+    from orchestrator.templates.fork_service import ForkService
+    from orchestrator.templates.public_service import PublicTemplateService
+    from orchestrator.templates.share_service import ShareService
+    from orchestrator.templates.tag_service import TagService
+    from orchestrator.templates.template_service import TemplateService
+    from orchestrator.templates.unified_search_service import UnifiedSearchService
+    from orchestrator.templates.version_service import VersionService
+
 SYSTEM_PROMPT = "你是飞书科研助手。请用简洁中文回答，不超过 200 字。"
 
 logger = logging.getLogger(__name__)
@@ -39,6 +60,26 @@ logger = logging.getLogger(__name__)
 
 class Orchestrator:
     """Phase 1 主流程编排器。"""
+
+    # --- gateway/runtime.py 组装期挂载的 Phase 5+ 服务（构造后赋值；
+    # 此处仅作类级类型声明，不生成任何运行时代码） ---
+    version_service: VersionService
+    template_service: TemplateService
+    share_service: ShareService
+    public_service: PublicTemplateService
+    fork_service: ForkService
+    tag_service: TagService
+    favorite_service: FavoriteService
+    diff_service: VersionDiffService
+    unified_search_service: UnifiedSearchService
+    comment_service: CommentService
+    comment_sync_service: CommentSyncService
+    comment_action_service: CommentActionService
+    approval_broker: ApprovalBroker
+    research_runner: ResearchRunner
+    intent_gate: IntentGateService
+    coding_runner: CodingRunner
+    model_switch_service: ModelSwitchService
 
     def __init__(
         self,
@@ -339,6 +380,8 @@ class Orchestrator:
 
     def _handle_bind(self, incoming: IncomingMessage) -> dict:
         """处理 /bind-doc <doc_id> 指令。"""
+        # process() 入口已用 is_bind_doc_cmd and bind_doc_id 守卫，此处收窄类型
+        assert incoming.bind_doc_id is not None
         session_id = self.session_service.get_or_create(
             owner_open_id=incoming.sender_open_id,
             source_chat_id=incoming.chat_id,
@@ -848,13 +891,13 @@ class Orchestrator:
             tags = [p.lstrip("#").lower() for p in parts[1:] if p.startswith("#")]
             query_tokens = [p for p in parts[1:] if not p.startswith("#")]
             query = " ".join(query_tokens)
-            tag = tags[0] if tags else None
+            find_tag = tags[0] if tags else None
             us = getattr(self, "unified_search_service", None)
             if us is None:
                 self.im.reply(incoming.chat_id,
                               "[错误] unified_search_service 未配置")
                 return {"status": "find_failed"}
-            results = us.search(query=query, tag=tag, limit=10)
+            results = us.search(query=query, tag=find_tag, limit=10)
             self.im.reply(incoming.chat_id, us.render(results))
             return {"status": "find_rendered", "count": len(results)}
 

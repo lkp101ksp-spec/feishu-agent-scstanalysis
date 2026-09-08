@@ -33,7 +33,7 @@ from lark_oapi.event.custom import CustomizedEvent
 from gateway.app import process_card_payload, run_im_pipeline
 from gateway.normalizer import NormalizeError
 from gateway.runtime import Runtime, build_runtime
-from orchestrator.bio_workspace_gc import sweep
+from orchestrator.bio_workspace_gc import _SweepResult, sweep
 from shared.errors import FeishuAgentError, RateLimitExceededError
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ def start_kernel_idle_sweeper(kernel_pool, interval_sec: int = 300):
     return t
 
 
-def _bio_gc_sweep_once(settings) -> dict:
+def _bio_gc_sweep_once(settings) -> _SweepResult:
     """单轮 bio_workspace GC（线程内同步直调；异常由线程 loop 吃掉）。"""
     return sweep(
         settings.bio_workspace_root,
@@ -385,6 +385,7 @@ def _pid_alive(pid: int) -> bool:
     """
     SYNCHRONIZE = 0x00100000
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    assert _KERNEL32 is not None  # 仅 Windows 生产路径调用（见模块头注释）
     h = _KERNEL32.OpenProcess(
         SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not h:
@@ -395,6 +396,7 @@ def _pid_alive(pid: int) -> bool:
 
 def _terminate(pid: int) -> None:
     """--force 杀旧进程并等待退出（0.5s 轮询，上限 5s）。"""
+    assert _KERNEL32 is not None  # 仅 Windows 生产路径调用（见模块头注释）
     h = _KERNEL32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
     if h:
         _KERNEL32.TerminateProcess(h, 1)

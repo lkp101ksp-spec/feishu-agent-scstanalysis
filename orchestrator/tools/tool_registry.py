@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Callable, Literal, Optional
+from typing import Callable, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -83,8 +83,8 @@ class ToolRegistry:
 
     def to_openai_functions(
         self, include_L2: bool = True, planner_visible: Optional[bool] = None
-    ) -> list[dict]:
-        items = self._tools.values()
+    ) -> List[dict]:  # 类体内 list 被同名方法遮蔽，注解须用 typing.List
+        items = list(self._tools.values())
         if not include_L2:
             items = [t for t in items if t.risk_level != "L2_side_effect"]
         if planner_visible is not None:
