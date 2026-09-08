@@ -38,9 +38,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: requirements-lock.txt
 
-      - name: 安装依赖（pyproject 声明，含 dev extras）
-        run: pip install -e .[dev]
+      - name: 安装依赖（锁文件钉版 + 项目本体无依赖安装）
+        run: |
+          pip install -r requirements-lock.txt
+          pip install -e . --no-deps
 
       - name: ruff check（lint 硬门禁）
         run: ruff check .
