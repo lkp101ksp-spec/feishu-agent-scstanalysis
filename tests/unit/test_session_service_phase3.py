@@ -7,7 +7,8 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from orchestrator.session_service import SessionService
-from persistence.models import Base, SessionFreezeRow, SessionRow
+from persistence.models import AuditLogRow, Base, SessionFreezeRow, SessionRow
+from persistence.repositories.audit_repo import AuditRepo
 from persistence.repositories.session_freeze_repo import SessionFreezeRepo
 from persistence.repositories.session_repo import SessionRepo
 
@@ -90,10 +91,14 @@ def _seed_origin(s, *, bind_ttl=600):
 
 
 def test_freeze_session_realdb_full_flow(real_session):
-    """真库全链路：旧行归档且 bind 原值保留，新行继承 bind/scope/origin，freeze 落库。"""
+    """真库全链路：旧行归档且 bind 原值保留，新行继承 bind/scope/origin，freeze 落库。
+
+    audit_repo 用真件（2026-09-09 真机教训：None/MagicMock 掩盖了 write 缺 audit_id）。
+    """
     _seed_origin(real_session)
     svc = SessionService(repo=SessionRepo(real_session),
-                         freeze_repo=SessionFreezeRepo(real_session))
+                         freeze_repo=SessionFreezeRepo(real_session),
+                         audit_repo=AuditRepo(real_session))
     new_sid = svc.freeze_session(session_id="s1", summary="x",
                                  trigger_ratio=0.97)
 
@@ -112,6 +117,9 @@ def test_freeze_session_realdb_full_flow(real_session):
     fr = real_session.query(SessionFreezeRow).filter_by(origin_session_id="s1").one()
     assert fr.new_session_id == new_sid
     assert abs(fr.trigger_ratio - 0.97) < 1e-9
+
+    audits = real_session.query(AuditLogRow).filter_by(action="freeze_session").all()
+    assert len(audits) == 1 and audits[0].audit_id and audits[0].target_id == "s1"
 
 
 def test_freeze_session_realdb_expired_bind_not_inherited(real_session):

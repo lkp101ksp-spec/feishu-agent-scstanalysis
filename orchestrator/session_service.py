@@ -138,6 +138,7 @@ class SessionService:
         # 5. 审计
         if self.audit_repo is not None:
             self.audit_repo.write(
+                audit_id=new_ulid(),
                 actor_type="system", actor_id="session_service",
                 action="freeze_session", target_type="session",
                 target_id=session_id, detail={

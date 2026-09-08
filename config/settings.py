@@ -237,6 +237,15 @@ def load_settings() -> Settings:
             os.environ.get("RESEARCH_TASK_TIMEOUT_SEC", "300")),
         max_concurrent_nodes=int(
             os.environ.get("MAX_CONCURRENT_NODES", "4")),
+        # 长会话记忆上下文阈值（2026-09-09 接线：此前字段存在但无 env 读取，真机不生效）
+        context_token_budget=int(
+            os.environ.get("CONTEXT_TOKEN_BUDGET", "200000")),
+        context_compress_trigger_ratio=float(
+            os.environ.get("CONTEXT_COMPRESS_TRIGGER_RATIO", "0.8")),
+        context_freeze_trigger_ratio=float(
+            os.environ.get("CONTEXT_FREEZE_TRIGGER_RATIO", "0.95")),
+        context_preserve_recent_n=int(
+            os.environ.get("CONTEXT_PRESERVE_RECENT_N", "5")),
         llm_timeout_sec=int(os.environ.get("LLM_TIMEOUT_SEC", "120")),
         # Phase 14：写回审批（RESEARCH_WRITEBACK_APPROVAL=bind_scope 关闭卡片确认）
         research_writeback_approval=os.environ.get(

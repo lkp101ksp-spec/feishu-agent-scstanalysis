@@ -5,6 +5,7 @@ from typing import Callable, Optional
 
 from shared.errors import FreezeRequired
 from shared.schemas import ChatMessage
+from shared.ulid_ import new_ulid
 
 
 class ContextCompressor:
@@ -64,6 +65,7 @@ class ContextCompressor:
         new_ratio = new_tokens / self.token_budget if self.token_budget else 0
         if self.audit_repo is not None:
             self.audit_repo.write(
+                audit_id=new_ulid(),
                 actor_type="system", actor_id="context_compressor",
                 action="compress_history", target_type="session",
                 target_id="-", detail={
