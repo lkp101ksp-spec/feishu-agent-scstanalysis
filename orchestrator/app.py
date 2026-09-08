@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     # gateway/runtime.py 组装期挂载到 Orchestrator 的服务（仅类型注解用，
     # 运行时不导入，避免循环依赖与启动开销）
     from orchestrator.approval_broker import ApprovalBroker
+    from orchestrator.chat_memory import ChatMemory
     from orchestrator.coding.coding_runner import CodingRunner
     from orchestrator.intent_gate import IntentGateService
     from orchestrator.model_switch_service import ModelSwitchService
@@ -80,6 +81,8 @@ class Orchestrator:
     intent_gate: IntentGateService
     coding_runner: CodingRunner
     model_switch_service: ModelSwitchService
+    # 长会话记忆（2026-09-08 spec）：runtime.py 装配；未装配时闲聊为无记忆单轮
+    chat_memory: ChatMemory
 
     def __init__(
         self,
@@ -228,6 +231,20 @@ class Orchestrator:
             return {"status": "renew_bind", "session_id": session_id,
                     "new_expires": new_exp.isoformat()}
 
+        # 1.25 /clear 指令：手动冻结当前会话开新会话（长会话记忆重置入口）
+        if incoming.text.strip() == "/clear":
+            memory = getattr(self, "chat_memory", None)
+            if memory is None:
+                self.im.reply(incoming.chat_id, "[提示] 长会话记忆未装配")
+                return {"status": "clear_unavailable"}
+            clear_sid = self.session_service.get_or_create(
+                owner_open_id=incoming.sender_open_id,
+                source_chat_id=incoming.chat_id,
+            )
+            memory.clear(clear_sid)
+            self.im.reply(incoming.chat_id, "[成功] 已开启新会话，历史已清空")
+            return {"status": "cleared", "session_id": clear_sid}
+
         # 1.5 #写到 语法不完整（有锚点没正文）：提示用法，不进 LLM
         if incoming.write_anchor and not incoming.text.strip():
             self.im.reply(
@@ -285,7 +302,7 @@ class Orchestrator:
                 f"[未知命令] {stripped.split()[0]}\n"
                 "可用命令：/research <任务>（研究分析）· /code <任务>（代码任务）· "
                 "/code clear（清空工作区）· /model（模型切换，管理员）· "
-                "/bind-doc <doc_id>（绑定文档）· /template-list（我的模板）\n"
+                "/bind-doc <doc_id>（绑定文档）· /clear（清空会话记忆）· /template-list（我的模板）\n"
                 "或直接发自然语言，我会自动判断任务意图。",
             )
             return {"status": "unknown_command",
@@ -318,12 +335,23 @@ class Orchestrator:
             intent="general_chat",
         )
 
-        # 3. LLM 生成回复
-        try:
-            reply_text = self.llm.chat([
+        # 3. LLM 生成回复（长会话记忆：装配了 chat_memory 时注入历史，
+        #    压缩/冻结由 ChatMemory 编排；freeze 后 session_id 换为新会话，
+        #    下游 bound_doc/写文档随新会话走——绑定已被 freeze_session 继承）
+        memory = getattr(self, "chat_memory", None)
+        if memory is None:
+            messages = [
                 ChatMessage(role="system", content=SYSTEM_PROMPT),
                 ChatMessage(role="user", content=incoming.text),
-            ])
+            ]
+        else:
+            history, session_id, _frozen = memory.prepare(
+                session_id=session_id, chat_id=incoming.chat_id)
+            messages = ([ChatMessage(role="system", content=SYSTEM_PROMPT)]
+                        + history
+                        + [ChatMessage(role="user", content=incoming.text)])
+        try:
+            reply_text = self.llm.chat(messages)
         except LLMCallError as e:
             self.task_service.mark_failed(
                 task_id=task_id, error_code="LLM_FAILED", error_message=str(e)
@@ -338,6 +366,10 @@ class Orchestrator:
 
         # 4. IM 回复（写文档之前先回，保证用户先看到内容）
         self.im.reply(incoming.chat_id, reply_text)
+
+        # 3.5 记忆落库（回复先行，写库在后：崩溃最多丢一轮记忆，可接受）
+        if memory is not None:
+            memory.append_turn(session_id, incoming.text, reply_text)
 
         # 5. 决定是否写文档
         bound_doc = self.session_service.bound_doc_id(session_id)
@@ -524,9 +556,8 @@ class Orchestrator:
         与 process_phase2 区别：
         - 新增 /bind-doc-renew 指令分支
         - Scheduler 注入 PlanRuntime（动态追加 / 循环 / 冻结 hook）
-        - 注：ContextCompressor/freeze 未接线（Phase 3.1 归档挂起 2026-09-08）——
-          生产无多轮历史宿主：闲聊单轮无状态、coding 循环自带压缩，
-          组件与测试保留备用，真做长会话时再接
+        - 长会话记忆（2026-09-08 落地）：process() 闲聊路径经 ChatMemory
+          注入历史，压缩/冻结由 ContextCompressor + freeze_session 执行
         """
         if not hasattr(self, "planner"):
             raise FeishuAgentError(

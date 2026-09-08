@@ -1,10 +1,9 @@
 """长会话记忆：ChatMemory 编排单测（mock 边界，6 用例）。"""
 from unittest.mock import MagicMock
 
+from orchestrator.chat_memory import ChatMemory
 from shared.errors import FreezeRequired
 from shared.schemas import ChatMessage
-
-from orchestrator.chat_memory import ChatMemory
 
 
 def _row(role, content):
