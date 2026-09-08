@@ -358,3 +358,20 @@ class LLMActiveRow(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+class MessageRow(Base):
+    """长会话记忆：私聊多轮消息持久化（2026-09-08 spec）。
+
+    role 取值 user/assistant/system（system 仅压缩摘要行）；
+    session_id 为 sessions 的逻辑外键（不加物理约束，与项目风格一致）。
+    """
+    __tablename__ = "messages"
+
+    message_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
