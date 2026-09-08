@@ -30,13 +30,14 @@ Phase 3 建了 ContextCompressor / SessionService.freeze_session / FreezeRequire
    - `list_all(session_id) -> list[MessageRow]`（created_at 升序）
    - `delete_many(message_ids) -> None`（压缩回写用）
 4. **`orchestrator/chat_memory.py`** ChatMemory（编排服务，本 feature 核心）
-   - `prepare_history(session_id) -> list[ChatMessage]`：读库 → ContextCompressor.maybe_compress
-     → 若发生压缩则回写 DB（删旧行 + 插 system 摘要行）
+   - `prepare(session_id, chat_id) -> (history, 生效 session_id, 是否冻结)`：
+     读库 → ContextCompressor.maybe_compress → 压缩则 replace_all 回写；
+     捕获 FreezeRequired → 内部编排 freeze（见时序节）
    - `append_turn(session_id, user_text, reply_text)`：双写 user/assistant
-   - `freeze_and_continue(session_id, current_text, ratio) -> (new_session_id, history)`：
-     编排 freeze（见时序节）
    - `clear(session_id) -> str`：/clear 入口，复用 freeze_session（summary 空、ratio 0）
-5. **`config/settings.py`** +`context_token_budget: int = 200_000`（env `CONTEXT_TOKEN_BUDGET`）
+5. **`config/settings.py` 零新增**：`context_token_budget`（L56，默认 200_000）与
+   `context_compress_trigger_ratio`/`context_freeze_trigger_ratio`/`context_preserve_recent_n`
+   （L65-67）四个字段 Phase 2/3 已存在，直接复用；真机验证时 env 覆盖即可
 
 ### 改动
 
