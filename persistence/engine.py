@@ -4,14 +4,14 @@ engine 与 SessionLocal 在首次调用 get_engine() 时懒加载，
 避免 import 时就要求 DATABASE_URL 可用，方便测试覆盖。
 """
 from contextlib import contextmanager
-from typing import Iterator, Optional
+from typing import Any, Iterator, Optional
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 _engine: Optional[Engine] = None
-_SessionLocal: Optional[sessionmaker] = None
+_SessionLocal: Optional[sessionmaker[Session]] = None
 
 
 def _init_engine() -> Engine:
@@ -27,7 +27,7 @@ def _init_engine() -> Engine:
     return _engine
 
 
-def _engine_kwargs(database_url: str) -> dict:
+def _engine_kwargs(database_url: str) -> dict[str, Any]:
     """按方言组装 create_engine 参数（pg/sqlite 分叉的唯一出口）。
 
     pg：pool_size/max_overflow 仅对 QueuePool 合法（sqlite 传了 TypeError）；
@@ -54,7 +54,7 @@ def get_engine() -> Engine:
     return _init_engine()
 
 
-def session_factory() -> sessionmaker:
+def session_factory() -> sessionmaker[Session]:
     """获取全局 sessionmaker。"""
     _init_engine()
     assert _SessionLocal is not None

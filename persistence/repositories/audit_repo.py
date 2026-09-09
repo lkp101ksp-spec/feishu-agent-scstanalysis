@@ -1,5 +1,5 @@
 """Audit 仓储：write 不可变审计，list_recent 按时间倒序。"""
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -20,7 +20,7 @@ class AuditRepo:
         action: str,
         target_type: str,
         target_id: str,
-        detail: Optional[dict] = None,
+        detail: Optional[dict[str, Any]] = None,
     ) -> AuditLogRow:
         """追加一条审计日志。"""
         row = AuditLogRow(

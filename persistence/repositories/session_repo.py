@@ -30,7 +30,7 @@ class SessionRepo:
         bind_anchor: Any = _UNSET,
         archived_at: Optional[datetime] = None,
         status: Optional[str] = None,
-        approval_scope: Optional[dict] = None,
+        approval_scope: Optional[dict[str, Any]] = None,
         origin_session_id: Optional[str] = None,
     ) -> SessionRow:
         """创建或更新会话。返回 ORM 行实例（未 commit，由调用方决定 commit 时机）。
@@ -81,7 +81,9 @@ class SessionRepo:
         """按主键查询，不存在返回 None。"""
         return self.session.get(SessionRow, session_id)
 
-    def update_bind_expires(self, session_id: str, bind_expires_at) -> Optional[SessionRow]:
+    def update_bind_expires(
+            self, session_id: str,
+            bind_expires_at: Optional[datetime]) -> Optional[SessionRow]:
         """仅更新 bind_expires_at；不改变其他字段。"""
         row = self.session.get(SessionRow, session_id)
         if row is None:

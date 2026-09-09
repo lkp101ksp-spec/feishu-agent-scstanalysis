@@ -71,5 +71,22 @@ packages = [
     "persistence", "skills", "feishu_adapter", "config",
 ]
 
+# 方案 B（2026-09-09）：persistence 层率先提 strict——数据层契约最硬，
+# JSON 列 dict[str, Any] 泛型化后可防"裸 dict 装一切"漂移；其余包仍走宽松基线。
+# 注意：mypy 2.3.1 实测 overrides 内 strict = true 会泄漏为全局 strict（0→554 错），
+# 故显式展开 per-module flags。
+[[tool.mypy.overrides]]
+module = "persistence.*"
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_decorators = true
+warn_unused_ignores = true
+warn_return_any = true
+no_implicit_reexport = true
+strict_equality = true
+
 [tool.coverage.run]
 source = ["gateway", "orchestrator", "persistence", "feishu_adapter", "shared", "config"]

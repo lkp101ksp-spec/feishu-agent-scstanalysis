@@ -4,6 +4,7 @@
 Phase 1 用 JSON 保持 SQLite/PostgreSQL 双兼容。
 """
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -34,7 +35,7 @@ class SessionRow(Base):
     bound_doc_id: Mapped[str | None] = mapped_column(String, nullable=True)
     bind_anchor: Mapped[str | None] = mapped_column(String, nullable=True)
     bind_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    approval_scope: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    approval_scope: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -55,7 +56,7 @@ class TaskRow(Base):
     message_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     intent: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
-    plan_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    plan_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     reply_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -95,7 +96,7 @@ class DocWriteRow(Base):
     requested_by: Mapped[str] = mapped_column(String, nullable=False)
     approval_mode: Mapped[str] = mapped_column(String, nullable=False)
     approval_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    payload_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     anchor_block_id: Mapped[str | None] = mapped_column(String, nullable=True)
     # 本次写入生效的锚点文字（会话级或消息级）：同锚点续写跟随定位用
     anchor_text: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -116,7 +117,7 @@ class AuditLogRow(Base):
     action: Mapped[str] = mapped_column(String, nullable=False, index=True)
     target_type: Mapped[str] = mapped_column(String, nullable=False)
     target_id: Mapped[str] = mapped_column(String, nullable=False)
-    detail_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    detail_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
 
@@ -147,9 +148,9 @@ class ExecutionRow(Base):
     tool_version: Mapped[str | None] = mapped_column(String, nullable=True)
     risk_level: Mapped[str] = mapped_column(String, nullable=False)
     state: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
-    inputs_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    outputs_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    artifacts_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    inputs_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    outputs_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    artifacts_ids: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
     approval_id: Mapped[str | None] = mapped_column(String, nullable=True)
     error_code: Mapped[str | None] = mapped_column(String, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -169,7 +170,7 @@ class ApprovalRow(Base):
     approval_id: Mapped[str] = mapped_column(String, primary_key=True)
     task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     tool_name: Mapped[str] = mapped_column(String, nullable=False)
-    args_preview: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    args_preview: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     actor_open_id: Mapped[str] = mapped_column(String, nullable=False)
     session_id: Mapped[str] = mapped_column(String, nullable=False)
     nonce: Mapped[str] = mapped_column(String, nullable=False, unique=True)
@@ -188,7 +189,7 @@ class PlanRuntimeStateRow(Base):
 
     plan_id: Mapped[str] = mapped_column(String, primary_key=True)
     session_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    state_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    state_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="running")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -19,7 +19,7 @@ class ApprovalRepo:
         *,
         task_id: str,
         tool_name: str,
-        args_preview: dict,
+        args_preview: dict[str, Any],
         actor_open_id: str,
         session_id: str,
         nonce: str,

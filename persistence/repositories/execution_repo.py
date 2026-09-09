@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -22,7 +22,7 @@ class ExecutionRepo:
         node_id: str,
         tool_name: Optional[str],
         risk_level: str,
-        inputs_json: dict,
+        inputs_json: dict[str, Any],
         tool_version: Optional[str] = None,
     ) -> str:
         eid = new_ulid()
@@ -61,8 +61,8 @@ class ExecutionRepo:
         execution_id: str,
         *,
         state: str,
-        outputs_json: Optional[dict] = None,
-        artifacts_ids: Optional[list] = None,
+        outputs_json: Optional[dict[str, Any]] = None,
+        artifacts_ids: Optional[list[Any]] = None,
         approval_id: Optional[str] = None,
         error_code: Optional[str] = None,
         error_message: Optional[str] = None,

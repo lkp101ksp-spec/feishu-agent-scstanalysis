@@ -1,6 +1,8 @@
 """plan_runtime_state 表的 CRUD。"""
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy.orm import Session
 
 from persistence.models import PlanRuntimeStateRow
@@ -15,7 +17,7 @@ class PlanRuntimeStateRepo:
         *,
         plan_id: str,
         session_id: str | None = None,
-        state_json: dict | None = None,
+        state_json: dict[str, Any] | None = None,
         status: str = "running",
     ) -> None:
         existing = (

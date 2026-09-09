@@ -1,6 +1,6 @@
 """Task 仓储：create / get / get_by_message_id / update_status。"""
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
@@ -23,7 +23,7 @@ class TaskRepo:
         message_id: str,
         intent: Optional[str] = None,
         parent_task_id: Optional[str] = None,
-        plan_json: Optional[dict] = None,
+        plan_json: Optional[dict[str, Any]] = None,
     ) -> TaskRow:
         """创建任务行；started_at 自动设为 now，status 默认 'pending'。"""
         row = TaskRow(

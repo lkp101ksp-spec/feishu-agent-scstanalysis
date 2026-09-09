@@ -1,11 +1,13 @@
 """Phase 9: 评论动作推送日志 CRUD（去重判重，ADR-0025）。"""
 from __future__ import annotations
 
+from sqlalchemy.orm import Session
+
 from persistence.models import CommentNotifyRow
 
 
 class CommentNotifyRepo:
-    def __init__(self, session) -> None:
+    def __init__(self, session: Session) -> None:
         self.session = session
 
     def has(self, comment_id: str) -> bool:
