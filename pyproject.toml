@@ -40,6 +40,9 @@ include = ["shared*", "gateway*", "orchestrator*", "feishu_adapter*", "persisten
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# 单测试硬上限 300s：正常最慢用例为秒级，超限即网络/TCP 类挂死，
+# 宁可误杀也不让整个套件无限挂起（2026-09-09 挂死 40min 事故）
+timeout = 300
 markers = [
     "pg: 需要 docker compose 的 PostgreSQL 真库（默认无 Docker 时自动 skip）",
 ]

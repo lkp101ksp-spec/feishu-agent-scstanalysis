@@ -177,6 +177,45 @@ def start_auto_sync_scanner(worker, interval_sec: int = 300):
     return t
 
 
+def start_db_health_monitor(rt: Runtime, interval_sec: int = 30):
+    """DB 健康监控守护线程（2026-09-09 事故驱动：pg 掉线静默离线）。
+
+    每轮 SELECT 1 探活；健康↔故障跃迁时经 IMAdapter 给
+    FEISHU_ADMIN_OPEN_IDS 发飞书告警（故障期指数退避）。
+    无管理员配置时仍记日志跃迁，只是不发 IM。
+    """
+    from gateway.health_monitor import DBHealthMonitor, probe_pg_url
+
+    im = getattr(rt.orchestrator, "im_adapter", None)
+    admin_ids = [
+        x.strip()
+        for x in os.environ.get("FEISHU_ADMIN_OPEN_IDS", "").split(",")
+        if x.strip()
+    ]
+
+    def alert(text: str) -> None:
+        if im is None:
+            return
+        for oid in admin_ids:
+            im.send(oid, "open_id", "text", text)
+
+    # probe 走 psycopg 短超时直连而非共享 engine：docker stop 后
+    # engine.connect() 会无限挂起（2026-09-09 真机复现），监控线程被拖死
+    mon = DBHealthMonitor(probe=lambda: probe_pg_url(rt.settings.database_url),
+                          alert=alert, interval_sec=interval_sec)
+
+    def loop() -> None:
+        while True:
+            mon.tick()
+            time.sleep(mon.next_delay)
+
+    t = threading.Thread(target=loop, daemon=True, name="db-health-monitor")
+    t.start()
+    logger.info("db health monitor started (interval=%ss, admins=%d)",
+                interval_sec, len(admin_ids))
+    return t
+
+
 def im_event_to_payload(model: P2ImMessageReceiveV1) -> dict:
     """SDK model → webhook 兼容 payload（normalize_im_event 可直接消费）。"""
     msg = model.event.message
@@ -448,6 +487,18 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
+    # 文件日志（2026-09-09 事故驱动：隐藏窗口启动时 stderr 全丢，
+    # 进程死亡原因无从排查；logs/ 已 gitignore，滚动 5MB×3）
+    from logging.handlers import RotatingFileHandler
+
+    log_dir = Path(__file__).resolve().parent.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    file_handler = RotatingFileHandler(
+        log_dir / "ws_client.log", maxBytes=5 * 1024 * 1024,
+        backupCount=3, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    logging.getLogger().addHandler(file_handler)
     # Phase 22：单实例守卫（四轮真机双实例复发；--force 显式替换）
     acquire_single_instance(force="--force" in sys.argv)
     rt = build_runtime()
@@ -463,6 +514,8 @@ def main() -> None:
     )
     # Phase 23：bio_workspace 磁盘治理（TTL+LRU 周期清理）
     start_bio_workspace_gc_sweeper(rt.settings)
+    # DB 健康监控：pg 掉线/恢复告警（2026-09-09 静默离线事故）
+    start_db_health_monitor(rt)
     client = lark.ws.Client(
         rt.settings.feishu.app_id,
         rt.settings.feishu.app_secret,
