@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
+from orchestrator.llm_router import LLMRouter
+from persistence.repositories.audit_repo import AuditRepo
+from persistence.repositories.session_repo import SessionRepo
 from shared.errors import FreezeRequired
 from shared.schemas import ChatMessage
 from shared.ulid_ import new_ulid
@@ -12,9 +15,9 @@ class ContextCompressor:
     def __init__(
         self,
         *,
-        llm_router,
-        session_repo,
-        audit_repo,
+        llm_router: LLMRouter,
+        session_repo: SessionRepo,
+        audit_repo: Optional[AuditRepo],
         token_counter: Optional[Callable] = None,
         token_budget: int = 200_000,
         compress_trigger_ratio: float = 0.8,

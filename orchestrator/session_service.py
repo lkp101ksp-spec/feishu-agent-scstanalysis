@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from persistence.models import SessionRow
+from persistence.repositories.audit_repo import AuditRepo
+from persistence.repositories.session_freeze_repo import SessionFreezeRepo
 from persistence.repositories.session_repo import SessionRepo
 from shared.ulid_ import new_ulid
 
@@ -17,7 +19,9 @@ class SessionService:
     Phase 3：freeze_session / freeze_repo / audit_repo。
     """
 
-    def __init__(self, repo: SessionRepo, freeze_repo=None, audit_repo=None):
+    def __init__(self, repo: SessionRepo,
+                 freeze_repo: Optional[SessionFreezeRepo] = None,
+                 audit_repo: Optional[AuditRepo] = None):
         self.repo = repo
         self.freeze_repo = freeze_repo
         self.audit_repo = audit_repo

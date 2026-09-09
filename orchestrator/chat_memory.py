@@ -5,8 +5,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal, cast
+from typing import Literal, Optional, cast
 
+from feishu_adapter.im_adapter import IMAdapter
+from orchestrator.runtime.context_compressor import ContextCompressor
+from orchestrator.session_service import SessionService
+from persistence.repositories.audit_repo import AuditRepo
+from persistence.repositories.message_repo import MessageRepo
 from shared.errors import FreezeRequired
 from shared.schemas import ChatMessage
 
@@ -19,8 +24,9 @@ _ChatRole = Literal["system", "user", "assistant"]
 class ChatMemory:
     """私聊多轮记忆：prepare 装配历史（必要时压缩/冻结），append_turn 落库。"""
 
-    def __init__(self, *, message_repo, compressor, session_service, im,
-                 audit_repo=None) -> None:
+    def __init__(self, *, message_repo: MessageRepo, compressor: ContextCompressor,
+                 session_service: SessionService, im: IMAdapter,
+                 audit_repo: Optional[AuditRepo] = None) -> None:
         self.message_repo = message_repo
         self.compressor = compressor
         self.session_service = session_service
