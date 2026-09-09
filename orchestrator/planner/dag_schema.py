@@ -1,9 +1,9 @@
 """DAG 节点 / Plan Pydantic 模型 + 静态校验。"""
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from shared.errors import DAGValidationError
 
@@ -14,7 +14,7 @@ class DAGNode(BaseModel):
     tool_name: Optional[str] = None
     inputs: dict[str, str] = Field(default_factory=dict)
     depends_on: list[str] = Field(default_factory=list)
-    config: dict = Field(default_factory=dict)
+    config: dict[str, Any] = Field(default_factory=dict)
     condition: Optional[str] = None
     true_branch: Optional[list["DAGNode"]] = None
     false_branch: Optional[list["DAGNode"]] = None
@@ -33,7 +33,9 @@ class DAGNode(BaseModel):
 
     @field_validator("tool_name")
     @classmethod
-    def tool_required_for_tool_kind(cls, v, info):
+    def tool_required_for_tool_kind(
+        cls, v: Optional[str], info: ValidationInfo
+    ) -> Optional[str]:
         if info.data.get("kind") == "tool" and not v:
             raise ValueError("tool_name required when kind=tool")
         return v

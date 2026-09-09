@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 
 from orchestrator.executor.executor_client import ExecutorClient
 from orchestrator.executor.kernel_manager import KernelPool
+from orchestrator.tools.tool_handler import ToolHandler
 from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle
 from shared.ulid_ import new_ulid
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class LocalExecutor(ExecutorClient):
-    def __init__(self, kernel_pool: KernelPool, tool_handler) -> None:
+    def __init__(self, kernel_pool: KernelPool, tool_handler: ToolHandler) -> None:
         self._kernel_pool = kernel_pool
         self._tool_handler = tool_handler
         self._handles: dict[str, TaskHandle] = {}

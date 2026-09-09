@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Callable, List, Literal, Optional
+from typing import Any, Callable, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -28,9 +28,9 @@ class ToolSpec(BaseModel):
 
     name: str
     description: str
-    parameters: dict  # OpenAI JSON schema
+    parameters: dict[str, Any]  # OpenAI JSON schema
     risk_level: RiskLevel
-    handler: Callable
+    handler: Callable[..., Any]
     requires_approval: bool = False
     timeout_sec: int = 60
     max_retries: int = 1
@@ -44,7 +44,7 @@ class ToolSpec(BaseModel):
     # arbitrary_types_allowed=True，字段等价搬移）
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    def to_openai_function(self) -> dict:
+    def to_openai_function(self) -> dict[str, Any]:
         """转 OpenAI function calling 格式。"""
         return {
             "type": "function",
@@ -83,7 +83,7 @@ class ToolRegistry:
 
     def to_openai_functions(
         self, include_L2: bool = True, planner_visible: Optional[bool] = None
-    ) -> List[dict]:  # 类体内 list 被同名方法遮蔽，注解须用 typing.List
+    ) -> List[dict[str, Any]]:  # 类体内 list 被同名方法遮蔽，注解须用 typing.List
         items = list(self._tools.values())
         if not include_L2:
             items = [t for t in items if t.risk_level != "L2_side_effect"]

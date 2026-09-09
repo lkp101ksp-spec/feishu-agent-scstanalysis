@@ -18,7 +18,7 @@ class ContextCompressor:
         llm_router: LLMRouter,
         session_repo: SessionRepo,
         audit_repo: Optional[AuditRepo],
-        token_counter: Optional[Callable] = None,
+        token_counter: Optional[Callable[[list[ChatMessage]], int]] = None,
         token_budget: int = 200_000,
         compress_trigger_ratio: float = 0.8,
         freeze_trigger_ratio: float = 0.95,

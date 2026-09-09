@@ -7,16 +7,18 @@ summarize_text 等 LLM 工具直接消费纯文本）。
 """
 from __future__ import annotations
 
+from typing import Any
+
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
 
-def _flatten_blocks_text(blocks) -> str:
+def _flatten_blocks_text(blocks: Any) -> str:
     """递归提取块树里的全部文本 content（read_doc 的 text 输出）。
 
     SDK/CLI 两种结构通吃：深度遍历 dict/list，收集字符串型 "content" 值。
     """
 
-    def _walk(node, out: list) -> None:
+    def _walk(node: Any, out: list[str]) -> None:
         if isinstance(node, dict):
             for k, v in node.items():
                 if k == "content" and isinstance(v, str) and v:
@@ -33,7 +35,8 @@ def _flatten_blocks_text(blocks) -> str:
 
 
 def register_l0_read(
-    reg: ToolRegistry, *, doc_adapter, base_adapter, drive_adapter
+    reg: ToolRegistry, *, doc_adapter: Any, base_adapter: Any,
+    drive_adapter: Any,
 ) -> None:
     """注册 L0 只读工具；adapter 为 None 时跳过对应工具（Phase 12 板块②）。"""
     if doc_adapter is not None:

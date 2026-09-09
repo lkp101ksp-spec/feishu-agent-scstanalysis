@@ -19,7 +19,7 @@ import zlib
 from collections import deque
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from orchestrator.coding.agent_loop import AgentLoop, LoopResult
 from orchestrator.coding.code_tools import CodeTools
@@ -28,6 +28,11 @@ from orchestrator.coding.workspace import WorkspaceManager
 from orchestrator.tools.tool_handler import ToolHandler, ToolResult
 from orchestrator.tools.tool_registry import ToolRegistry
 from shared.ulid_ import new_ulid
+
+if TYPE_CHECKING:
+    from orchestrator.approval_broker import ApprovalBroker
+    from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+    from shared.schemas import IncomingMessage
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +58,13 @@ _SYSTEM_PROMPT = """你是飞书后台 coding agent，在用户的本机会话�
 class _ProgressReporter:
     """on_step 节流器：每 N 个工具事件一行进度；关键事件即时发。"""
 
-    def __init__(self, im, chat_id: str, every: int = 3) -> None:
+    def __init__(self, im: Any, chat_id: str, every: int = 3) -> None:
         self.im = im
         self.chat_id = chat_id
         self.every = every
         self._n = 0
 
-    def __call__(self, step: int, event: dict) -> None:
+    def __call__(self, step: int, event: dict[str, Any]) -> None:
         kind = event.get("event")
         if kind == "tool":
             self._n += 1
@@ -104,9 +109,9 @@ class _ProgressCard:
     状态，终态结果仍以文本兜底回复），主流程绝不受影响。
     """
 
-    def __init__(self, im, chat_id: str, task_text: str,
+    def __init__(self, im: Any, chat_id: str, task_text: str,
                  every: int = 3, min_interval_sec: float = 2.0,
-                 now=time.monotonic) -> None:
+                 now: Callable[[], float] = time.monotonic) -> None:
         self.im = im
         self.chat_id = chat_id
         self.task_text = task_text
@@ -131,7 +136,7 @@ class _ProgressCard:
             return False
         return bool(self._msg_id)
 
-    def __call__(self, step: int, event: dict) -> None:
+    def __call__(self, step: int, event: dict[str, Any]) -> None:
         if self._broken or not self._msg_id:
             return
         kind = event.get("event")
@@ -182,7 +187,7 @@ class _ProgressCard:
             self._broken = True
 
     def _render(self, step: int, result: LoopResult | None = None,
-                error: str = "") -> dict:
+                error: str = "") -> dict[str, Any]:
         """卡面渲染：进行中（任务预览 + 最近事件 + 耗时）/ 终态两形态。"""
         preview = self.task_text[:_TASK_PREVIEW_CAP] + (
             "…" if len(self.task_text) > _TASK_PREVIEW_CAP else "")
@@ -220,7 +225,7 @@ class _ProgressCard:
                     "tag": "lark_md", "content": "\n".join(lines)}}]}
 
 
-def _toolresult_to_dict(tr: ToolResult) -> dict:
+def _toolresult_to_dict(tr: ToolResult) -> dict[str, Any]:
     """ToolResult → AgentLoop 观察 dict。"""
     if tr.error_code:
         return {"ok": False, "error": f"{tr.error_code}: {tr.error_message}"}
@@ -229,7 +234,7 @@ def _toolresult_to_dict(tr: ToolResult) -> dict:
     return out
 
 
-def _approval_card(approval_id: str, owner: str, info: list[str]) -> dict:
+def _approval_card(approval_id: str, owner: str, info: list[str]) -> dict[str, Any]:
     """code 审批卡：value 内嵌 owner（回调比对不查库）。"""
     lines = "\n".join(f"- {x}" for x in info) or "-（无详情）"
     return {
@@ -255,13 +260,13 @@ def _approval_card(approval_id: str, owner: str, info: list[str]) -> dict:
 _SUGGESTION_CAPS = {"skill": 100, "issue": 300, "fix": 300, "file": 20, "patch": 1500}
 
 
-def _cap_suggestion(suggestion: dict) -> dict:
+def _cap_suggestion(suggestion: dict[str, Any]) -> dict[str, Any]:
     """裁剪 suggestion 字段长度，保证按钮 value 内嵌 JSON 不超飞书长度限制。"""
     return {k: str(suggestion.get(k, ""))[:cap]
             for k, cap in _SUGGESTION_CAPS.items()}
 
 
-def _skill_improve_card(owner: str, suggestion: dict) -> dict:
+def _skill_improve_card(owner: str, suggestion: dict[str, Any]) -> dict[str, Any]:
     """skill 改进审批卡（Phase 27）：value 内嵌 owner + suggestion JSON（回调不查库）。"""
     improve_id = new_ulid()
     capped = _cap_suggestion(suggestion)
@@ -296,9 +301,9 @@ def _skill_improve_card(owner: str, suggestion: dict) -> dict:
 class CodingRunner:
     """/code 指令入口：受理 + 后台线程驱动 AgentLoop。"""
 
-    def __init__(self, *, llm, im, tool_handler: ToolHandler,
-                 registry: ToolRegistry, broker, settings=None,
-                 diagnoser=None) -> None:
+    def __init__(self, *, llm: Any, im: Any, tool_handler: ToolHandler,
+                 registry: ToolRegistry, broker: ApprovalBroker, settings: Any = None,
+                 diagnoser: "SkillDiagnoser | None" = None) -> None:
         """diagnoser 为 Phase 27 SkillDiagnoser（可空，None 时跳过失败诊断）。"""
         self.llm = llm
         self.im = im
@@ -322,7 +327,7 @@ class CodingRunner:
         self.bio_workspace_root = getattr(s, "bio_workspace_root", "")
 
     # ------------------------------------------------------------------ #
-    def handle(self, incoming) -> dict:
+    def handle(self, incoming: IncomingMessage) -> dict[str, Any]:
         """process() 的 /code 分支入口：受理即回 + 后台线程执行。"""
         task_text = incoming.text.strip()[len("/code"):].strip()
         if not task_text:
@@ -338,7 +343,7 @@ class CodingRunner:
         t.start()
         return {"status": "coding_accepted", "task_text": task_text}
 
-    def _thread_body(self, incoming, task_text: str) -> None:
+    def _thread_body(self, incoming: IncomingMessage, task_text: str) -> None:
         """后台线程主体：异常兜底回复。"""
         try:
             self.run_sync(incoming, task_text)
@@ -350,7 +355,7 @@ class CodingRunner:
                 pass
 
     # ------------------------------------------------------------------ #
-    def run_sync(self, incoming, task_text: str) -> dict:
+    def run_sync(self, incoming: IncomingMessage, task_text: str) -> dict[str, Any]:
         """同步执行全链（测试直调）；返回 LoopResult 摘要 dict。"""
         session_id = self._session_id(incoming.chat_id)
         approve_fn = self._make_approve_fn(incoming)
@@ -404,7 +409,7 @@ class CodingRunner:
                 "final_text": result.final_text}
 
     # ------------------------------------------------------------------ #
-    def _maybe_diagnose_skill(self, incoming, result: LoopResult,
+    def _maybe_diagnose_skill(self, incoming: IncomingMessage, result: LoopResult,
                               task_text: str) -> None:
         """失败轨迹 → SkillDiagnoser 诊断 → 改进审批卡；任何异常只记日志。
 
@@ -430,7 +435,8 @@ class CodingRunner:
             logger.exception("skill diagnose/card failed (ignored)")
 
     # ------------------------------------------------------------------ #
-    def _make_reporter(self, incoming, task_text: str):
+    def _make_reporter(self, incoming: IncomingMessage,
+                       task_text: str) -> "_ProgressCard | _ProgressReporter":
         """进度反馈器工厂（Phase 39）：优先 v2 进度卡；发卡失败或无
         message_id（CLI 路径/老部署）自动回退 v1 节流文本。"""
         card = _ProgressCard(self.im, incoming.chat_id, task_text)
@@ -442,7 +448,7 @@ class CodingRunner:
         """同 chat 稳定会话 ID（工作区跨任务持久）。"""
         return f"code_{zlib.crc32(chat_id.encode('utf-8')):08x}"
 
-    def _make_approve_fn(self, incoming) -> Callable[[list[str]], bool]:
+    def _make_approve_fn(self, incoming: IncomingMessage) -> Callable[[list[str]], bool]:
         """构造审批闭包：发卡（内嵌 owner）→ broker.wait → approve 判定。"""
         chat_id = incoming.chat_id
         owner = incoming.sender_open_id
@@ -461,10 +467,10 @@ class CodingRunner:
         return approve_fn
 
     def _make_dispatch(self, code_tools: CodeTools, session_id: str,
-                       actor_open_id: str) -> Callable[[str, object], dict]:
+                       actor_open_id: str) -> Callable[[str, Any], dict[str, Any]]:
         """统一分发：code 原语走 CodeTools，其余走 ToolHandler.execute。"""
 
-        def dispatch(name: str, arguments) -> dict:
+        def dispatch(name: str, arguments: Any) -> dict[str, Any]:
             if name in _CODE_PRIMITIVES:
                 return code_tools.dispatch(name, arguments)
             if isinstance(arguments, str):

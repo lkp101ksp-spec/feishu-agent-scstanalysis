@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from shared.ulid_ import new_ulid
 
@@ -18,7 +18,7 @@ class HotLoader:
     def __init__(
         self, *,
         tool_registry: "ToolRegistry",
-        audit_repo,
+        audit_repo: Any,
         ast_guard: "ASTGuard",
         temp_dir: str = "/tmp/hot_tools",
     ) -> None:
@@ -31,7 +31,7 @@ class HotLoader:
         self, *,
         name: str,
         code: str,
-        parameters: dict,
+        parameters: dict[str, Any],
         risk_level: str,
         actor_open_id: str,
     ) -> str:

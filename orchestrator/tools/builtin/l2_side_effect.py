@@ -1,6 +1,8 @@
 """L2 副作用工具：write_doc, write_base_projection, send_card, upload_drive。"""
 from __future__ import annotations
 
+from typing import Any
+
 from orchestrator.blocks.serializer import parse_blocks
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
@@ -8,10 +10,10 @@ from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 def register_l2_side_effect(
     reg: ToolRegistry,
     *,
-    doc_adapter,
-    base_adapter,
-    im_adapter,
-    drive_adapter,
+    doc_adapter: Any,
+    base_adapter: Any,
+    im_adapter: Any,
+    drive_adapter: Any,
 ) -> None:
     """注册 L2 副作用工具；adapter 为 None 时跳过对应工具（Phase 12 板块②）。"""
     if doc_adapter is not None:

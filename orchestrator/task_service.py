@@ -5,7 +5,7 @@
 
 Phase 1 简化为 process() 直接调用 mark_*；Phase 2 可拆出异步 task queue。
 """
-from typing import Optional
+from typing import Any, Optional
 
 from persistence.repositories.audit_repo import AuditRepo
 from persistence.repositories.task_repo import TaskRepo
@@ -25,7 +25,7 @@ class TaskService:
         session_id: str,
         message_id: str,
         intent: Optional[str] = None,
-        plan_json: Optional[dict] = None,
+        plan_json: Optional[dict[str, Any]] = None,
     ) -> str:
         """创建任务，返回 task_id。"""
         task_id = new_ulid()

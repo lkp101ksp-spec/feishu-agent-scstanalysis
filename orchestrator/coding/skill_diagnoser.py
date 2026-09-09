@@ -14,10 +14,14 @@ import re
 import shutil
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from shared.schemas import ChatMessage
+
+if TYPE_CHECKING:
+    from orchestrator.coding.agent_loop import LoopResult
 
 logger = logging.getLogger(__name__)
 
@@ -56,13 +60,13 @@ param_variants 均不支持，写了也会被丢弃）；重试策略类建议�
 class SkillDiagnoser:
     """skill 失败诊断：轨迹分析 → 改进建议 → 审批写回。"""
 
-    def __init__(self, llm, skills_dir: Path) -> None:
+    def __init__(self, llm: Any, skills_dir: Path) -> None:
         """llm 为 LLMRouter（用其 chat 纯文本接口）；skills_dir 为 skills/ 根目录。"""
         self.llm = llm
         self.skills_dir = Path(skills_dir)
 
     # ------------------------------------------------------------------ #
-    def diagnose(self, loop_result, task_text: str) -> dict:
+    def diagnose(self, loop_result: LoopResult, task_text: str) -> dict[str, Any]:
         """分析失败轨迹，返回改进建议 dict；无 skill 涉及或解析失败返回 {"ok": False}。"""
         tool_map = self._skill_tool_map()
         skill_events = [e for e in (loop_result.tool_events or [])
@@ -101,7 +105,7 @@ class SkillDiagnoser:
         return suggestion
 
     # ------------------------------------------------------------------ #
-    def apply(self, suggestion: dict) -> dict:
+    def apply(self, suggestion: dict[str, Any]) -> dict[str, Any]:
         """审批通过后写回 skill 文件；失败返回错误 dict 而非抛异常。"""
         skill_name = str(suggestion.get("skill", "")).strip()
         file_kind = str(suggestion.get("file", "")).strip()
@@ -122,7 +126,7 @@ class SkillDiagnoser:
         return {"ok": False, "error": f"unsupported file kind: {file_kind}"}
 
     # ------------------------------------------------------------------ #
-    def _apply_skill_md(self, md_path: Path, suggestion: dict) -> dict:
+    def _apply_skill_md(self, md_path: Path, suggestion: dict[str, Any]) -> dict[str, Any]:
         """SKILL.md 写回：备份后追加 "## 改进记录（date）" 段落。"""
         if not md_path.is_file():
             return {"ok": False, "error": f"file not found: {md_path}"}
@@ -138,7 +142,7 @@ class SkillDiagnoser:
         logger.info("skill md patched: %s (backup %s)", md_path, backup)
         return {"ok": True, "file": str(md_path), "backup": str(backup)}
 
-    def _apply_tools_yaml(self, yaml_path: Path, suggestion: dict) -> dict:
+    def _apply_tools_yaml(self, yaml_path: Path, suggestion: dict[str, Any]) -> dict[str, Any]:
         """tools.yaml 写回：备份后按 patch 映射更新工具字段再 dump。"""
         if not yaml_path.is_file():
             return {"ok": False, "error": f"file not found: {yaml_path}"}
@@ -168,13 +172,13 @@ class SkillDiagnoser:
                 "updated": updated}
 
     # ------------------------------------------------------------------ #
-    def _merge_tool_patch(self, tools: list[dict], patch_map: dict) -> list[str]:
+    def _merge_tool_patch(self, tools: list[dict[str, Any]], patch_map: dict[str, Any]) -> list[str]:
         """合并 patch（仅白名单字段）：{"工具名": {字段: 值}} 逐工具更新；{字段: 值} 作用于首个工具。
 
         schema 外字段（LLM 幻觉）在此被过滤丢弃，永不落盘。
         """
 
-        def _sub_fields(sub: dict) -> dict:
+        def _sub_fields(sub: dict[str, Any]) -> dict[str, Any]:
             return {k: v for k, v in sub.items() if k in TOOLS_YAML_FIELDS}
 
         tool_names = {str(t.get("name")) for t in tools}
@@ -208,9 +212,9 @@ class SkillDiagnoser:
                     mapping[str(tool["name"])] = yaml_path.parent.name
         return mapping
 
-    def _load_tool_defs(self) -> dict[str, dict]:
+    def _load_tool_defs(self) -> dict[str, dict[str, Any]]:
         """扫描 skills_dir/*/tools.yaml，构建 工具名 → 工具定义 dict 映射。"""
-        defs: dict[str, dict] = {}
+        defs: dict[str, dict[str, Any]] = {}
         if not self.skills_dir.is_dir():
             return defs
         for yaml_path in sorted(self.skills_dir.glob("*/tools.yaml")):
@@ -223,7 +227,7 @@ class SkillDiagnoser:
                     defs[str(tool["name"])] = tool
         return defs
 
-    def _tool_defs_text(self, defs: dict[str, dict], names: list[str]) -> str:
+    def _tool_defs_text(self, defs: dict[str, dict[str, Any]], names: list[str]) -> str:
         """把涉及工具的定义渲染为 YAML 文本，单工具截断防 prompt 爆炸。"""
         lines: list[str] = []
         for name in names:
@@ -235,7 +239,7 @@ class SkillDiagnoser:
             lines.append(dumped.strip()[:MAX_TOOL_DEF_CHARS])
         return "\n".join(lines) if lines else "(none)"
 
-    def _condense_events(self, events: list[dict]) -> str:
+    def _condense_events(self, events: list[dict[str, Any]]) -> str:
         """压缩工具事件：优先保留失败事件，总量封顶，单行 JSON 输出。
 
         失败事件的 error 摘要（Phase 28 T1 起由 AgentLoop 附带）一并送入
@@ -254,7 +258,7 @@ class SkillDiagnoser:
             lines.append(json.dumps(row, ensure_ascii=False))
         return "\n".join(lines) if lines else "(none)"
 
-    def _parse_json(self, raw: str) -> "dict | None":
+    def _parse_json(self, raw: str) -> "dict[str, Any] | None":
         """解析 LLM 返回：剥离 ```json 围栏后提取首个 JSON 对象。"""
         if not raw:
             return None

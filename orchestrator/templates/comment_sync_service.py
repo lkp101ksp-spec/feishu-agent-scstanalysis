@@ -1,15 +1,19 @@
 """Phase 8 T4: 评论按需同步（拉取 + 展平 + 幂等落库，ADR-0019）。"""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
+
+from feishu_adapter.comment_client import CommentClient
+from persistence.models import CommentRow
+from persistence.repositories.comment_repo import CommentRepo
 
 
 class CommentSyncService:
-    def __init__(self, client, comment_repo) -> None:
+    def __init__(self, client: CommentClient, comment_repo: CommentRepo) -> None:
         self.client = client
         self.comment_repo = comment_repo
 
-    def sync(self, *, doc_id: str) -> dict:
+    def sync(self, *, doc_id: str) -> dict[str, Any]:
         """拉取飞书评论并展平落库（root + reply 各一行）。
 
         返回 {"fetched": 拉取总数, "new": 新增数, "updated": 更新数,
@@ -65,6 +69,6 @@ class CommentSyncService:
 
     def list_stored(
         self, *, doc_id: str, block_id: Optional[str] = None,
-    ) -> list:
+    ) -> list[CommentRow]:
         """读取本地快照（stored API 数据源）。"""
         return self.comment_repo.list_by_doc(doc_id, block_id=block_id)

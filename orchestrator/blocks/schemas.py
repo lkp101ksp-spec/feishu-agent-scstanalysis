@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal, Union
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 
 class HeadingBlock(BaseModel):
@@ -41,7 +41,7 @@ class TableBlock(BaseModel):
 
     @field_validator("rows")
     @classmethod
-    def check_rows_columns(cls, v, info):
+    def check_rows_columns(cls, v: list[list[str]], info: ValidationInfo) -> list[list[str]]:
         headers = info.data.get("headers", [])
         if not headers:
             return v

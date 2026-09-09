@@ -7,7 +7,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
+
+from feishu_adapter.comment_client import CommentClient
+from orchestrator.templates.version_service import VersionService
+from persistence.models import CommentRow
+from persistence.repositories.comment_repo import CommentRepo
+from persistence.repositories.template_repo import TemplateRepo
 
 logger = logging.getLogger(__name__)
 
@@ -45,18 +51,19 @@ def parse_action(text: str) -> Optional[ParsedAction]:
 class CommentActionService:
     """owner 显式 apply pending 评论中的指令动作。"""
 
-    def __init__(self, comment_repo, template_repo, version_service,
-                 comment_client=None) -> None:
+    def __init__(self, comment_repo: CommentRepo, template_repo: TemplateRepo,
+                 version_service: VersionService,
+                 comment_client: Optional[CommentClient] = None) -> None:
         self.comment_repo = comment_repo
         self.template_repo = template_repo
         self.version_service = version_service
         # 可选注入：回执写回客户端（None 时禁用回执，ADR-0034）
         self.comment_client = comment_client
 
-    def apply(self, *, doc_id: str, caller_open_id: str) -> dict:
+    def apply(self, *, doc_id: str, caller_open_id: str) -> dict[str, Any]:
         """遍历 pending 评论执行动作；逐条权限校验，单条失败不中断。"""
         applied = skipped = failed = 0
-        details: list[dict] = []
+        details: list[dict[str, Any]] = []
         for c in self.comment_repo.list_pending(doc_id):
             parsed = parse_action(c.text)
             if parsed is None:
@@ -76,7 +83,8 @@ class CommentActionService:
         return {"applied": applied, "skipped": skipped,
                 "failed": failed, "details": details}
 
-    def _send_receipt(self, *, doc_id: str, comment, detail: dict) -> None:
+    def _send_receipt(self, *, doc_id: str, comment: CommentRow,
+                      detail: dict[str, Any]) -> None:
         """对已应用评论回写固定文案回执；失败仅记 warning 不阻断（ADR-0034）。"""
         if self.comment_client is None:
             return
@@ -89,7 +97,8 @@ class CommentActionService:
             logger.warning("receipt failed for comment %s",
                            comment.comment_id, exc_info=True)
 
-    def _execute(self, parsed: ParsedAction, *, caller_open_id: str) -> dict:
+    def _execute(self, parsed: ParsedAction, *,
+                 caller_open_id: str) -> dict[str, Any]:
         """执行单条动作；返回 {kind, status, reason?}。"""
         tpl = self.template_repo.get(parsed.template_id)
         if tpl is None or getattr(tpl, "archived_at", None) is not None:

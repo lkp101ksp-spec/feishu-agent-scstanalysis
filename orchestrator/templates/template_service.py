@@ -2,16 +2,19 @@
 from __future__ import annotations
 
 import json
+from typing import Any, Optional, cast
 
 from orchestrator.blocks.schemas import AnyBlock
 from orchestrator.blocks.serializer import blocks_to_json
 from orchestrator.templates.renderer import render_block, render_subplan
 from orchestrator.templates.schemas import SubPlanTemplateStep
+from persistence.models import TemplateRow
+from persistence.repositories.template_repo import TemplateRepo
 from shared.ulid_ import new_ulid
 
 
 class TemplateService:
-    def __init__(self, repo) -> None:
+    def __init__(self, repo: TemplateRepo) -> None:
         self.repo = repo
 
     def create_block(
@@ -42,21 +45,23 @@ class TemplateService:
         )
         return tid
 
-    def list_by_owner(self, owner_open_id: str) -> list:
+    def list_by_owner(self, owner_open_id: str) -> list[TemplateRow]:
         return self.repo.list_by_owner(owner_open_id)
 
-    def get(self, template_id: str):
+    def get(self, template_id: str) -> Optional[TemplateRow]:
         return self.repo.get(template_id)
 
-    def render_block(self, *, template_id: str, params: dict):
+    def render_block(self, *, template_id: str,
+                     params: dict[str, str]) -> list[Any]:
         tpl = self.repo.get(template_id)
         if tpl is None or tpl.archived_at is not None:
             raise ValueError(f"template {template_id} not found")
         if tpl.type != "block":
             raise ValueError(f"template {template_id} is not a block template")
-        return render_block(tpl.blocks_json, params)
+        return render_block(cast(str, tpl.blocks_json), params)
 
-    def render_subplan(self, *, template_id: str, params: dict):
+    def render_subplan(self, *, template_id: str,
+                       params: dict[str, str]) -> list[SubPlanTemplateStep]:
         tpl = self.repo.get(template_id)
         if tpl is None or tpl.archived_at is not None:
             raise ValueError(f"template {template_id} not found")

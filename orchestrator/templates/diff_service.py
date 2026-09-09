@@ -8,30 +8,37 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Optional
+from typing import Any, Optional
+
+from persistence.repositories.template_repo import TemplateRepo
+from persistence.repositories.template_version_repo import TemplateVersionRepo
 
 
-def _content_hash(item: dict) -> str:
+def _content_hash(item: dict[str, Any]) -> str:
     """块的稳定内容指纹（键序无关）。"""
     return hashlib.md5(
         json.dumps(item, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
 
 
-def _diff_lists(a: list[dict], b: list[dict], key: str) -> dict:
+def _diff_lists(a: list[dict[str, Any]], b: list[dict[str, Any]],
+                key: str) -> dict[str, list[dict[str, Any]]]:
     """两阶段配对 diff（ADR-0027）。
 
     阶段1：组内同内容 hash 精确配对 → index 变化为 moved，相同为 unchanged；
     阶段2：余量按序配对 → 键集差异为 changed；
     剩余：b 侧 added，a 侧 removed。
     """
-    added: list[dict] = []
-    removed: list[dict] = []
-    changed: list[dict] = []
-    moved: list[dict] = []
+    added: list[dict[str, Any]] = []
+    removed: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+    moved: list[dict[str, Any]] = []
 
     # 分组：key 值 → (a 侧队列, b 侧队列)
-    groups: dict[str, tuple[list[tuple[int, dict]], list[tuple[int, dict]]]] = {}
+    groups: dict[str, tuple[
+        list[tuple[int, dict[str, Any]]],
+        list[tuple[int, dict[str, Any]]],
+    ]] = {}
     for i, item in enumerate(a):
         k = str(item.get(key, ""))
         groups.setdefault(k, ([], []))[0].append((i, item))
@@ -41,10 +48,10 @@ def _diff_lists(a: list[dict], b: list[dict], key: str) -> dict:
 
     for _, (qa, qb) in groups.items():
         # 阶段1：hash 精确配对（a 侧队列被消耗）
-        b_by_hash: dict[str, list[tuple[int, dict]]] = {}
+        b_by_hash: dict[str, list[tuple[int, dict[str, Any]]]] = {}
         for ib, item_b in qb:
             b_by_hash.setdefault(_content_hash(item_b), []).append((ib, item_b))
-        remaining_a: list[tuple[int, dict]] = []
+        remaining_a: list[tuple[int, dict[str, Any]]] = []
         consumed_b: set[int] = set()
         for ia, item_a in qa:
             h = _content_hash(item_a)
@@ -84,20 +91,22 @@ def _diff_lists(a: list[dict], b: list[dict], key: str) -> dict:
             "changed": changed, "moved": moved}
 
 
-def _loads_or_empty(raw: Optional[str]) -> list[dict]:
+def _loads_or_empty(raw: Optional[str]) -> list[dict[str, Any]]:
     if not raw:
         return []
-    return json.loads(raw)
+    loaded: list[dict[str, Any]] = json.loads(raw)
+    return loaded
 
 
 class VersionDiffService:
     """模板两版本块级 diff（blocks 按 type 配对，steps 按 tool 配对）。"""
 
-    def __init__(self, version_repo, template_repo=None) -> None:
+    def __init__(self, version_repo: TemplateVersionRepo,
+                 template_repo: Optional[TemplateRepo] = None) -> None:
         self.version_repo = version_repo
         self.template_repo = template_repo
 
-    def diff(self, *, template_id: str, v_a: int, v_b: int) -> dict:
+    def diff(self, *, template_id: str, v_a: int, v_b: int) -> dict[str, Any]:
         va = self.version_repo.get_by_version(template_id, v_a)
         vb = self.version_repo.get_by_version(template_id, v_b)
         if va is None or vb is None:
@@ -125,7 +134,7 @@ class VersionDiffService:
             },
         }
 
-    def render(self, diff: dict) -> str:
+    def render(self, diff: dict[str, Any]) -> str:
         """diff dict → IM 文本（+ / - / ~ / ↔）。"""
         lines = [f"模板 {diff['template_id']} 版本 {diff['v_a']} → "
                  f"{diff['v_b']} diff："]

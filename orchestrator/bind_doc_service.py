@@ -2,13 +2,22 @@
 
 Phase 3：续期 / 续期卡片。
 """
+from __future__ import annotations
+
 import re
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Optional
 
 from orchestrator.session_service import SessionService
 from persistence.repositories.audit_repo import AuditRepo
+from persistence.repositories.session_repo import SessionRepo
 from shared.errors import BindDocInvalidError
 from shared.ulid_ import new_ulid
+
+if TYPE_CHECKING:
+    # 仅类型标注用：DocAdapter/IMAdapter 真实导入会拖进 lark SDK 冷导入
+    from feishu_adapter.doc_adapter import DocAdapter
+    from feishu_adapter.im_adapter import IMAdapter
 
 _DOC_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 
@@ -30,11 +39,11 @@ class BindDocService:
         session_service: SessionService,
         audit_repo: AuditRepo,
         ttl_sec: int,
-        session_repo=None,
-        im_adapter=None,
+        session_repo: Optional[SessionRepo] = None,
+        im_adapter: Optional[IMAdapter] = None,
         renew_threshold_sec: int = 300,
-        doc_adapter=None,
-    ):
+        doc_adapter: Optional[DocAdapter] = None,
+    ) -> None:
         self.session_service = session_service
         self.audit_repo = audit_repo
         self.ttl_sec = ttl_sec

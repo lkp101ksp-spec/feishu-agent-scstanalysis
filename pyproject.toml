@@ -76,7 +76,7 @@ packages = [
 # 注意：mypy 2.3.1 实测 overrides 内 strict = true 会泄漏为全局 strict（0→554 错），
 # 故显式展开 per-module flags。
 [[tool.mypy.overrides]]
-module = "persistence.*"
+module = ["persistence.*", "gateway.*", "orchestrator.*"]
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true

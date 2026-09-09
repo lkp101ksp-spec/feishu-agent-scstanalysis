@@ -12,11 +12,22 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from orchestrator.planner.scheduler import Scheduler
 from orchestrator.tools.tool_registry import parse_disabled_tools
 from shared.executor_types import ExecutionState
 from shared.schemas import IncomingMessage
+
+if TYPE_CHECKING:
+    # 仅类型标注用：斩断 lark SDK（im_adapter）等重依赖的运行时导入链
+    from sqlalchemy.orm import Session
+
+    from feishu_adapter.im_adapter import IMAdapter
+    from orchestrator.approval_broker import ApprovalBroker
+    from orchestrator.blocks.schemas import AnyBlock
+    from orchestrator.llm_router import LLMRouter
+    from orchestrator.planner.dag_schema import DAGNode, DAGPlan
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +54,11 @@ def _fmt_elapsed(sec: float) -> str:
     return f"{sec // 3600}h{sec % 3600 // 60:02d}m"
 
 
-def _research_llm(orch):
+def _research_llm(orch: Any) -> LLMRouter | None:
     """Phase 44：/research 场景 llm——orch.research_llm 优先，缺省回退 orch.llm。"""
-    return getattr(orch, "research_llm", None) or getattr(orch, "llm", None)
+    llm: LLMRouter | None = (
+        getattr(orch, "research_llm", None) or getattr(orch, "llm", None))
+    return llm
 
 
 class _ResearchProgressCard:
@@ -62,8 +75,9 @@ class _ResearchProgressCard:
     - 任何 PATCH 失败 → _broken 熔断不再更新（绝不影响任务本身）。
     """
 
-    def __init__(self, im, chat_id: str, task_text: str, *,
-                 min_interval: float = 8.0, now=time.monotonic) -> None:
+    def __init__(self, im: IMAdapter, chat_id: str, task_text: str, *,
+                 min_interval: float = 8.0,
+                 now: Callable[[], float] = time.monotonic) -> None:
         self.im = im
         self.chat_id = chat_id
         self.task_text = task_text
@@ -95,14 +109,14 @@ class _ResearchProgressCard:
         self._disabled = False
         return True
 
-    def plan_done(self, plan) -> None:
+    def plan_done(self, plan: DAGPlan) -> None:
         """规划完成 → 执行阶段（记录节点总数），立即刷新一次。"""
         self._phase = "running"
         self._total = len(plan.nodes)
         self._push(self._render_running(
             {"counts": {}, "running": [], "done": [], "total": self._total}))
 
-    def tick(self, snap: dict) -> None:
+    def tick(self, snap: dict[str, Any]) -> None:
         """观察线程喂快照：终态数变化立即刷新，否则按 min_interval 节流。"""
         if self._disabled or self._broken or self._finished:
             return
@@ -115,7 +129,7 @@ class _ResearchProgressCard:
             self._last_terminal = terminal
             self._push(self._render_running(snap))
 
-    def finish(self, status: str, node_states: dict) -> None:
+    def finish(self, status: str, node_states: dict[str, str]) -> None:
         """终态定格：完成卡（状态 + 节点统计 + 耗时）。"""
         self._finished = True
         counts: dict[str, int] = {}
@@ -156,7 +170,7 @@ class _ResearchProgressCard:
 
     # === 内部 ===
 
-    def _push(self, card_json: dict) -> None:
+    def _push(self, card_json: dict[str, Any]) -> None:
         if self._disabled or self._broken:
             return
         try:
@@ -170,7 +184,7 @@ class _ResearchProgressCard:
         t = self.task_text
         return t[:_TASK_PREVIEW_CAP] + ("…" if len(t) > _TASK_PREVIEW_CAP else "")
 
-    def _render_planning(self) -> dict:
+    def _render_planning(self) -> dict[str, Any]:
         return {
             "header": "研究任务执行中",
             "elements": [
@@ -183,7 +197,7 @@ class _ResearchProgressCard:
             ],
         }
 
-    def _render_running(self, snap: dict) -> dict:
+    def _render_running(self, snap: dict[str, Any]) -> dict[str, Any]:
         c = snap["counts"]
         terminal = (c.get("success", 0) + c.get("failed", 0)
                     + c.get("skipped", 0) + c.get("denied", 0))
@@ -217,7 +231,9 @@ class _ResearchProgressCard:
 class ResearchRunner:
     """研究任务后台执行器：受理即回，完成后回结果。"""
 
-    def __init__(self, *, orchestrator, session_factory, im_adapter=None) -> None:
+    def __init__(self, *, orchestrator: Any,
+                 session_factory: Callable[[], Session],
+                 im_adapter: IMAdapter | None = None) -> None:
         self.orch = orchestrator
         self.session_factory = session_factory  # () -> SQLAlchemy Session（独立）
         self.im = im_adapter or orchestrator.im
@@ -235,7 +251,7 @@ class ResearchRunner:
 
     # === 对外入口 ===
 
-    def handle(self, incoming: IncomingMessage) -> dict:
+    def handle(self, incoming: IncomingMessage) -> dict[str, Any]:
         """process() 的 /research 分支入口：解析参数并受理/提示用法。
 
         有任务描述 → 受理即回 + 后台线程执行；
@@ -291,8 +307,10 @@ class ResearchRunner:
             except Exception:
                 pass
 
-    def _execute(self, incoming: IncomingMessage, task_text: str, session,
-                 card: "_ResearchProgressCard | None" = None) -> dict:
+    def _execute(self, incoming: IncomingMessage, task_text: str,
+                 session: Session,
+                 card: "_ResearchProgressCard | None" = None
+                 ) -> dict[str, Any]:
         """主链路：session/task 落库 → plan → schedule → 渲染 → 写文档 → 回复。"""
         # Phase 41：card 缺省时给禁用卡（下游调用点零判断）
         if card is None:
@@ -423,7 +441,9 @@ class ResearchRunner:
         if allow_node_l2:
             l2_gate = self._make_l2_gate(
                 session=session, session_id=session_id, task_id=task_id,
-                incoming=incoming, broker=broker, bound_doc=bound_doc_pre,
+                # allow_node_l2 已含 broker is not None 判定，此处收窄仅为类型
+                incoming=incoming, broker=cast("ApprovalBroker", broker),
+                bound_doc=bound_doc_pre,
                 task_text=task_text, node_write_map=node_write_map,
             )
         scheduler = Scheduler(
@@ -601,7 +621,7 @@ class ResearchRunner:
                 logger.exception("research progress watch tick failed")
 
     @staticmethod
-    def _snapshot_nodes(scheduler: Scheduler) -> dict:
+    def _snapshot_nodes(scheduler: Scheduler) -> dict[str, Any]:
         """scheduler 节点状态快照：分类计数 + 运行中（含已耗时）+ 完成序列。
 
         观察线程与单测共用；total 动态取 len(plan.nodes)（控制流展开
@@ -635,7 +655,8 @@ class ResearchRunner:
 
     # === Phase 20：sc_* 分析图 IM 回传 ===
 
-    def _sc_image_host_paths(self, plan, scheduler, ws_root: str) -> list[str]:
+    def _sc_image_host_paths(self, plan: DAGPlan, scheduler: Scheduler,
+                             ws_root: str) -> list[str]:
         """收集成功 sc_*/st_* 节点输出的图片主机路径
         （umap/dotplot/spatial/plot，有序）。
 
@@ -666,7 +687,8 @@ class ResearchRunner:
                 paths.append(host)
         return paths
 
-    def _send_sc_images(self, incoming: IncomingMessage, plan, scheduler) -> int:
+    def _send_sc_images(self, incoming: IncomingMessage, plan: DAGPlan,
+                        scheduler: Scheduler) -> int:
         """成功 sc_* 节点的分析图逐张上传发送到 IM。
 
         附属动作：单图失败只记日志，不影响研究任务本身的
@@ -685,7 +707,8 @@ class ResearchRunner:
                 logger.warning("sc image send failed (%s): %s", host, e)
         return sent
 
-    def _inject_sc_image_blocks(self, blocks: list, plan, scheduler,
+    def _inject_sc_image_blocks(self, blocks: list[AnyBlock], plan: DAGPlan,
+                                scheduler: Scheduler,
                                 bound_doc: str | None,
                                 has_write_node: bool) -> None:
         """写回 blocks 尾部追加 sc 分析图 ImageBlock（path 模式，Phase 20）。
@@ -724,12 +747,13 @@ class ResearchRunner:
     # === Phase 17：节点级 L2 审批（write_doc 卡片确认） ===
 
     def _make_l2_gate(
-        self, *, session, session_id: str, task_id: str,
-        incoming: IncomingMessage, broker, bound_doc: str | None,
+        self, *, session: Session, session_id: str, task_id: str,
+        incoming: IncomingMessage, broker: ApprovalBroker,
+        bound_doc: str | None,
         task_text: str, node_write_map: dict[str, str],
-    ):
+    ) -> Callable[[DAGNode, dict[str, Any]], tuple[bool, str]]:
         """构造 scheduler 的 l2_gate 闭包（捕获本次任务的审批上下文）。"""
-        def gate(node, inputs: dict) -> tuple[bool, str]:
+        def gate(node: DAGNode, inputs: dict[str, Any]) -> tuple[bool, str]:
             if node.tool_name != "write_doc":
                 return True, ""  # 防御性放行（其余 L2 不会出现在 plan 里）
             return self._gate_write_doc(
@@ -741,8 +765,10 @@ class ResearchRunner:
         return gate
 
     def _gate_write_doc(
-        self, *, node, inputs: dict, session, session_id: str, task_id: str,
-        incoming: IncomingMessage, broker, bound_doc: str | None,
+        self, *, node: DAGNode, inputs: dict[str, Any], session: Session,
+        session_id: str, task_id: str,
+        incoming: IncomingMessage, broker: ApprovalBroker,
+        bound_doc: str | None,
         task_text: str, node_write_map: dict[str, str],
     ) -> tuple[bool, str]:
         """write_doc 节点审批门：校验 doc_id → 落 pending → 发卡 → 等决策。
@@ -801,7 +827,8 @@ class ResearchRunner:
             doc_write_id=doc_write_id, decision=decision or "deny", blocks=[])
         return False, "APPROVAL_TIMEOUT" if decision is None else "TOOL_DENIED"
 
-    def _finalize_node_writes(self, session, scheduler, node_write_map: dict) -> None:
+    def _finalize_node_writes(self, session: Session, scheduler: Scheduler,
+                              node_write_map: dict[str, str]) -> None:
         """write_doc 节点终态 → doc_writes 状态机收尾（success/failed）。
 
         gate 批准时记录只到 approved；节点真实执行结果由本方法补齐。
@@ -832,7 +859,7 @@ class ResearchRunner:
                 )
 
     @staticmethod
-    def _write_doc_preview(inputs: dict, max_chars: int = 400) -> str:
+    def _write_doc_preview(inputs: dict[str, Any], max_chars: int = 400) -> str:
         """write_doc 参数摘要（落库 payload 审计 + 卡片预览）。"""
         import json
 
@@ -849,8 +876,9 @@ class ResearchRunner:
 
     @staticmethod
     def _node_l2_card(
-        *, node_id: str, doc_write_id: str, task_text: str, inputs: dict,
-    ) -> dict:
+        *, node_id: str, doc_write_id: str, task_text: str,
+        inputs: dict[str, Any],
+    ) -> dict[str, Any]:
         """Phase 17：write_doc 节点审批卡片（任务摘要+参数预览+按钮）。"""
         task_short = task_text[:60] + ("…" if len(task_text) > 60 else "")
         preview = ResearchRunner._write_doc_preview(inputs, max_chars=200)
@@ -883,10 +911,11 @@ class ResearchRunner:
         }
 
     def _writeback_with_confirm(
-        self, *, session, session_id: str, task_id: str,
-        incoming: IncomingMessage, blocks: list, broker,
+        self, *, session: Session, session_id: str, task_id: str,
+        incoming: IncomingMessage, blocks: list[AnyBlock],
+        broker: ApprovalBroker,
         task_text: str = "", status: str = "", node_count: int = 0,
-        outputs_digest: list | None = None,
+        outputs_digest: list[str] | None = None,
     ) -> tuple[bool, str]:
         """card_confirm 写回：落 pending → 发审批卡片 → 等决策 → 收尾状态机。
 
@@ -949,8 +978,8 @@ class ResearchRunner:
     @staticmethod
     def _approval_card(
         *, task_id: str, doc_write_id: str, task_text: str,
-        status: str, node_count: int, outputs_digest: list,
-    ) -> dict:
+        status: str, node_count: int, outputs_digest: list[str],
+    ) -> dict[str, Any]:
         """Phase 15 T3：结构化审批卡片（任务摘要+统计+关键输出+按钮）。
 
         数据均来自调用方 _execute 已有产物；preview_text 落库审计不变，

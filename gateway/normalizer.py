@@ -1,7 +1,7 @@
 """Webhook payload → IncomingMessage 归一化。"""
 import json
 import re
-from typing import Optional
+from typing import Any, Optional
 
 from shared.errors import FeishuAgentError
 from shared.schemas import IncomingMessage
@@ -66,7 +66,7 @@ def parse_write_to(text: str) -> tuple[Optional[str], str]:
     return (anchor.strip() or None), body.strip()
 
 
-def normalize_im_event(payload: dict) -> IncomingMessage:
+def normalize_im_event(payload: dict[str, Any]) -> IncomingMessage:
     """从 im.message.receive_v1 payload 提取 IncomingMessage。
 
     字段映射：

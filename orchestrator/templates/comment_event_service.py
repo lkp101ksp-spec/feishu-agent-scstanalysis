@@ -12,6 +12,17 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from feishu_adapter.comment_client import CommentClient
+from feishu_adapter.doc_adapter import DocAdapter
+from orchestrator.llm_router import LLMRouter
+from orchestrator.templates.comment_sync_service import CommentSyncService
+from orchestrator.templates.notify_service import CommentNotifyService
+from persistence.repositories.comment_repo import CommentRepo
+from persistence.repositories.session_repo import SessionRepo
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +50,7 @@ def extract_question(text: str) -> str | None:
     return None
 
 
-def _block_tree_text(blocks: list) -> str:
+def _block_tree_text(blocks: list[dict[str, Any]] | None) -> str:
     """官方块树 → 纯文本（text_run.content 拼接，块间换行）。"""
     parts: list[str] = []
     for b in blocks or []:
@@ -56,10 +67,14 @@ def _block_tree_text(blocks: list) -> str:
 class CommentEventService:
     """处理 drive.notice.comment_add_v1 事件的业务链。"""
 
-    def __init__(self, *, session_repo, sync_service, notify_service,
-                 bot_open_id: str | None, session=None,
-                 comment_repo=None, doc_adapter=None, llm=None,
-                 qa_reply_client=None) -> None:
+    def __init__(self, *, session_repo: SessionRepo,
+                 sync_service: CommentSyncService,
+                 notify_service: CommentNotifyService,
+                 bot_open_id: str | None, session: Session | None = None,
+                 comment_repo: CommentRepo | None = None,
+                 doc_adapter: DocAdapter | None = None,
+                 llm: LLMRouter | None = None,
+                 qa_reply_client: CommentClient | None = None) -> None:
         self.session_repo = session_repo
         self.sync_service = sync_service
         self.notify_service = notify_service
@@ -73,7 +88,7 @@ class CommentEventService:
         self.qa_reply_client = qa_reply_client
 
     def handle(self, *, file_token: str, operator_open_id: str,
-               comment_id: str = "") -> dict:
+               comment_id: str = "") -> dict[str, Any]:
         """处理一条评论事件；异常吃掉返回 error（保长连接）。"""
         try:
             return self._handle(file_token=file_token,
@@ -89,7 +104,7 @@ class CommentEventService:
             return {"status": "error", "file_token": file_token}
 
     def _handle(self, *, file_token: str, operator_open_id: str,
-                comment_id: str = "") -> dict:
+                comment_id: str = "") -> dict[str, Any]:
         # 1. 防循环：bot 自身评论（回执写回触发）直接忽略；
         #    拿不到 bot id 时保守跳过（宁可漏处理不冒死循环风险）
         if self.bot_open_id is None:
@@ -132,7 +147,8 @@ class CommentEventService:
             result["qa"] = qa
         return result
 
-    def _maybe_answer_comment(self, *, doc_id: str, comment_id: str) -> dict | None:
+    def _maybe_answer_comment(self, *, doc_id: str,
+                              comment_id: str) -> dict[str, Any] | None:
         """/ask 问答回执；依赖缺失/非问答/已答过返回 None 不阻断主链。"""
         if not comment_id or self.comment_repo is None:
             return None

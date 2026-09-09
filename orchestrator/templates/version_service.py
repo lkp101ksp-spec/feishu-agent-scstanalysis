@@ -3,11 +3,15 @@ from __future__ import annotations
 
 from typing import Optional
 
+from persistence.models import TemplateVersionRow
+from persistence.repositories.template_repo import TemplateRepo
+from persistence.repositories.template_version_repo import TemplateVersionRepo
 from shared.ulid_ import new_ulid
 
 
 class VersionService:
-    def __init__(self, version_repo, template_repo) -> None:
+    def __init__(self, version_repo: TemplateVersionRepo,
+                 template_repo: TemplateRepo) -> None:
         self.version_repo = version_repo
         self.template_repo = template_repo
 
@@ -40,7 +44,7 @@ class VersionService:
         self.version_repo.session.flush()
         return current + 1
 
-    def list_versions(self, template_id: str) -> list:
+    def list_versions(self, template_id: str) -> list[TemplateVersionRow]:
         return self.version_repo.list_by_template(template_id)
 
     def rollback(

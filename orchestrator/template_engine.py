@@ -5,14 +5,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from orchestrator.blocks.schemas import AnyBlock
 
 
 @dataclass
 class BlockSpec:
     block_type: str
-    content: dict
+    content: dict[str, Any]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {"block_type": self.block_type, **self.content}
 
 
@@ -30,7 +34,8 @@ class TemplateEngine:
             )
         ]
 
-    def render_table(self, *, headers: list, rows: list) -> list[BlockSpec]:
+    def render_table(self, *, headers: list[str],
+                     rows: list[list[str]]) -> list[BlockSpec]:
         if len(rows) < self.TABLE_ROW_THRESHOLD:
             return [
                 BlockSpec(
@@ -79,7 +84,7 @@ class TemplateEngine:
         ]
 
     def render_plan_summary(
-        self, *, status: str, node_states: dict, artifacts_count: int
+        self, *, status: str, node_states: dict[str, str], artifacts_count: int
     ) -> list[BlockSpec]:
         blocks = [
             BlockSpec(
@@ -106,9 +111,9 @@ class TemplateEngine:
     # === Phase 5: 富文本块（AnyBlock） ===
 
     def render_plan_summary_blocks(
-        self, *, status: str, node_states: dict, artifacts_count: int,
-        outputs: list | None = None, task_label: str = "",
-    ) -> list:
+        self, *, status: str, node_states: dict[str, str], artifacts_count: int,
+        outputs: list[str] | None = None, task_label: str = "",
+    ) -> list[AnyBlock]:
         """Phase 5: 返回 Pydantic Block 列表（用于飞书 doc 渲染）。
 
         outputs：关键输出摘要行（Phase 14 补——IM 有「关键输出」段而
@@ -125,7 +130,7 @@ class TemplateEngine:
         title = f"Plan 执行结果（{status}）"
         if task_label:
             title += f"— {task_label}"
-        blocks = [
+        blocks: list[AnyBlock] = [
             HeadingBlock(level=2, text=title),
             TextBlock(text=f"Nodes: {len(node_states)}; Artifacts: {artifacts_count}"),
         ]
@@ -138,8 +143,12 @@ class TemplateEngine:
         ))
         return blocks
 
-    def render_blocks_to_text(self, blocks) -> str:
-        """Phase 5: list[Block] → 纯文本（用于 IM reply）。"""
+    def render_blocks_to_text(self, blocks: list[Any]) -> str:
+        """Phase 5: list[Block] → 纯文本（用于 IM reply）。
+
+        blocks 元素为 AnyBlock 判别联合；本函数靠 getattr 取 type 分发，
+        联合类型无法静态收窄属性，故元素标注 Any（行为不变）。
+        """
         lines = []
         for b in blocks:
             t = getattr(b, "type", None)

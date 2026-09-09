@@ -6,6 +6,7 @@ handler 捕获 BioRunError 转工具级 error_code/error_message。
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from orchestrator.tools.bio.bio_runner import (
     BioRunError,
@@ -16,7 +17,7 @@ from orchestrator.tools.bio.bio_runner import (
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
 
-def _err(exc: BioRunError) -> dict:
+def _err(exc: BioRunError) -> dict[str, str]:
     """BioRunError → 工具错误输出（ToolHandler 透传 error_code）。"""
     return {"error_code": exc.error_code, "error_message": str(exc)}
 
@@ -44,7 +45,7 @@ def register_l3_singlecell(
             return bio_gpu_image, True
         return None, False
 
-    def sc_load(*, path: str, format: str = "auto") -> dict:  # noqa: A002
+    def sc_load(*, path: str, format: str = "auto") -> dict[str, Any]:  # noqa: A002
         """读入本地单细胞数据 → dataset_ref + 概要统计。"""
         # 规划纠偏：模型有时把既有 dataset_ref 当文件路径塞给 sc_load
         # （ut-7 真机复现 SC_PATH_FORBIDDEN）——若 path 恰是 workspace 下
@@ -73,7 +74,7 @@ def register_l3_singlecell(
         return out
 
     def sc_qc(*, dataset_ref: str, min_genes: int = 600,
-              min_cells: int = 3, max_mt_pct: float = 20.0) -> dict:
+              min_cells: int = 3, max_mt_pct: float = 20.0) -> dict[str, Any]:
         """质控过滤 → filtered.h5ad + 前后统计。"""
         try:
             out = runner.run("qc", {
@@ -88,7 +89,7 @@ def register_l3_singlecell(
 
     def sc_process(*, dataset_ref: str, n_top_hvg: int = 2000,
                    n_pcs: int = 50, n_neighbors: int = 15,
-                   resolution: float = 1.0) -> dict:
+                   resolution: float = 1.0) -> dict[str, Any]:
         """标准流程（归一化→HVG→PCA→UMAP→Leiden）→ processed.h5ad + umap.png。"""
         image, gpus = _accel()
         try:
@@ -103,7 +104,7 @@ def register_l3_singlecell(
         return out
 
     def sc_markers(*, dataset_ref: str, method: str = "wilcoxon",
-                   top_n: int = 10) -> dict:
+                   top_n: int = 10) -> dict[str, Any]:
         """每簇差异基因 → markers JSON + dotplot.png。"""
         image, gpus = _accel()
         try:
@@ -117,7 +118,7 @@ def register_l3_singlecell(
         return out
 
     def sc_plot(*, dataset_ref: str, genes: list[str],
-                kind: str = "violin") -> dict:
+                kind: str = "violin") -> dict[str, Any]:
         """指定基因画图（violin/umap_gene）→ png 路径列表。"""
         try:
             out = runner.run("plot", {
@@ -132,7 +133,7 @@ def register_l3_singlecell(
     def sc_enrichment(*, dataset_ref: str, group: str = "",
                       gene_sets: list[str] | None = None,
                       top_n: int = 15, min_log2fc: float = 0.25,
-                      method: str = "wilcoxon") -> dict:
+                      method: str = "wilcoxon") -> dict[str, Any]:
         """富集分析（Phase 31）：DEG→ORA + GSEA → csv/png。"""
         try:
             out = runner.run("enrichment", {
@@ -147,7 +148,7 @@ def register_l3_singlecell(
         return out
 
     def sc_score_genes(*, dataset_ref: str,
-                       gene_sets: dict[str, list[str]]) -> dict:
+                       gene_sets: dict[str, list[str]]) -> dict[str, Any]:
         """基因集打分（Phase 32）：多基因集 score_genes → 分数/图。"""
         try:
             out = runner.run("score", {
@@ -159,7 +160,7 @@ def register_l3_singlecell(
         return out
 
     def sc_metabolism(*, dataset_ref: str, top_n: int = 30,
-                      species: str = "human") -> dict:
+                      species: str = "human") -> dict[str, Any]:
         """代谢通路活性（Phase 32）：KEGG 逐通路打分 → 簇均值+热图。"""
         try:
             out = runner.run("metabolism", {
@@ -171,7 +172,7 @@ def register_l3_singlecell(
         out.pop("ok", None)
         return out
 
-    def sc_pseudotime(*, dataset_ref: str, root_marker: str = "") -> dict:
+    def sc_pseudotime(*, dataset_ref: str, root_marker: str = "") -> dict[str, Any]:
         """扩散伪时序（Phase 32）：diffmap+DPT → 伪时序/轨迹图。"""
         try:
             out = runner.run("pseudotime", {
@@ -183,7 +184,7 @@ def register_l3_singlecell(
         return out
 
     def sc_de(*, dataset_ref: str, groupby: str, group_a: str,
-              group_b: str, method: str = "wilcoxon", top_n: int = 20) -> dict:
+              group_b: str, method: str = "wilcoxon", top_n: int = 20) -> dict[str, Any]:
         """组间差异（Phase 33）：两组定向 DE → csv+火山图。"""
         try:
             out = runner.run("de", {
@@ -199,7 +200,7 @@ def register_l3_singlecell(
     def sc_subcluster(*, dataset_ref: str, clusters: list[str],
                       n_top_hvg: int = 2000, n_pcs: int = 50,
                       n_neighbors: int = 15,
-                      resolution: float = 1.0) -> dict:
+                      resolution: float = 1.0) -> dict[str, Any]:
         """亚聚类（Phase 33）：指定簇子集重聚类 → 新 dataset_ref。"""
         try:
             out = runner.run("subcluster", {
@@ -215,7 +216,7 @@ def register_l3_singlecell(
     def sc_integrate(*, dataset_ref: str, batch: str,
                      method: str = "bbknn", n_top_hvg: int = 2000,
                      n_pcs: int = 50, n_neighbors: int = 15,
-                     resolution: float = 1.0) -> dict:
+                     resolution: float = 1.0) -> dict[str, Any]:
         """批次整合（Phase 33）：bbknn → 新 dataset_ref。"""
         try:
             out = runner.run("integrate", {
@@ -230,7 +231,7 @@ def register_l3_singlecell(
         return out
 
     def sc_cellfreq(*, dataset_ref: str, by: str, group: str = "",
-                    celltype_col: str = "leiden") -> dict:
+                    celltype_col: str = "leiden") -> dict[str, Any]:
         """组成比较（Phase 33）：比例表+卡方 → csv+堆叠图。"""
         try:
             out = runner.run("cellfreq", {
@@ -245,7 +246,7 @@ def register_l3_singlecell(
     def sc_cellchat(*, dataset_ref: str, celltype_col: str = "leiden",
                     species: str = "human", expr_prop: float = 0.1,
                     min_cells: int = 10, top_n: int = 30,
-                    max_cells_per_group: int = 0) -> dict:
+                    max_cells_per_group: int = 0) -> dict[str, Any]:
         """细胞通讯（Phase 34）：liana cellchat → LR 表+dotplot+热图。"""
         try:
             out = runner.run("cellchat", {
@@ -261,7 +262,7 @@ def register_l3_singlecell(
 
     def sc_milo(*, dataset_ref: str, sample_col: str, group_col: str,
                 group_a: str, group_b: str, k: int = 0,
-                top_n: int = 20, max_cells_per_sample: int = 0) -> dict:
+                top_n: int = 20, max_cells_per_sample: int = 0) -> dict[str, Any]:
         """差异丰度（Phase 34）：KNN 邻域 + NB-GLM → da csv+UMAP。"""
         try:
             out = runner.run("milo", {
@@ -277,7 +278,7 @@ def register_l3_singlecell(
 
     def sc_deconv(*, dataset_ref: str, bulk_file: str,
                   celltype_col: str = "leiden", method: str = "wnnls",
-                  top_n: int = 200) -> dict:
+                  top_n: int = 200) -> dict[str, Any]:
         """bulk 解卷积（Phase 34）：wNNLS/NuSVR → 比例 csv+图。
 
         bulk_file 复用 sc_load 的数据根白名单校验与 /data 挂载。
@@ -299,9 +300,9 @@ def register_l3_singlecell(
 
     def sc_annotate(*, dataset_ref: str, method: str = "celltypist",
                     model: str = "Immune_All_Low.pkl",
-                    marker_sets: dict | None = None,
+                    marker_sets: dict[str, list[str]] | None = None,
                     celltype_col: str = "leiden",
-                    out_col: str = "annotation") -> dict:
+                    out_col: str = "annotation") -> dict[str, Any]:
         """细胞注释（Phase 35）：celltypist 参考 / marker 打分双路。"""
         try:
             out = runner.run("annotate", {
@@ -315,9 +316,9 @@ def register_l3_singlecell(
         return out
 
     def sc_meta(*, dataset_ref: str, op: str, col: str = "",
-                mapping: dict | None = None, out_col: str = "",
+                mapping: dict[str, str] | None = None, out_col: str = "",
                 csv_file: str = "", key_col: str = "",
-                old: str = "", new: str = "") -> dict:
+                old: str = "", new: str = "") -> dict[str, Any]:
         """元数据编辑（Phase 35）：merge_csv/map_values/rename_col。"""
         try:
             payload = {
@@ -340,7 +341,7 @@ def register_l3_singlecell(
 
     def sc_doublet(*, dataset_ref: str, expected_rate: float = 0.06,
                    n_prin_comps: int = 30,
-                   celltype_col: str = "leiden") -> dict:
+                   celltype_col: str = "leiden") -> dict[str, Any]:
         """双联体检测（Phase 35）：scrublet → 写回 doublet 列。"""
         try:
             out = runner.run("doublet", {
@@ -353,7 +354,7 @@ def register_l3_singlecell(
         return out
 
     def sc_cellcycle(*, dataset_ref: str,
-                     celltype_col: str = "leiden") -> dict:
+                     celltype_col: str = "leiden") -> dict[str, Any]:
         """细胞周期打分（Phase 35）：Tirosh S/G2M → 写回 phase 列。"""
         try:
             out = runner.run("cellcycle", {
@@ -367,7 +368,7 @@ def register_l3_singlecell(
     def sc_scenic(*, dataset_ref: str, species: str = "human",
                   db: str = "500bp", max_cells: int = 3000,
                   celltype_col: str = "leiden", n_workers: int = 2,
-                  seed: int = 42) -> dict:
+                  seed: int = 42) -> dict[str, Any]:
         """转录调控网络（Phase 36，pySCENIC）：DB 目录只读挂载进容器。"""
         db_root = (Path(bio_scenic_db_root) if bio_scenic_db_root
                    else Path(__file__).resolve().parents[3])
@@ -396,7 +397,7 @@ def register_l3_singlecell(
 
     def sc_wnn(*, rna_file: str, adt_file: str, rna_dims: int = 30,
                adt_dims: int = 18, resolution: float = 1.0,
-               n_neighbors: int = 20, seed: int = 42) -> dict:
+               n_neighbors: int = 20, seed: int = 42) -> dict[str, Any]:
         """WNN 多组学整合（Phase 37，muon）：双文件 → 新 dataset_ref。"""
         try:
             mount_r, rel_r, host_r = runner.resolve_data_path(rna_file)
@@ -432,7 +433,7 @@ def register_l3_singlecell(
                     celltype_col: str = "", group: str = "",
                     n_genes: int = 1000, n_net: int = 10,
                     n_cells: int = 500, min_lib_size: int = 1000,
-                    mt_threshold: float = 0.1) -> dict:
+                    mt_threshold: float = 0.1) -> dict[str, Any]:
         """虚拟敲除（Phase 37，scTenifoldKnk R 保真链路）。"""
         try:
             out = runner.run("knockout", {

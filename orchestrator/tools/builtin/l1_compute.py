@@ -6,6 +6,8 @@ run_blast stub 已删除（2026-08-31）：真实检索走 L3 blast_search（NCB
 """
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
 # 摘要角色词：约束输出长度与风格，降低不可控性
@@ -22,7 +24,7 @@ _CLASSIFY_SYSTEM = (
 
 
 def register_l1_compute(
-    reg: ToolRegistry, *, llm_router, kernel_manager,
+    reg: ToolRegistry, *, llm_router: Any, kernel_manager: Any,
     exec_timeout_sec: int = 60,
 ) -> None:
     reg.register(
@@ -86,7 +88,7 @@ def register_l1_compute(
     )
 
 
-def _make_summarize_handler(llm_router):
+def _make_summarize_handler(llm_router: Any) -> Callable[..., dict[str, Any]]:
     """summarize_text handler 工厂：LLM 失败返回 error_code=LLM_FAILED。
 
     ToolHandler 会把 dict 内的 error_code/error_message 透传到 ToolResult，
@@ -97,7 +99,7 @@ def _make_summarize_handler(llm_router):
 
     from shared.schemas import ChatMessage
 
-    def handler(text, max_words=200):
+    def handler(text: Any, max_words: int = 200) -> dict[str, Any]:
         if not isinstance(text, str):
             text = json.dumps(text, ensure_ascii=False)
         try:
@@ -115,11 +117,11 @@ def _make_summarize_handler(llm_router):
     return handler
 
 
-def _make_classify_handler(llm_router):
+def _make_classify_handler(llm_router: Any) -> Callable[[str], dict[str, str]]:
     """classify_intent handler 工厂：失败回退 "other"（分类非关键路径）。"""
     from shared.schemas import ChatMessage
 
-    def handler(text):
+    def handler(text: str) -> dict[str, str]:
         try:
             out = llm_router.chat([
                 ChatMessage(role="system", content=_CLASSIFY_SYSTEM),
@@ -134,7 +136,9 @@ def _make_classify_handler(llm_router):
     return handler
 
 
-def _make_run_python_handler(kernel_pool, exec_timeout_sec: int = 60):
+def _make_run_python_handler(
+    kernel_pool: Any, exec_timeout_sec: int = 60
+) -> Callable[..., dict[str, Any]]:
     """run_python handler 工厂：KernelPool.exec_code 容器内真实执行。
 
     session_id 缺省 "research"——模型不规划 session_id，研究任务内
@@ -143,17 +147,18 @@ def _make_run_python_handler(kernel_pool, exec_timeout_sec: int = 60):
     """
     from shared.errors import SandboxTimeoutError, SandboxUnavailableError
 
-    def handler(code, session_id=""):
+    def handler(code: str, session_id: str = "") -> dict[str, Any]:
         if kernel_pool is None:
             return {
                 "error_code": "SANDBOX_UNAVAILABLE",
                 "error_message": "kernel_pool 未注入（引擎未初始化）",
             }
         try:
-            return kernel_pool.exec_code(
+            result: dict[str, Any] = kernel_pool.exec_code(
                 session_id or "research", code,
                 timeout_sec=exec_timeout_sec,
             )
+            return result
         except SandboxTimeoutError as e:
             return {"error_code": "SANDBOX_TIMEOUT", "error_message": str(e)}
         except SandboxUnavailableError as e:

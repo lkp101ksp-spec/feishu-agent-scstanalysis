@@ -18,6 +18,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
@@ -29,16 +30,20 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
 )
 from lark_oapi.event.custom import CustomizedEvent
 
+from config.settings import Settings
 from gateway.app import process_card_payload, run_im_pipeline
 from gateway.normalizer import NormalizeError
 from gateway.runtime import Runtime, build_runtime
+from orchestrator.bind_doc_service import BindDocService
 from orchestrator.bio_workspace_gc import _SweepResult, sweep
+from orchestrator.executor.kernel_manager import KernelPool
+from orchestrator.templates.auto_sync_worker import CommentAutoSyncWorker
 from shared.errors import FeishuAgentError, RateLimitExceededError
 
 logger = logging.getLogger(__name__)
 
 
-def run_renew_scan_once(renew_scan_service) -> None:
+def run_renew_scan_once(renew_scan_service: BindDocService) -> None:
     """同步执行一轮续期卡片扫描（async 方法在独立 event loop 跑一次）。"""
     asyncio.run(renew_scan_service.maybe_send_renew_card())
 
@@ -65,14 +70,14 @@ def start_renew_scanner(rt: Runtime) -> threading.Thread | None:
     return t
 
 
-def comment_event_to_payload(ev: CustomizedEvent) -> dict:
+def comment_event_to_payload(ev: CustomizedEvent) -> dict[str, Any]:
     """评论事件原始 dict → 归一化 payload。
 
     真机结构（2026-08-29 验证）：file_token/notice_type/from_user_id
     在 notice_meta 内；comment_id/reply_id 在顶层。
     """
-    e: dict = dict(ev.event or {})
-    meta: dict = e.get("notice_meta") or {}
+    e: dict[str, Any] = dict(ev.event or {})
+    meta: dict[str, Any] = e.get("notice_meta") or {}
     operator = meta.get("from_user_id") or {}
     return {
         "notice_type": meta.get("notice_type", ""),
@@ -82,12 +87,14 @@ def comment_event_to_payload(ev: CustomizedEvent) -> dict:
     }
 
 
-def run_auto_sync_tick(worker) -> dict:
+def run_auto_sync_tick(worker: CommentAutoSyncWorker) -> dict[str, Any]:
     """单轮评论轮询兜底（线程内无事件循环，同步直调 tick）。"""
     return worker.tick()
 
 
-def start_kernel_idle_sweeper(kernel_pool, interval_sec: int = 300):
+def start_kernel_idle_sweeper(
+        kernel_pool: KernelPool | None,
+        interval_sec: int = 300) -> threading.Thread | None:
     """Phase 16：沙箱容器空闲清扫守护线程（每 interval 秒 idle_sweep 一轮）。
 
     kernel_pool None（引擎未装配）或 interval 0（显式关闭）→ 不启动；
@@ -113,7 +120,7 @@ def start_kernel_idle_sweeper(kernel_pool, interval_sec: int = 300):
     return t
 
 
-def _bio_gc_sweep_once(settings) -> _SweepResult:
+def _bio_gc_sweep_once(settings: Settings) -> _SweepResult:
     """单轮 bio_workspace GC（线程内同步直调；异常由线程 loop 吃掉）。"""
     return sweep(
         settings.bio_workspace_root,
@@ -123,7 +130,7 @@ def _bio_gc_sweep_once(settings) -> _SweepResult:
     )
 
 
-def start_bio_workspace_gc_sweeper(settings):
+def start_bio_workspace_gc_sweeper(settings: Settings) -> threading.Thread | None:
     """Phase 23：bio_workspace 磁盘治理守护线程（每 interval 秒 sweep 一轮）。
 
     enabled=False 或 interval=0 → 不启动返回 None；单轮异常吃掉保线程。
@@ -156,7 +163,9 @@ def start_bio_workspace_gc_sweeper(settings):
     return t
 
 
-def start_auto_sync_scanner(worker, interval_sec: int = 300):
+def start_auto_sync_scanner(
+        worker: CommentAutoSyncWorker | None,
+        interval_sec: int | None = 300) -> threading.Thread | None:
     """启动评论轮询兜底守护线程（ws 模式下 FastAPI startup 钩子不触发）。"""
     if worker is None:
         return None
@@ -177,7 +186,7 @@ def start_auto_sync_scanner(worker, interval_sec: int = 300):
     return t
 
 
-def start_db_health_monitor(rt: Runtime, interval_sec: int = 30):
+def start_db_health_monitor(rt: Runtime, interval_sec: int = 30) -> threading.Thread:
     """DB 健康监控守护线程（2026-09-09 事故驱动：pg 掉线静默离线）。
 
     每轮 SELECT 1 探活；健康↔故障跃迁时经 IMAdapter 给
@@ -216,7 +225,7 @@ def start_db_health_monitor(rt: Runtime, interval_sec: int = 30):
     return t
 
 
-def im_event_to_payload(model: P2ImMessageReceiveV1) -> dict:
+def im_event_to_payload(model: P2ImMessageReceiveV1) -> dict[str, Any]:
     """SDK model → webhook 兼容 payload（normalize_im_event 可直接消费）。"""
     msg = model.event.message
     mentions = list(getattr(msg, "mentions", None) or [])
@@ -244,13 +253,13 @@ def im_event_to_payload(model: P2ImMessageReceiveV1) -> dict:
     }
 
 
-def card_event_to_payload(model: P2CardActionTrigger) -> dict:
+def card_event_to_payload(model: P2CardActionTrigger) -> dict[str, Any]:
     """SDK 卡片回调 → 平铺 payload（与卡片 webhook 验签后结构一致）。
 
     约定：卡片按钮 value 为平铺字段载体（action/session_id/approval_id...），
     适配层将 operator open_id 一并合入。
     """
-    payload: dict = dict(model.event.action.value or {})
+    payload: dict[str, Any] = dict(model.event.action.value or {})
     operator = model.event.operator
     if operator is not None and getattr(operator, "open_id", None):
         payload.setdefault("open_id", operator.open_id)
@@ -266,7 +275,7 @@ def _utc_iso_to_beijing_hm(iso: str) -> str:
     return dt.astimezone(timezone(timedelta(hours=8))).strftime("%H:%M")
 
 
-def card_result_to_response(result: dict) -> P2CardActionTriggerResponse | None:
+def card_result_to_response(result: dict[str, Any]) -> P2CardActionTriggerResponse | None:
     """管线结果 → 卡片回调 Toast 响应；无需反馈的动作返回 None。
 
     renew_bind：成功/失败续期 toast（Phase 3）。

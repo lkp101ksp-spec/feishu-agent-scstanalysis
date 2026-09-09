@@ -11,7 +11,7 @@
 import logging
 import re
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional, cast
 
 import httpx
 
@@ -39,12 +39,13 @@ class _Provider:
 class LLMRouter:
     """顺序调用主 → 备模型，全部失败抛 LLMCallError。"""
 
-    def __init__(self, primary: dict, fallback: dict, max_retries: int = 1):
+    def __init__(self, primary: dict[str, Any], fallback: dict[str, Any],
+                 max_retries: int = 1):
         self.primary = _Provider(**primary)
         self.fallback = _Provider(**fallback)
         self.max_retries = max_retries
 
-    def reconfigure(self, primary: dict, fallback: dict,
+    def reconfigure(self, primary: dict[str, Any], fallback: dict[str, Any],
                     max_retries: int | None = None) -> None:
         """Phase 30 热切换：原地替换主备 Provider（共享本实例的全链路立即生效）。
 
@@ -57,7 +58,8 @@ class LLMRouter:
         if max_retries is not None:
             self.max_retries = max_retries
 
-    def _call_once(self, provider: _Provider, messages: list[dict]) -> dict:
+    def _call_once(self, provider: _Provider,
+                   messages: list[dict[str, Any]]) -> dict[str, Any]:
         """调用一次 OpenAI 兼容 /chat/completions，返回完整 JSON 响应。"""
         url = f"{provider.base_url.rstrip('/')}/chat/completions"
         headers = {
@@ -69,7 +71,7 @@ class LLMRouter:
         with httpx.Client(timeout=provider.timeout_sec) as client:
             resp = client.post(url, headers=headers, json=payload)
             resp.raise_for_status()
-            return resp.json()
+            return cast(dict[str, Any], resp.json())
 
     def chat(self, messages: Iterable[ChatMessage]) -> str:
         """调用 LLM，返回 assistant content；主失败自动 fallback。"""
@@ -93,8 +95,10 @@ class LLMRouter:
                 f"primary failed ({last_err!r}), fallback failed ({e!r})"
             ) from e
 
-    def _call_with_tools_once(self, provider: _Provider, messages: list[dict],
-                              tools: list[dict], model: str | None = None) -> dict:
+    def _call_with_tools_once(
+            self, provider: _Provider, messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]],
+            model: str | None = None) -> dict[str, Any]:
         """OpenAI tools 协议单次调用（Phase 26 T1）。"""
         url = f"{provider.base_url.rstrip('/')}/chat/completions"
         headers = {
@@ -111,10 +115,11 @@ class LLMRouter:
         with httpx.Client(timeout=provider.timeout_sec) as client:
             resp = client.post(url, headers=headers, json=payload)
             resp.raise_for_status()
-            return resp.json()
+            return cast(dict[str, Any], resp.json())
 
-    def chat_with_tools(self, messages: list[dict], tools: list[dict],
-                        model: str | None = None) -> dict:
+    def chat_with_tools(self, messages: list[dict[str, Any]],
+                        tools: list[dict[str, Any]],
+                        model: str | None = None) -> dict[str, Any]:
         """Phase 26 T1：function calling 主入口。
 
         messages 为 OpenAI dict 格式（含 role=tool 与 assistant.tool_calls
@@ -139,14 +144,15 @@ class LLMRouter:
             ) from e
 
     @staticmethod
-    def _extract_message(data: dict) -> dict:
+    def _extract_message(data: dict[str, Any]) -> dict[str, Any]:
         """提取 choices[0].message；content 非 None 时剥 <think>。"""
         msg = dict(data["choices"][0]["message"])
         if msg.get("content"):
             msg["content"] = strip_think(msg["content"])
         return msg
 
-    def call(self, *, role: str, prompt: str, tools: Optional[list] = None) -> str:
+    def call(self, *, role: str, prompt: str,
+             tools: Optional[list[dict[str, Any]]] = None) -> str:
         """Phase 3：role-based 单轮 prompt 调用。
 
         Phase 3 简化版：role 仅作为 audit 标签；调用同 chat()。

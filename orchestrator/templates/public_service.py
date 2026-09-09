@@ -1,12 +1,15 @@
 """Phase 7: 公共模板 + 审核流。"""
 from __future__ import annotations
 
+from persistence.models import TemplateRow
+from persistence.repositories.audit_repo import AuditRepo
+from persistence.repositories.template_repo import TemplateRepo
 from shared.ulid_ import new_ulid
 
 
 class PublicTemplateService:
     def __init__(
-        self, *, template_repo, audit_repo,
+        self, *, template_repo: TemplateRepo, audit_repo: AuditRepo | None,
         admin_user_ids: set[str],
     ) -> None:
         self.template_repo = template_repo
@@ -95,7 +98,8 @@ class PublicTemplateService:
                 detail={"reason": reason},
             )
 
-    def list_public(self, *, limit: int = 20, offset: int = 0) -> list:
+    def list_public(self, *, limit: int = 20,
+                    offset: int = 0) -> list[TemplateRow]:
         return self.template_repo.list_by_scope(
             scope="public", limit=limit, offset=offset,
         )

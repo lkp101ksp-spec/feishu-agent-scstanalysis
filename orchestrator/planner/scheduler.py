@@ -22,9 +22,15 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
+from orchestrator.executor.executor_client import ExecutorClient
+from orchestrator.llm_router import LLMRouter
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan
+
+if TYPE_CHECKING:
+    from orchestrator.runtime.plan_runtime import PlanRuntime
+    from orchestrator.templates.template_service import TemplateService
 from shared.executor_types import ExecutionState, ExecutionTask, TaskHandle
 from shared.ulid_ import new_ulid
 
@@ -55,7 +61,7 @@ _TERMINAL_STATES = (
 )
 
 
-def _ask_bool(llm, condition: str, context: str) -> Optional[bool]:
+def _ask_bool(llm: LLMRouter, condition: str, context: str) -> Optional[bool]:
     """LLM 判定自然语言条件：true/false（中英文措辞均容错）。
 
     返回 None 表示不可判定（LLM 异常由调用方捕获 / 输出无法解析）。
@@ -90,7 +96,7 @@ _CN_OPS = {"大于等于": ">=", "小于等于": "<=", "大于": ">", "小于": 
            "不等于": "!=", "等于": "=="}
 
 
-def _parse_literal(raw: str):
+def _parse_literal(raw: str) -> Any:
     """上下文值文本 → dict/list/数字/bool/None（JSON 优先，repr 兜底）。
 
     截断值（… 结尾）解析失败返回原字符串——调用方走不动子字段即回退 LLM。
@@ -172,10 +178,15 @@ class PlanResult:
 
 
 class Scheduler:
-    def __init__(self, plan: DAGPlan, executor, max_concurrent: int = 4,
-                 runtime=None, condition_llm=None, code_repair_llm=None,
+    def __init__(self, plan: DAGPlan, executor: ExecutorClient,
+                 max_concurrent: int = 4,
+                 runtime: Optional["PlanRuntime"] = None,
+                 condition_llm: Optional[LLMRouter] = None,
+                 code_repair_llm: Optional[LLMRouter] = None,
                  node_repair_max_retries: int = 1,
-                 l2_gate=None) -> None:
+                 l2_gate: Optional[Callable[
+                     [DAGNode, dict[str, Any]], tuple[bool, Optional[str]]
+                 ]] = None) -> None:
         self.plan = plan
         self.executor = executor
         self.max_concurrent = max_concurrent
@@ -190,13 +201,15 @@ class Scheduler:
         self._node_repair_max_retries = max(0, int(node_repair_max_retries))
         self._repair_counts: dict[str, int] = {}
         # T3：while 重入状态 node_id -> {"round": 已展开轮数, "body_ids": [...]}
-        self._while_state: dict[str, dict] = {}
+        self._while_state: dict[str, dict[str, Any]] = {}
         self._handles: dict[str, TaskHandle] = {}
         self._node_map: dict[str, DAGNode] = {n.node_id: n for n in plan.nodes}
         self._started_at = datetime.now(UTC)
 
     @staticmethod
-    def _expand_subplan_static(node: DAGNode, template_service) -> list[DAGNode]:
+    def _expand_subplan_static(
+        node: DAGNode, template_service: "TemplateService"
+    ) -> list[DAGNode]:
         """Phase 5: 展开 sub-Plan 模板为内联 DAGNode 列表。"""
         if not node.subplan_template_id:
             return [node]
@@ -278,7 +291,7 @@ class Scheduler:
             for s in states
         )
 
-    def _resolve_inputs(self, node: DAGNode) -> dict:
+    def _resolve_inputs(self, node: DAGNode) -> dict[str, Any]:
         """从上游 outputs 解析 <node>.field 形式的引用（值非 str 时原样透传）。
 
         两级语义：
@@ -292,7 +305,7 @@ class Scheduler:
         整值引用字段缺失时按别名兜底（records/text/results/summary）——
         模型猜错字段名不应导致下游拿到 None（真机 2026-08-30）。
         """
-        resolved: dict = {}
+        resolved: dict[str, Any] = {}
         for k, v in node.inputs.items():
             if isinstance(v, str) and "." in v:
                 upstream_id, field_name = v.split(".", 1)
@@ -337,7 +350,7 @@ class Scheduler:
         `{` 后紧跟 `{` 会被当转义大括号产生语法错误（真机 2026-08-31
         b1_tt1 TOOL_BLOCKED：f"...{n2.result['k']}%" 注入 dict 后变 {{）。
         """
-        def _sub(m: "re.Match") -> str:
+        def _sub(m: re.Match[str]) -> str:
             up_id, field = m.group(1), m.group(2)
             h = self._handles.get(up_id)
             if h is None or not h.outputs or field not in h.outputs:
@@ -358,7 +371,7 @@ class Scheduler:
             if h.state == ExecutionState.RUNNING:
                 current = self.executor.get_status(h)
                 if current != ExecutionState.RUNNING:
-                    h.state = current
+                    h.state = cast(ExecutionState, current)
 
     async def run_until_done(self) -> PlanResult:
         # Phase 3：runtime 注入时委托给 Runtime（dynamic-append / loop / freeze）
@@ -466,7 +479,7 @@ class Scheduler:
         user = (f"错误：{error_code}: {error_message[:500]}\n\n"
                 f"失败代码：\n{code}")
         try:
-            resp = self._code_repair_llm.chat([
+            resp = cast(LLMRouter, self._code_repair_llm).chat([
                 ChatMessage(role="system", content=system),
                 ChatMessage(role="user", content=user),
             ])
@@ -611,7 +624,8 @@ class Scheduler:
 
     def _copy_subtree(self, nodes: list[DAGNode], *, prefix: str,
                       parent_node: DAGNode,
-                      placeholder: str | None = None, value=None) -> list[DAGNode]:
+                      placeholder: str | None = None,
+                      value: Any = None) -> list[DAGNode]:
         """子树副本：id 加前缀 + 依赖重写 + 占位符替换。
 
         依赖重写：指向父控制流节点 → 继承其 depends_on；子树内互链 → 加前缀；
@@ -662,7 +676,7 @@ class Scheduler:
             self.plan.nodes.append(c)
             self._node_map[c.node_id] = c
 
-    def _resolve_iterate_over(self, node: DAGNode) -> Optional[list]:
+    def _resolve_iterate_over(self, node: DAGNode) -> Optional[list[Any]]:
         """解析 for.iterate_over（<node>.<field> 引用）为上游 list 输出。"""
         ref = node.iterate_over or ""
         if "." not in ref:
@@ -721,7 +735,7 @@ class Scheduler:
         return "\n".join(parts)[:_CONTEXT_MAX_CHARS]
 
     @staticmethod
-    def _format_field(key: str, val, max_chars: int = 800) -> str:
+    def _format_field(key: str, val: Any, max_chars: int = 800) -> str:
         """字段摘要：带总长度元数据 + 截断预览（长度类条件判定依据）。"""
         sval = val if isinstance(val, str) else json.dumps(
             val, ensure_ascii=False, default=str)
@@ -752,7 +766,7 @@ class Scheduler:
         states = [self._node_state(b) for b in body_ids]
         return all(s in _TERMINAL_STATES for s in states)
 
-    def _succeed_control(self, node: DAGNode, outputs: dict) -> None:
+    def _succeed_control(self, node: DAGNode, outputs: dict[str, Any]) -> None:
         """控制流节点置 SUCCESS（outputs 记展开元数据供 IM 展示轨迹）。"""
         self._handles[node.node_id] = TaskHandle(
             execution_id=f"cf_{node.node_id}_{new_ulid()}",

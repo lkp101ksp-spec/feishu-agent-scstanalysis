@@ -7,13 +7,14 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from orchestrator.llm_router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
 
-def build_scene_router(name: str, providers: dict, fallback_cfg: dict,
+def build_scene_router(name: str, providers: dict[str, Any], fallback_cfg: dict[str, Any],
                        *, max_retries: int) -> LLMRouter | None:
     """按池内 name 建场景 router；空 name 或未命中 → None（回退全局）。
 

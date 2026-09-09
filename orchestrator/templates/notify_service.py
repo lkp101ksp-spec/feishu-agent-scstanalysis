@@ -1,7 +1,15 @@
 """Phase 9 T4: pending 动作推送服务（sync 后即时通知 + 日志去重，ADR-0025）。"""
 from __future__ import annotations
 
-from orchestrator.templates.comment_action_service import parse_action
+from typing import Any, Callable, Optional
+
+from feishu_adapter.im_adapter import IMAdapter
+from orchestrator.templates.comment_action_service import (
+    ParsedAction,
+    parse_action,
+)
+from persistence.repositories.comment_notify_repo import CommentNotifyRepo
+from persistence.repositories.comment_repo import CommentRepo
 
 
 class CommentNotifyService:
@@ -11,8 +19,10 @@ class CommentNotifyService:
     notify_all=True：全量新评论都推（spec §14.4 遗留项 3 的开关）。
     """
 
-    def __init__(self, comment_repo, notify_repo, im_adapter,
-                 action_parser=parse_action, notify_all: bool = False) -> None:
+    def __init__(self, comment_repo: CommentRepo, notify_repo: CommentNotifyRepo,
+                 im_adapter: IMAdapter,
+                 action_parser: Callable[[str], Optional[ParsedAction]] = parse_action,
+                 notify_all: bool = False) -> None:
         self.comment_repo = comment_repo
         self.notify_repo = notify_repo
         self.im = im_adapter
@@ -21,7 +31,7 @@ class CommentNotifyService:
 
     def notify_new_pending(
         self, *, doc_id: str, owner_open_id: str, chat_id: str,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """推送未通知过的新评论摘要；空集不发消息（防噪音）。"""
         hits = []
         has_action = False

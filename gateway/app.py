@@ -14,12 +14,13 @@
 """
 import json
 import logging
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Request
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from gateway.idempotency import build_idempotency_key
 from gateway.normalizer import NormalizeError, normalize_im_event
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def run_im_pipeline(app: FastAPI, app_id: str, payload: dict) -> dict:
+def run_im_pipeline(app: FastAPI, app_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     """IM 事件公共管线（ADR-0031）：限流 → 归一化 → 幂等 → process → link_task。
 
     webhook 路由（验签后）与 ws 长连接进程共用本函数，保证行为一致；
@@ -110,7 +111,7 @@ def run_im_pipeline(app: FastAPI, app_id: str, payload: dict) -> dict:
 
 def _audit_event(app: FastAPI, *, actor_type: str, actor_id: str,
                  action: str, target_type: str, target_id: str,
-                 detail: dict) -> None:
+                 detail: dict[str, Any]) -> None:
     """audit_logs 追加一条（session 缺省回退全局 engine；失败仅记日志）。"""
     factory = getattr(app.state, "session_factory", None)
     if factory is None:
@@ -138,7 +139,7 @@ def _audit_event(app: FastAPI, *, actor_type: str, actor_id: str,
         logger.exception("audit write failed (ignored)")
 
 
-def process_card_payload(app: FastAPI, payload: dict) -> dict:
+def process_card_payload(app: FastAPI, payload: dict[str, Any]) -> dict[str, Any]:
     """卡片回调公共处理（ADR-0031）：audit 落库 + renew_bind 分支。
 
     输入为平铺 dict（open_id/action/approval_id/session_id...，
@@ -309,7 +310,7 @@ def process_card_payload(app: FastAPI, payload: dict) -> dict:
         gate = getattr(orch, "intent_gate", None)
         if gate is None:
             return {"ok": False, "status": "intent_unavailable"}
-        result = gate.decide(
+        result: dict[str, Any] = gate.decide(
             payload.get("intent_id", ""), payload.get("decision", ""),
             operator=payload.get("open_id", ""),
             owner=payload.get("owner", ""),
@@ -439,29 +440,29 @@ class AppContext:
 
 def create_app(
     secret: str,
-    orchestrator,
+    orchestrator: "Orchestrator",
     rate_per_min: int = 60,
-    session_factory=None,
-    bind_doc_service=None,
-    template_service=None,
-    version_service=None,
-    share_service=None,
-    hot_loader=None,
-    comment_service=None,
-    search_service=None,
-    public_service=None,
-    fork_service=None,
-    comment_sync_service=None,
-    comment_action_service=None,
-    diff_service=None,
-    tag_service=None,
-    favorite_service=None,
-    unified_search_service=None,
-    auto_sync_worker=None,
-    approval_broker=None,
-    comment_event_service=None,
-    tag_recommend_service=None,
-    model_switch_service=None,
+    session_factory: Callable[[], Session] | None = None,
+    bind_doc_service: "BindDocService | None" = None,
+    template_service: object | None = None,
+    version_service: object | None = None,
+    share_service: object | None = None,
+    hot_loader: object | None = None,
+    comment_service: object | None = None,
+    search_service: object | None = None,
+    public_service: object | None = None,
+    fork_service: object | None = None,
+    comment_sync_service: object | None = None,
+    comment_action_service: object | None = None,
+    diff_service: object | None = None,
+    tag_service: object | None = None,
+    favorite_service: object | None = None,
+    unified_search_service: object | None = None,
+    auto_sync_worker: Any = None,
+    approval_broker: "ApprovalBroker | None" = None,
+    comment_event_service: "CommentEventService | None" = None,
+    tag_recommend_service: object | None = None,
+    model_switch_service: "ModelSwitchService | None" = None,
 ) -> FastAPI:
     """工厂函数：创建并配置 FastAPI app。
 
@@ -475,7 +476,7 @@ def create_app(
     # Phase 22：on_event 弃用 → lifespan（行为等价迁移；Phase 9 auto_sync
     # 后台轮询逻辑不变，ADR-0024）
     @asynccontextmanager
-    async def _lifespan(app: FastAPI):
+    async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if auto_sync_worker is not None:
             auto_sync_worker.start_async()
         yield
@@ -483,7 +484,7 @@ def create_app(
     app = FastAPI(title="Feishu Research Agent — Phase 1",
                   lifespan=_lifespan)
 
-    def _factory():
+    def _factory() -> Session:
         if session_factory is not None:
             return session_factory()
         from persistence.engine import get_engine
@@ -518,7 +519,7 @@ def create_app(
     )
 
     @app.get("/health")
-    def health():
+    def health() -> dict[str, Any]:
         return {"status": "ok"}
 
     # === Phase 2: 卡片回调入口 ===
@@ -531,7 +532,7 @@ def create_app(
     card_secret = "phase2-dev-secret-change-me"
 
     @app.post("/webhook/lark/card")
-    async def lark_card_webhook(request: Request):
+    async def lark_card_webhook(request: Request) -> dict[str, Any]:
         """Phase 2 卡片回调入口。
 
         流程：HMAC 验签 → 解析 body → 公共卡片处理管线（ADR-0031）。
@@ -551,7 +552,7 @@ def create_app(
 
     # === Phase 5: 模板市场 API ===
     @app.post("/templates/block")
-    async def create_block_template(request: Request):
+    async def create_block_template(request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         ts = ctx.template_service
@@ -570,7 +571,7 @@ def create_app(
         return {"ok": True, "template_id": tid}
 
     @app.post("/templates/subplan")
-    async def create_subplan_template(request: Request):
+    async def create_subplan_template(request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         ts = ctx.template_service
@@ -587,7 +588,7 @@ def create_app(
         return {"ok": True, "template_id": tid}
 
     @app.get("/templates/")
-    async def list_templates(owner_open_id: str):
+    async def list_templates(owner_open_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         if ctx.template_service is None:
             return {"templates": []}
@@ -596,7 +597,7 @@ def create_app(
         ]}
 
     @app.post("/templates/{template_id}/render")
-    async def render_template(template_id: str, request: Request):
+    async def render_template(template_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         params = body.get("params", {})
@@ -614,7 +615,7 @@ def create_app(
             return {"ok": True, "steps": [s.model_dump() for s in steps]}
 
     @app.delete("/templates/{template_id}")
-    async def delete_template(template_id: str, caller_open_id: str):
+    async def delete_template(template_id: str, caller_open_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         ts = ctx.template_service
         if ts is None:
@@ -629,7 +630,7 @@ def create_app(
 
     # === Phase 6: 版本 + 共享 + 热加载 ===
     @app.get("/templates/{template_id}/versions")
-    async def list_versions(template_id: str):
+    async def list_versions(template_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         vs = ctx.version_service
         if vs is None:
@@ -637,7 +638,7 @@ def create_app(
         return {"versions": vs.list_versions(template_id)}
 
     @app.post("/templates/{template_id}/rollback")
-    async def rollback_template(template_id: str, request: Request):
+    async def rollback_template(template_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         vs = ctx.version_service
@@ -654,7 +655,7 @@ def create_app(
         return {"ok": True}
 
     @app.post("/templates/{template_id}/share")
-    async def share_template(template_id: str, request: Request):
+    async def share_template(template_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         ss = ctx.share_service
@@ -671,7 +672,7 @@ def create_app(
         return {"ok": True}
 
     @app.get("/templates/chat/{chat_id}")
-    async def list_for_chat(chat_id: str):
+    async def list_for_chat(chat_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         ss = ctx.share_service
         if ss is None:
@@ -682,7 +683,7 @@ def create_app(
         return {"templates": out}
 
     @app.post("/admin/tools/upload")
-    async def admin_upload_tool(request: Request):
+    async def admin_upload_tool(request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         hl = ctx.hot_loader
@@ -704,7 +705,7 @@ def create_app(
 
     # === Phase 7: 评论 + 搜索 + 公共模板 + fork ===
     @app.get("/comments/{doc_id}")
-    async def fetch_comments(doc_id: str, block_id: str | None = None):
+    async def fetch_comments(doc_id: str, block_id: str | None = None) -> dict[str, Any]:
         ctx = app.state.ctx
         cs = ctx.comment_service
         if cs is None:
@@ -719,7 +720,7 @@ def create_app(
         owner_open_id: str | None = None,
         limit: int = 20,
         offset: int = 0,
-    ):
+    ) -> dict[str, Any]:
         ctx = app.state.ctx
         ss = ctx.search_service
         if ss is None:
@@ -733,7 +734,7 @@ def create_app(
         ]}
 
     @app.post("/templates/{template_id}/submit-public")
-    async def submit_public_template(template_id: str, request: Request):
+    async def submit_public_template(template_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         ps = ctx.public_service
@@ -751,7 +752,7 @@ def create_app(
         return {"ok": True}
 
     @app.post("/admin/templates/{template_id}/review")
-    async def admin_review_template(template_id: str, request: Request):
+    async def admin_review_template(template_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         ps = ctx.public_service
@@ -775,7 +776,7 @@ def create_app(
         return {"ok": True}
 
     @app.get("/templates/public")
-    async def list_public_templates():
+    async def list_public_templates() -> dict[str, Any]:
         ctx = app.state.ctx
         ps = ctx.public_service
         if ps is None:
@@ -785,7 +786,7 @@ def create_app(
         ]}
 
     @app.post("/templates/{template_id}/fork")
-    async def fork_template(template_id: str, request: Request):
+    async def fork_template(template_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         fs = ctx.fork_service
@@ -803,7 +804,7 @@ def create_app(
         return {"ok": True, "new_template_id": new_id}
 
     @app.get("/templates/{template_id}/forks")
-    async def list_forks(template_id: str):
+    async def list_forks(template_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         fs = ctx.fork_service
         if fs is None:
@@ -815,15 +816,16 @@ def create_app(
 
     # === Phase 8: 评论同步/动作 + diff + 标签/收藏 ===
     @app.post("/comments/{doc_id}/sync")
-    async def sync_comments(doc_id: str):
+    async def sync_comments(doc_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         cs = ctx.comment_sync_service
         if cs is None:
             raise _HTTPException(status_code=503, detail="comment_sync_service not configured")
-        return cs.sync(doc_id=doc_id)
+        sync_result: dict[str, Any] = cs.sync(doc_id=doc_id)
+        return sync_result
 
     @app.get("/comments/{doc_id}/stored")
-    async def stored_comments(doc_id: str, block_id: str | None = None):
+    async def stored_comments(doc_id: str, block_id: str | None = None) -> dict[str, Any]:
         ctx = app.state.ctx
         cs = ctx.comment_sync_service
         if cs is None:
@@ -834,27 +836,29 @@ def create_app(
         ]}
 
     @app.post("/comments/{doc_id}/apply-actions")
-    async def apply_comment_actions(doc_id: str, request: Request):
+    async def apply_comment_actions(doc_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         ca = ctx.comment_action_service
         if ca is None:
             raise _HTTPException(status_code=503, detail="comment_action_service not configured")
-        return ca.apply(doc_id=doc_id, caller_open_id=body["caller_open_id"])
+        apply_result: dict[str, Any] = ca.apply(doc_id=doc_id, caller_open_id=body["caller_open_id"])
+        return apply_result
 
     @app.get("/templates/{template_id}/diff")
-    async def diff_template(template_id: str, v_a: int, v_b: int):
+    async def diff_template(template_id: str, v_a: int, v_b: int) -> dict[str, Any]:
         ctx = app.state.ctx
         ds = ctx.diff_service
         if ds is None:
             raise _HTTPException(status_code=503, detail="diff_service not configured")
         try:
-            return ds.diff(template_id=template_id, v_a=v_a, v_b=v_b)
+            diff_result: dict[str, Any] = ds.diff(template_id=template_id, v_a=v_a, v_b=v_b)
+            return diff_result
         except ValueError as e:
             raise _HTTPException(status_code=404, detail=str(e))
 
     @app.get("/templates/by-tag/{tag}")
-    async def templates_by_tag(tag: str):
+    async def templates_by_tag(tag: str) -> dict[str, Any]:
         ctx = app.state.ctx
         ts = ctx.tag_service
         if ts is None:
@@ -864,7 +868,7 @@ def create_app(
         ]}
 
     @app.get("/templates/{template_id}/tag-suggestions")
-    async def tag_suggestions(template_id: str, limit: int = 5):
+    async def tag_suggestions(template_id: str, limit: int = 5) -> dict[str, Any]:
         """Phase 19：标签推荐（共现 + 热度兜底，任意人可读）。"""
         ctx = app.state.ctx
         rs = ctx.tag_recommend_service
@@ -879,7 +883,7 @@ def create_app(
         return {"template_id": template_id, "suggestions": suggestions}
 
     @app.get("/templates/favorites/{user_open_id}")
-    async def favorites_of(user_open_id: str):
+    async def favorites_of(user_open_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         fs = ctx.favorite_service
         if fs is None:
@@ -889,7 +893,7 @@ def create_app(
         ]}
 
     @app.post("/templates/{template_id}/tags")
-    async def add_tag(template_id: str, request: Request):
+    async def add_tag(template_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         ts = ctx.tag_service
@@ -907,7 +911,7 @@ def create_app(
         return {"ok": True, "tag": normalized}
 
     @app.delete("/templates/{template_id}/tags")
-    async def remove_tag(template_id: str, tag: str, caller_open_id: str):
+    async def remove_tag(template_id: str, tag: str, caller_open_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         ts = ctx.tag_service
         if ts is None:
@@ -922,7 +926,7 @@ def create_app(
         return {"ok": True}
 
     @app.post("/templates/{template_id}/favorite")
-    async def add_favorite(template_id: str, request: Request):
+    async def add_favorite(template_id: str, request: Request) -> dict[str, Any]:
         ctx = app.state.ctx
         body = await request.json()
         fs = ctx.favorite_service
@@ -936,7 +940,7 @@ def create_app(
         return {"ok": True}
 
     @app.delete("/templates/{template_id}/favorite")
-    async def remove_favorite(template_id: str, caller_open_id: str):
+    async def remove_favorite(template_id: str, caller_open_id: str) -> dict[str, Any]:
         ctx = app.state.ctx
         fs = ctx.favorite_service
         if fs is None:
@@ -952,7 +956,7 @@ def create_app(
         scope: str | None = None,
         limit: int = 20,
         offset: int = 0,
-    ):
+    ) -> dict[str, Any]:
         ctx = app.state.ctx
         us = ctx.unified_search_service
         if us is None:
@@ -963,7 +967,7 @@ def create_app(
         return {"results": results}
 
     @app.post("/webhook/lark")
-    async def lark_webhook(request: Request):
+    async def lark_webhook(request: Request) -> dict[str, Any]:
         ctx: AppContext = app.state.ctx
         body_bytes = await request.body()
         body_str = body_bytes.decode("utf-8")
@@ -995,7 +999,7 @@ def create_app(
             event = body.get("event") or {}
             meta = event.get("notice_meta") or {}
             operator = meta.get("from_user_id") or {}
-            result = svc.handle(
+            result: dict[str, Any] = svc.handle(
                 file_token=meta.get("file_token", ""),
                 operator_open_id=operator.get("open_id", ""),
                 comment_id=event.get("comment_id", ""))

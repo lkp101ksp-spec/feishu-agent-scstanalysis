@@ -12,7 +12,7 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import yaml
 
@@ -29,7 +29,7 @@ class LoadedSkill:
     description: str
     body: str
     directory: Path
-    tools: list[dict] = field(default_factory=list)
+    tools: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _tokenize(text: str) -> set[str]:
@@ -38,7 +38,7 @@ def _tokenize(text: str) -> set[str]:
 
 
 def _make_handler(command: list[str], cwd: Path, timeout_sec: int,
-                  image: str | None = None) -> Callable:
+                  image: str | None = None) -> Callable[..., ToolResult]:
     """把 skill 工具包装成 registry handler。
 
     本机模式：子进程执行（cwd=skill 目录），参数 --k v 展开。
@@ -47,7 +47,7 @@ def _make_handler(command: list[str], cwd: Path, timeout_sec: int,
     skill 不适用容器模式（不配 image 即可）。
     """
 
-    def handler(**inputs) -> ToolResult:
+    def handler(**inputs: Any) -> ToolResult:
         argv = list(command)
         for key, val in inputs.items():
             if val is True:                      # 布尔 → 开关旗标
@@ -107,7 +107,7 @@ class SkillLoader:
         except OSError as exc:
             logger.warning("skill md unreadable: %s (%s)", md_path, exc)
             return None
-        meta: dict = {}
+        meta: dict[str, Any] = {}
         body = text
         if text.startswith("---"):
             parts = text.split("---", 2)
@@ -123,7 +123,7 @@ class SkillLoader:
         return LoadedSkill(name=name, description=description, body=body,
                            directory=md_path.parent, tools=tools)
 
-    def _parse_tools(self, yaml_path: Path) -> list[dict]:
+    def _parse_tools(self, yaml_path: Path) -> list[dict[str, Any]]:
         """解析 tools.yaml；文件缺失或格式错返回空表。"""
         if not yaml_path.is_file():
             return []
@@ -165,7 +165,7 @@ class SkillLoader:
 
     # ------------------------------------------------------------------ #
     def build_system_knowledge(self, task_text: str, top: int = 3,
-                               llm=None) -> str:
+                               llm: Any = None) -> str:
         """知识面注入：llm 提供时语义选择（Phase 29 T2），否则/失败回退词元 v1。
 
         语义选择一次纯文本 LLM 调用（候选清单 → JSON name 列表），
@@ -202,7 +202,7 @@ class SkillLoader:
         return scored
 
     def _select_semantic(self, task_text: str, top: int,
-                         llm) -> list[str]:
+                         llm: Any) -> list[str]:
         """LLM 语义选择：候选清单 → 相关 name 列表（已过滤幻觉）。"""
         import json as _json
         import re as _re

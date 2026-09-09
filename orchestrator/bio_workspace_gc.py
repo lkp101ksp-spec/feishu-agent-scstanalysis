@@ -56,7 +56,7 @@ def _delete(d: Path) -> int | None:
         return None
 
 
-def sweep(workspace_root, *, ttl_sec: int, cap_bytes: int, grace_sec: int,
+def sweep(workspace_root: str, *, ttl_sec: int, cap_bytes: int, grace_sec: int,
           now: float | None = None) -> _SweepResult:
     """单轮清理：TTL 阶段删到期目录，LRU 阶段超 cap 按 last_used 升序驱逐。
 

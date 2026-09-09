@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -46,7 +47,7 @@ def _pick_h5ad(ds_dir: Path) -> Path | None:
     return None
 
 
-def _gene_names(var) -> list[str] | None:
+def _gene_names(var: Any) -> list[str] | None:
     """var 组取基因名：优先 _index 数据集，其次 attrs['_index'] 指向列。"""
 
     if "_index" in var:
@@ -60,7 +61,7 @@ def _gene_names(var) -> list[str] | None:
     return [g.decode() if isinstance(g, bytes) else str(g) for g in raw]
 
 
-def _mt_mask(var, names: list[str] | None) -> np.ndarray | None:
+def _mt_mask(var: Any, names: list[str] | None) -> np.ndarray | None:
     """线粒体基因掩码：优先 var['mt'] 布尔列，否则按 MT-/mt- 前缀派生。"""
     if "mt" in var:
         try:
@@ -72,7 +73,9 @@ def _mt_mask(var, names: list[str] | None) -> np.ndarray | None:
     return None
 
 
-def _row_stats_dense(x, n_obs: int, mt_mask) -> tuple[np.ndarray, np.ndarray | None]:
+def _row_stats_dense(
+    x: Any, n_obs: int, mt_mask: np.ndarray | None
+) -> tuple[np.ndarray, np.ndarray | None]:
     """dense X：分块算每细胞检测基因数与 mt 计数比例分子/分母。"""
     rows = np.arange(n_obs)
     if n_obs > _SAMPLE_ROWS_CAP:
@@ -92,7 +95,9 @@ def _row_stats_dense(x, n_obs: int, mt_mask) -> tuple[np.ndarray, np.ndarray | N
     return genes, mt_pct
 
 
-def _row_stats_sparse(x, n_obs: int, mt_mask) -> tuple[np.ndarray, np.ndarray | None]:
+def _row_stats_sparse(
+    x: Any, n_obs: int, mt_mask: np.ndarray | None
+) -> tuple[np.ndarray, np.ndarray | None]:
     """CSR X（anndata csr_matrix 编码）：indptr 差分即检测基因数。"""
     indptr = x["indptr"][:]
     genes_all = np.diff(indptr).astype(np.int64)
@@ -115,7 +120,7 @@ def _row_stats_sparse(x, n_obs: int, mt_mask) -> tuple[np.ndarray, np.ndarray | 
     return genes, mt_pct
 
 
-def profile_dataset(workspace_root: str, ref: str) -> dict | None:
+def profile_dataset(workspace_root: str, ref: str) -> dict[str, Any] | None:
     """读 workspace/<ref>/ 下的 h5ad，返回画像 dict；失败/缺文件 → None。
 
     返回字段：ref/n_cells/n_genes/genes_per_cell{median,p90,max}/

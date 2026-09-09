@@ -23,7 +23,8 @@ def _hmac_sign(body: bytes, secret: str) -> str:
 class ApprovalPolicy:
     """仅豁免 write_doc（同一 doc，bind_doc 未过期）。"""
 
-    def can_skip_approval(self, tool_name: str, args: dict, session: Any) -> bool:
+    def can_skip_approval(self, tool_name: str, args: dict[str, Any],
+                          session: Any) -> bool:
         if tool_name != "write_doc":
             return False
         if not getattr(session, "bound_doc_id", None):
@@ -32,16 +33,16 @@ class ApprovalPolicy:
             return False
         if session.bind_expires_at < datetime.now(UTC):
             return False
-        return args.get("doc_id") == session.bound_doc_id
+        return bool(args.get("doc_id") == session.bound_doc_id)
 
 
 class ApprovalService:
     def __init__(
         self,
         *,
-        im_adapter=None,
-        approval_repo=None,
-        audit_repo=None,
+        im_adapter: Any = None,
+        approval_repo: Any = None,
+        audit_repo: Any = None,
         secret: str = "phase2-dev-secret-change-me",
     ) -> None:
         self.im_adapter = im_adapter
@@ -54,7 +55,7 @@ class ApprovalService:
         self,
         *,
         tool_name: str,
-        args_preview: dict,
+        args_preview: dict[str, Any],
         actor_open_id: str,
         session: Any,
     ) -> bool:

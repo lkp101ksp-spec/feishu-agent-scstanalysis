@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
-from persistence.models import DocWriteRow
+from persistence.models import DocWriteRow, SessionRow
 from persistence.repositories.doc_write_repo import DocWriteRepo
 from persistence.repositories.session_repo import SessionRepo
 from shared.errors import DocWriteError
@@ -26,6 +26,7 @@ from shared.ulid_ import new_ulid
 # 实测 ~10s，真机卡片测试踩 10s 轮询超时线上），TYPE_CHECKING 斩断依赖链
 if TYPE_CHECKING:
     from feishu_adapter.doc_adapter import DocAdapter
+    from orchestrator.blocks.schemas import AnyBlock
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ class DocWriteService:
     def write_plain_text(
         self, session_id: str, task_id: str, requested_by: str, text: str,
         anchor_text: Optional[str] = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """在授权窗口内追加纯文本。返回 {doc_write_id, doc_id, anchor_block_id, status}。
 
         anchor_text：本条消息的临时锚点（#写到 语法），优先于会话级 bind_anchor。
@@ -96,7 +97,7 @@ class DocWriteService:
     def create_confirm_pending(
         self, *, session_id: str, task_id: str, requested_by: str,
         preview_text: str, approval_mode: str = "card_confirm",
-    ) -> dict:
+    ) -> dict[str, Any]:
         """card_confirm / node_l2 第一步：校验 bind + 建 pending 记录。
 
         approval_mode="card_confirm"（Phase 14 收尾整体写回审批）或
@@ -118,8 +119,8 @@ class DocWriteService:
         return {"doc_write_id": doc_write_id, "doc_id": doc_id}
 
     def complete_confirmed(
-        self, *, doc_write_id: str, decision: str, blocks: list,
-    ) -> dict:
+        self, *, doc_write_id: str, decision: str, blocks: list[AnyBlock],
+    ) -> dict[str, Any]:
         """card_confirm 第二步：按决策收尾状态机并（若 approve）渲染写入。
 
         decision="approve" → approved → writing → render_blocks → success/failed；
@@ -172,7 +173,7 @@ class DocWriteService:
             self.doc_repo.session.flush()
         return len(rows)
 
-    def _valid_bound_doc(self, session_id: str):
+    def _valid_bound_doc(self, session_id: str) -> tuple[SessionRow, str]:
         """校验 session 的 bind-doc 授权窗口，返回 (session_row, doc_id)。"""
         session_row = self.session_repo.get(session_id)
         if session_row is None or session_row.bound_doc_id is None:
@@ -186,7 +187,7 @@ class DocWriteService:
             raise DocWriteError("bind-doc expired, please /bind-doc again")
         return session_row, session_row.bound_doc_id
 
-    def _resolve_insert_index(self, session_row, session_id: str,
+    def _resolve_insert_index(self, session_row: SessionRow, session_id: str,
                               doc_id: str, msg_anchor: Optional[str] = None) -> int:
         """锚点定位：返回根块下的插入下标；-1 = 追加到文档末尾。
 
@@ -221,7 +222,7 @@ class DocWriteService:
         return -1
 
 
-def _block_text(block: dict) -> str:
+def _block_text(block: dict[str, Any]) -> str:
     """提取块的纯文本（text/heading1-9 等带 elements 的块类型）。"""
     for value in block.values():
         if isinstance(value, dict) and "elements" in value:

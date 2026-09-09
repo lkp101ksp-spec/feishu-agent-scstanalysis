@@ -1,15 +1,19 @@
 """Phase 8 T7: 模板收藏服务（任意 scope 模板可收藏，ADR-0022）。"""
 from __future__ import annotations
 
+from persistence.models import TemplateRow
+from persistence.repositories.template_favorite_repo import TemplateFavoriteRepo
+from persistence.repositories.template_repo import TemplateRepo
 from shared.ulid_ import new_ulid
 
 
 class FavoriteService:
-    def __init__(self, favorite_repo, template_repo) -> None:
+    def __init__(self, favorite_repo: TemplateFavoriteRepo,
+                 template_repo: TemplateRepo) -> None:
         self.favorite_repo = favorite_repo
         self.template_repo = template_repo
 
-    def _check_exists(self, template_id: str):
+    def _check_exists(self, template_id: str) -> TemplateRow:
         tpl = self.template_repo.get(template_id)
         if tpl is None or getattr(tpl, "archived_at", None) is not None:
             raise ValueError(f"template {template_id} not found")
@@ -34,7 +38,7 @@ class FavoriteService:
             template_id=template_id, user_open_id=caller_open_id,
         )
 
-    def list_favorites(self, user_open_id: str) -> list:
+    def list_favorites(self, user_open_id: str) -> list[TemplateRow]:
         """我的收藏 → 模板行列表（过滤已删除）。"""
         out = []
         for tid in self.favorite_repo.list_by_user(user_open_id):

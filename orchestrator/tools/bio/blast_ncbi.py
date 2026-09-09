@@ -6,14 +6,14 @@ rate-limit 复用 RateLimiter（3 req/s）。
 from __future__ import annotations
 
 import json
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
 from orchestrator.tools.bio.rate_limiter import RateLimiter
 
 
-def _load_json_stream(raw: str) -> list[dict]:
+def _load_json_stream(raw: str) -> list[dict[str, Any]]:
     """解析 NCBI 拼接式多段 JSON 响应，返回逐段 dict 列表。
 
     真机 2026-08-31：efetch 大响应（实测 ~82KB 起）会被 NCBI 按
@@ -21,7 +21,7 @@ def _load_json_stream(raw: str) -> list[dict]:
     "Extra data"。用 raw_decode 逐段消费即可。
     """
     decoder = json.JSONDecoder()
-    objs: list[dict] = []
+    objs: list[dict[str, Any]] = []
     idx, n = 0, len(raw)
     while idx < n:
         while idx < n and raw[idx] in " \t\r\n":
@@ -55,7 +55,7 @@ class BlastNCBITool:
         self.base_url = base_url.rstrip("/")
 
     def handle(self, *, query: str, database: str = "protein",
-               max_hits: int = 5) -> dict:
+               max_hits: int = 5) -> dict[str, Any]:
         if not query or not query.strip():
             return {
                 "error_code": "BLAST_INVALID_QUERY",
@@ -116,7 +116,7 @@ class BlastNCBITool:
                 return esr.get("idlist", []), int(esr.get("count", 0))
         return [], 0
 
-    def _efetch(self, *, ids: list[str], database: str) -> list[dict]:
+    def _efetch(self, *, ids: list[str], database: str) -> list[dict[str, Any]]:
         self.rate_limiter.wait()
         with httpx.Client(timeout=self.timeout_sec) as client:
             resp = client.get(
@@ -131,7 +131,7 @@ class BlastNCBITool:
             resp.raise_for_status()
         # 多段 JSON 逐段解析合并（真机 2026-08-31：大响应分段拼接，
         # resp.json() 抛 "Extra data: char 99176" 导致整节点失败）
-        records: list[dict] = []
+        records: list[dict[str, Any]] = []
         for data in _load_json_stream(resp.text):
             result = data.get("result")
             if not isinstance(result, dict):

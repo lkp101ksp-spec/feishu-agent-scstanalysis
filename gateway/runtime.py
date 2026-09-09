@@ -77,9 +77,11 @@ logger = logging.getLogger(__name__)
 class Runtime:
     """组装产物容器：app（FastAPI）+ ws 进程所需句柄。"""
 
-    def __init__(self, app, orchestrator: Orchestrator, settings: Settings,
-                 renew_scan_service=None, renew_scan_interval_sec: int = 60,
-                 comment_event_service=None, auto_sync_worker=None):
+    def __init__(self, app: FastAPI, orchestrator: Orchestrator, settings: Settings,
+                 renew_scan_service: BindDocService | None = None,
+                 renew_scan_interval_sec: int = 60,
+                 comment_event_service: CommentEventService | None = None,
+                 auto_sync_worker: CommentAutoSyncWorker | None = None) -> None:
         self.app = app
         self.orchestrator = orchestrator
         self.settings = settings

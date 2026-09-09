@@ -13,7 +13,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from orchestrator.coding.workspace import CommandPolicy, PathEscapeError, WorkspaceManager
 
@@ -27,7 +27,7 @@ class CodeTools:
     """code 域六原语；dispatch 为 AgentLoop 的统一工具入口。"""
 
     # OpenAI function calling schema（六原语静态声明）
-    SCHEMA: list[dict] = [
+    SCHEMA: list[dict[str, Any]] = [
         {"type": "function", "function": {
             "name": "read_file",
             "description": "读取工作区内文本文件；offset/limit 为 1-based 行号窗口",
@@ -106,7 +106,7 @@ class CodeTools:
     # ------------------------------------------------------------------ #
     # 统一分发
     # ------------------------------------------------------------------ #
-    def dispatch(self, name: str, arguments: "str | dict") -> dict:
+    def dispatch(self, name: str, arguments: "str | dict[str, Any]") -> dict[str, Any]:
         """按名分发原语；arguments 兼容 JSON 字符串；任何异常转 ok=False。"""
         if isinstance(arguments, str):
             arguments = json.loads(arguments) if arguments.strip() else {}
@@ -114,7 +114,8 @@ class CodeTools:
         if not isinstance(name, str) or not name.isidentifier() or op is None:
             return {"ok": False, "error": f"unknown tool: {name!r}"}
         try:
-            return op(**arguments)
+            result: dict[str, Any] = op(**arguments)
+            return result
         except PathEscapeError as exc:
             return {"ok": False, "error": f"PATH_FORBIDDEN: {exc}"}
         except TypeError as exc:
@@ -126,7 +127,7 @@ class CodeTools:
     # ------------------------------------------------------------------ #
     # 文件五原语
     # ------------------------------------------------------------------ #
-    def _op_read_file(self, path: str, offset: int = 1, limit: int = 2000) -> dict:
+    def _op_read_file(self, path: str, offset: int = 1, limit: int = 2000) -> dict[str, Any]:
         """读取文本文件，返回窗口内容与总行数。"""
         p = self.ws.resolve_safe(self.session_id, path)
         if not p.is_file():
@@ -135,14 +136,14 @@ class CodeTools:
         window = lines[max(offset - 1, 0): offset - 1 + limit]
         return {"ok": True, "content": "\n".join(window), "total_lines": len(lines)}
 
-    def _op_write_file(self, path: str, content: str) -> dict:
+    def _op_write_file(self, path: str, content: str) -> dict[str, Any]:
         """整文件覆写（UTF-8），自动建父目录。"""
         p = self.ws.resolve_safe(self.session_id, path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return {"ok": True, "path": path, "bytes": len(content.encode("utf-8"))}
 
-    def _op_edit_file(self, path: str, old_str: str, new_str: str) -> dict:
+    def _op_edit_file(self, path: str, old_str: str, new_str: str) -> dict[str, Any]:
         """精确替换；old_str 必须恰好出现一次（0 次 NOT_FOUND，多次 NOT_UNIQUE）。"""
         p = self.ws.resolve_safe(self.session_id, path)
         if not p.is_file():
@@ -156,7 +157,7 @@ class CodeTools:
         p.write_text(text.replace(old_str, new_str, 1), encoding="utf-8")
         return {"ok": True, "path": path}
 
-    def _op_list_dir(self, path: str = ".") -> dict:
+    def _op_list_dir(self, path: str = ".") -> dict[str, Any]:
         """列出目录项（name/type/size），目录在前。"""
         d = self.ws.resolve_safe(self.session_id, path)
         if not d.is_dir():
@@ -169,11 +170,11 @@ class CodeTools:
         entries.sort(key=lambda e: (e["type"] != "dir", str(e["name"]).lower()))
         return {"ok": True, "entries": entries[:200]}
 
-    def _op_search_files(self, pattern: str, path: str = ".", glob: str = "*") -> dict:
+    def _op_search_files(self, pattern: str, path: str = ".", glob: str = "*") -> dict[str, Any]:
         """递归 grep：正则匹配行，glob 过滤文件名，最多 100 条命中。"""
         rx = re.compile(pattern)
         base = self.ws.resolve_safe(self.session_id, path)
-        matches: list[dict] = []
+        matches: list[dict[str, Any]] = []
         for f in sorted(base.rglob(glob)):
             if not f.is_file() or f.stat().st_size > 2_000_000:
                 continue
@@ -193,7 +194,7 @@ class CodeTools:
     # ------------------------------------------------------------------ #
     # 命令执行
     # ------------------------------------------------------------------ #
-    def _op_run_cmd(self, cmd) -> dict:
+    def _op_run_cmd(self, cmd: "list[str] | str") -> dict[str, Any]:
         """三态执行：block 拒 / need_approval 走 approve_fn / allow 直跑。
 
         shell=False 下 Windows 不会对裸命令名做 PATH 解析（curl/git 等会

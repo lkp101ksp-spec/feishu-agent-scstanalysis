@@ -18,10 +18,16 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from typing import TYPE_CHECKING, Any, Callable
 
 from orchestrator.planner.planner import _extract_json_object
-from shared.schemas import ChatMessage
+from shared.schemas import ChatMessage, IncomingMessage
 from shared.ulid_ import new_ulid
+
+if TYPE_CHECKING:
+    # 仅类型标注用：避免 lark SDK 冷导入拖慢启动（同 doc_write_service 惯例）
+    from feishu_adapter.im_adapter import IMAdapter
+    from orchestrator.llm_router import LLMRouter
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +51,8 @@ _ROUTE_TITLE = {"research": "研究任务", "code": "代码任务"}
 _PREVIEW_CAP = 200
 
 
-def _offer_card(intent_id: str, owner: str, text: str, route: str) -> dict:
+def _offer_card(intent_id: str, owner: str, text: str,
+                route: str) -> dict[str, Any]:
     """意图确认卡：指令预览 + 确认执行/改用另一路径/忽略（value 内嵌 owner）。
 
     三按钮（Feishu 单组上限 4）：主按钮按分类路径执行；纠偏按钮一键切换到
@@ -84,7 +91,8 @@ def _offer_card(intent_id: str, owner: str, text: str, route: str) -> dict:
     }
 
 
-def _result_card(text: str, approved: bool, route: str = "research") -> dict:
+def _result_card(text: str, approved: bool,
+                 route: str = "research") -> dict[str, Any]:
     """点击后的原地换面卡（去按钮防重复点击；服务端幂等仍兜底）。"""
     preview = text[:_PREVIEW_CAP] + ("…" if len(text) > _PREVIEW_CAP else "")
     title, note = (
@@ -104,18 +112,18 @@ def _result_card(text: str, approved: bool, route: str = "research") -> dict:
 class IntentGateService:
     """意图预判闸：maybe_offer（消息路径）+ decide（卡片回调路径）。"""
 
-    def __init__(self, *, llm, im, ttl_sec: int = 1800,
-                 now=lambda: time.time()) -> None:
+    def __init__(self, *, llm: LLMRouter, im: IMAdapter, ttl_sec: int = 1800,
+                 now: Callable[[], float] = lambda: time.time()) -> None:
         self.llm = llm
         self.im = im
         self.ttl_sec = ttl_sec
         self._now = now  # 纯函数式时间注入（测试可控，同 bio_workspace_gc 惯例）
-        self._pending: dict[str, dict] = {}
+        self._pending: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     # === 消息路径 ===
 
-    def maybe_offer(self, incoming) -> dict | None:
+    def maybe_offer(self, incoming: IncomingMessage) -> dict[str, Any] | None:
         """私聊普通消息前置拦截：疑似研究意图发确认卡，否则返回 None 落闲聊。
 
         触发条件全部满足才发卡：服务所需依赖齐备、非 / 开头（未知指令维持
@@ -168,7 +176,8 @@ class IntentGateService:
     # === 回调路径 ===
 
     def decide(self, intent_id: str, decision: str, *,
-               operator: str, owner: str = "", route: str = "") -> dict:
+               operator: str, owner: str = "", route: str = ""
+               ) -> dict[str, Any]:
         """确认卡点击：owner 比对 + 内存幂等 + TTL 失效。
 
         route 为卡片 value 里的最终执行路径（用户可点纠偏按钮改道），

@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+from typing import Any, cast
 
+from orchestrator.llm_router import LLMRouter
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan, validate_dag
 from shared.errors import DAGValidationError
 from shared.ulid_ import new_ulid
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 class Planner:
     def __init__(
         self,
-        llm_router,
+        llm_router: LLMRouter,
         *,
         role_intent: str = "intent_parser",
         role_dag: str = "dag_builder",
@@ -43,8 +45,8 @@ class Planner:
         message: str,
         session_id: str,
         task_id: str,
-        available_tools: list,
-        tools_schema: list,
+        available_tools: list[str],
+        tools_schema: list[dict[str, Any]],
         session_context: str = "",
     ) -> DAGPlan:
         intent_resp = self.llm_router.call(
@@ -88,11 +90,11 @@ class Planner:
                 continue
         raise DAGValidationError(f"planner failed after retries: {last_err}")
 
-    def _parse_intent(self, resp):
+    def _parse_intent(self, resp: str) -> str:
         if isinstance(resp, dict):
-            return resp.get("intent", "unknown")
+            return cast(str, resp.get("intent", "unknown"))
         try:
-            return json.loads(resp).get("intent", "unknown")
+            return cast(str, json.loads(resp).get("intent", "unknown"))
         except (json.JSONDecodeError, TypeError):
             return "unknown"
 
@@ -101,8 +103,8 @@ class Planner:
         *,
         message: str,
         intent: str,
-        available_tools: list,
-        tools_schema: list,
+        available_tools: list[str],
+        tools_schema: list[dict[str, Any]],
         session_context: str = "",
     ) -> str:
         """构建 DAG 生成 prompt；工具 schema 全量内联（Phase 12 板块③）。
@@ -160,7 +162,7 @@ class Planner:
             "entry_node_ids 必须是 depends_on=[] 的节点。"
         )
 
-    def _build_plan(self, resp, *, task_id: str, session_id: str) -> DAGPlan:
+    def _build_plan(self, resp: str, *, task_id: str, session_id: str) -> DAGPlan:
         payload = _extract_json_object(resp)
         nodes = [_build_node(n) for n in payload["nodes"]]
         # entry 缺失时自动推导：depends_on 为空的节点即入口（容错，真机 2026-08-30）
@@ -178,7 +180,7 @@ class Planner:
         )
 
 
-def _extract_json_object(resp) -> dict:
+def _extract_json_object(resp: str) -> dict[str, Any]:
     """从 LLM 响应提取 JSON 对象：容忍 dict 直传、markdown 围栏、夹带说明文字。
 
     失败抛 json.JSONDecodeError（由 plan() 的重试循环捕获）。
@@ -195,10 +197,10 @@ def _extract_json_object(resp) -> dict:
         end = text.rfind("}")
         if start != -1 and end > start:
             text = text[start:end + 1]
-    return json.loads(text)
+    return cast(dict[str, Any], json.loads(text))
 
 
-def _build_node(payload: dict) -> DAGNode:
+def _build_node(payload: dict[str, Any]) -> DAGNode:
     """递归构造嵌套 DAGNode（Phase 3）。
 
     容错（Phase 12 真机 2026-08-30）：

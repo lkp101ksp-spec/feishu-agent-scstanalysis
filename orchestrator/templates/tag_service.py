@@ -1,15 +1,20 @@
 """Phase 8 T7: 模板标签服务（owner 权限 + 归一化，ADR-0022）。"""
 from __future__ import annotations
 
+from persistence.models import TemplateRow
+from persistence.repositories.template_repo import TemplateRepo
+from persistence.repositories.template_tag_repo import TemplateTagRepo
 from shared.ulid_ import new_ulid
 
 
 class TagService:
-    def __init__(self, tag_repo, template_repo) -> None:
+    def __init__(self, tag_repo: TemplateTagRepo,
+                 template_repo: TemplateRepo) -> None:
         self.tag_repo = tag_repo
         self.template_repo = template_repo
 
-    def _check_owner(self, *, template_id: str, caller_open_id: str):
+    def _check_owner(self, *, template_id: str,
+                     caller_open_id: str) -> TemplateRow:
         """模板存在 + 未归档 + caller 是 owner；否则抛错。"""
         tpl = self.template_repo.get(template_id)
         if tpl is None or getattr(tpl, "archived_at", None) is not None:
@@ -49,7 +54,7 @@ class TagService:
         """列模板标签（任意人可读）。"""
         return self.tag_repo.list_by_template(template_id)
 
-    def find_by_tag(self, tag: str) -> list:
+    def find_by_tag(self, tag: str) -> list[TemplateRow]:
         """按标签查未归档模板行。"""
         normalized = tag.strip().lower()
         out = []

@@ -20,7 +20,7 @@ class BackgroundTaskRunner:
         self._tasks = tasks
         self.interval_sec = interval_sec
         self._stop = asyncio.Event()
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
         if self._task is not None:

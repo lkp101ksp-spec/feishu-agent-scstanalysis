@@ -3,11 +3,15 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
+from persistence.repositories.template_repo import TemplateRepo
+from persistence.repositories.template_tag_repo import TemplateTagRepo
+
 
 class TagRecommendService:
     """基于全站标签共现的推荐：与已有标签同模板出现的标签优先。"""
 
-    def __init__(self, tag_repo, template_repo=None) -> None:
+    def __init__(self, tag_repo: TemplateTagRepo,
+                 template_repo: TemplateRepo | None = None) -> None:
         self.tag_repo = tag_repo
         self.template_repo = template_repo
 

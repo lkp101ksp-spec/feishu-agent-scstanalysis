@@ -3,9 +3,11 @@ from __future__ import annotations
 
 from typing import Optional
 
+from feishu_adapter.comment_client import CommentClient
+
 
 class CommentService:
-    def __init__(self, client) -> None:
+    def __init__(self, client: CommentClient) -> None:
         self.client = client
 
     def fetch_thread(

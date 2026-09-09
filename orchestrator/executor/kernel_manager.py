@@ -19,8 +19,9 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
+from orchestrator.executor.sandbox import DockerSandbox
 from shared.errors import SandboxTimeoutError, SandboxUnavailableError
 
 # 与 sandbox/run_user.py 的 SENTINEL 保持一致
@@ -31,7 +32,7 @@ _SENTINEL = "\n###RESULT###\n"
 _LITERAL_HEADS = frozenset("'\"([{[-+.0123456789TFN")
 
 
-def _revive_result(text: str):
+def _revive_result(text: str) -> Any:
     """末表达式 repr 字符串 → 原生对象（仅 JSON 安全类型），失败原样返回。
 
     - dict/list/数字/bool/None 还原为原生值 → 下游注入合法字面量、
@@ -66,7 +67,7 @@ class KernelPool:
     """Phase 16 起多线程访问（exec_code 调用线程 + idle_sweep 守护线程），
     全部句柄表操作持锁；docker exec 等慢操作在锁外执行。"""
 
-    def __init__(self, sandbox, idle_timeout_sec: int = 1800) -> None:
+    def __init__(self, sandbox: DockerSandbox, idle_timeout_sec: int = 1800) -> None:
         self._sandbox = sandbox
         self._idle_timeout = timedelta(seconds=idle_timeout_sec)
         self._handles: dict[str, KernelHandle] = {}
@@ -130,7 +131,7 @@ class KernelPool:
 
     def exec_code(
         self, session_id: str, code: str, timeout_sec: int = 60
-    ) -> dict:
+    ) -> dict[str, Any]:
         """在 session 容器内执行 Python 代码。
 
         返回 {"stdout", "result", "error_code"?, "error_message"?}：

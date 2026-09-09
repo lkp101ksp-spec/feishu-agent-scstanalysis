@@ -7,12 +7,13 @@
 """
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlparse
 
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from config.settings import ProviderCfg
-from orchestrator.llm_router import LLMRouter
+from orchestrator.llm_router import LLMRouter, _Provider
 from persistence.repositories.llm_active_repo import LLMActiveRepo
 
 _SLOTS = ("primary", "fallback")
@@ -31,7 +32,7 @@ class ModelSwitchService:
 
     def __init__(self, *, llm: LLMRouter, providers: tuple[ProviderCfg, ...],
                  admin_ids: set[str],
-                 session_factory: sessionmaker) -> None:
+                 session_factory: sessionmaker[Session]) -> None:
         self.llm = llm
         self.providers: dict[str, ProviderCfg] = {p.name: p for p in providers}
         self.admin_ids = admin_ids
@@ -54,7 +55,7 @@ class ModelSwitchService:
         return (self._name_of(self.llm.primary),
                 self._name_of(self.llm.fallback))
 
-    def _name_of(self, provider) -> str:
+    def _name_of(self, provider: _Provider) -> str:
         """按 model+host 在候选池反查名字；查不到返回描述形态。"""
         host = _host(provider.base_url)
         for name, cfg in self.providers.items():
@@ -63,7 +64,7 @@ class ModelSwitchService:
         return f"{provider.model}@{host}"
 
     # ------------------------------------------------------------------ #
-    def status_card(self, open_id: str) -> dict | None:
+    def status_card(self, open_id: str) -> dict[str, Any] | None:
         """admin 查看状态卡；非 admin 返回 None（调用方回文本提示）。"""
         if not self.is_admin(open_id):
             return None
@@ -72,7 +73,7 @@ class ModelSwitchService:
             f"主模型：{self._display(cur_p, True)}",
             f"备模型：{self._display(cur_f, False)}",
         ]
-        elements: list[dict] = [
+        elements: list[dict[str, Any]] = [
             {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines)}},
         ]
         if not self.providers:
@@ -102,7 +103,7 @@ class ModelSwitchService:
             "elements": elements,
         }
 
-    def picker_card(self, open_id: str, slot: str) -> dict | None:
+    def picker_card(self, open_id: str, slot: str) -> dict[str, Any] | None:
         """选模型卡（卡片 2）：列出候选池全部模型，点击即切换到指定槽位。
 
         admin 限定；非法槽位返回 None。当前在任模型禁用并带 ✓；
@@ -115,7 +116,7 @@ class ModelSwitchService:
         cur_p, cur_f = self._current()
         current = cur_p if slot == "primary" else cur_f
         slot_label = "主" if slot == "primary" else "备"
-        buttons: list[dict] = []
+        buttons: list[dict[str, Any]] = []
         for name, cfg in self.providers.items():
             buttons.append({
                 "tag": "button",
@@ -134,7 +135,7 @@ class ModelSwitchService:
         })
         # 飞书 action 布局每组最多 4 个按钮，候选多时分组
         groups = [buttons[i:i + 4] for i in range(0, len(buttons), 4)]
-        elements: list[dict] = [
+        elements: list[dict[str, Any]] = [
             {"tag": "div", "text": {"tag": "lark_md",
                 "content": f"当前{slot_label}模型：**{current}**，点击下方模型即切换"}},
         ]
@@ -182,7 +183,7 @@ class ModelSwitchService:
              "model": fcfg.model, "timeout_sec": self.llm.fallback.timeout_sec},
         )
 
-    def switch(self, open_id: str, name: str, slot: str) -> dict:
+    def switch(self, open_id: str, name: str, slot: str) -> dict[str, Any]:
         """热切换指定槽位到候选 name：校验 → reconfigure → DB 持久化。"""
         if not self.is_admin(open_id):
             return {"ok": False, "reason": "forbidden"}

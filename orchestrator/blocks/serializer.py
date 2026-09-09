@@ -36,7 +36,7 @@ def json_to_blocks(s: str) -> list[AnyBlock]:
     return [_parse_block(b) for b in data]
 
 
-def parse_blocks(raw) -> list[AnyBlock]:
+def parse_blocks(raw: Any) -> list[AnyBlock]:
     """宽松解析 blocks 参数：JSON/Python repr 字符串、dict、list[dict] → list[Block]。
 
     planner 生成的工具 inputs 统一 str() 强转，经 scheduler 引用替换后

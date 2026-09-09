@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from feishu_adapter.im_adapter import IMAdapter
 from orchestrator.bind_doc_service import BindDocService
@@ -93,13 +93,13 @@ class Orchestrator:
         doc_write_service: DocWriteService,
         im_adapter: IMAdapter,
         *,
-        settings=None,
-        doc_adapter=None,
-        base_adapter=None,
-        drive_adapter=None,
-        audit_repo=None,
-        artifact_repo=None,
-        research_llm=None,
+        settings: Any = None,
+        doc_adapter: Any = None,
+        base_adapter: Any = None,
+        drive_adapter: Any = None,
+        audit_repo: Any = None,
+        artifact_repo: Any = None,
+        research_llm: Optional[LLMRouter] = None,
     ):
         self.llm = llm_router
         # Phase 44：/research 场景 router（planner + scheduler 条件/修复判定）；
@@ -208,7 +208,7 @@ class Orchestrator:
             self.planner = Planner(llm_router=self.research_llm)
             self.template = TemplateEngine()
 
-    def process(self, incoming: IncomingMessage) -> dict:
+    def process(self, incoming: IncomingMessage) -> dict[str, Any]:
         """处理一条入站消息，返回结果摘要。"""
         # 1. /bind-doc 指令：单独分支
         if incoming.is_bind_doc_cmd and incoming.bind_doc_id:
@@ -266,7 +266,8 @@ class Orchestrator:
             if runner is None:
                 self.im.reply(incoming.chat_id, "[错误] 研究引擎未配置")
                 return {"status": "research_unavailable"}
-            return runner.handle(incoming)
+            research_result: dict[str, Any] = runner.handle(incoming)
+            return research_result
 
         # 1.68 /code 指令：agentic coding 后台执行（Phase 26）
         if stripped == "/code" or stripped.startswith("/code "):
@@ -274,7 +275,8 @@ class Orchestrator:
             if runner is None:
                 self.im.reply(incoming.chat_id, "[错误] coding 引擎未配置")
                 return {"status": "coding_unavailable"}
-            return runner.handle(incoming)
+            coding_result: dict[str, Any] = runner.handle(incoming)
+            return coding_result
 
         # 1.69 /model 指令：模型切换状态卡（Phase 30，admin 限定）
         if stripped == "/model" or stripped.startswith("/model "):
@@ -320,7 +322,7 @@ class Orchestrator:
         # 才转 /research；未命中/未装配/分类失败均落回普通闲聊路径。
         gate = getattr(self, "intent_gate", None)
         if gate is not None:
-            offered = gate.maybe_offer(incoming)
+            offered: Optional[dict[str, Any]] = gate.maybe_offer(incoming)
             if offered is not None:
                 return offered
 
@@ -410,7 +412,7 @@ class Orchestrator:
             "warning": warning,
         }
 
-    def _handle_bind(self, incoming: IncomingMessage) -> dict:
+    def _handle_bind(self, incoming: IncomingMessage) -> dict[str, Any]:
         """处理 /bind-doc <doc_id> 指令。"""
         # process() 入口已用 is_bind_doc_cmd and bind_doc_id 守卫，此处收窄类型
         assert incoming.bind_doc_id is not None
@@ -458,7 +460,7 @@ class Orchestrator:
 
     # === Phase 2 ===
 
-    def process_phase2(self, incoming: IncomingMessage) -> dict:
+    def process_phase2(self, incoming: IncomingMessage) -> dict[str, Any]:
         """Phase 2 主流程：Planner → Scheduler → Template → DocWrite。
 
         Phase 2 简化版：sync 包装 asyncio.run_until_complete；
@@ -550,7 +552,7 @@ class Orchestrator:
         }
 
     # === Phase 3 ===
-    def process_phase3(self, incoming: IncomingMessage) -> dict:
+    def process_phase3(self, incoming: IncomingMessage) -> dict[str, Any]:
         """Phase 3 主流程：runtime 接管 + bind_doc 续期指令 + 上下文压缩。
 
         与 process_phase2 区别：
@@ -589,7 +591,7 @@ class Orchestrator:
         return self.process_phase2(incoming)
 
     # === Phase 4 MVP ===
-    def process_phase4(self, incoming: IncomingMessage) -> dict:
+    def process_phase4(self, incoming: IncomingMessage) -> dict[str, Any]:
         """Phase 4 MVP：与 process_phase3 区别仅 ToolRegistry 多注册 blast_search。
 
         普通消息委托给 process_phase3。
@@ -620,7 +622,7 @@ class Orchestrator:
         return self.process_phase3(incoming)
 
     # === Phase 5 ===
-    def process_phase5(self, incoming) -> dict:
+    def process_phase5(self, incoming: IncomingMessage) -> dict[str, Any]:
         """Phase 5 入口：市场指令路由（_try_market_commands）+ 复用 process_phase4。"""
         from shared.errors import FeishuAgentError
         if not hasattr(self, "planner"):
@@ -634,7 +636,7 @@ class Orchestrator:
         return self.process_phase4(incoming)
 
     # === Phase 6 ===
-    def process_phase6(self, incoming) -> dict:
+    def process_phase6(self, incoming: IncomingMessage) -> dict[str, Any]:
         """Phase 6 入口：市场指令路由 + 复用 process_phase5。"""
         from shared.errors import FeishuAgentError
         if not hasattr(self, "planner"):
@@ -648,7 +650,7 @@ class Orchestrator:
         return self.process_phase5(incoming)
 
     # === Phase 7 ===
-    def process_phase7(self, incoming) -> dict:
+    def process_phase7(self, incoming: IncomingMessage) -> dict[str, Any]:
         """Phase 7 入口：市场指令路由 + 复用 process_phase6。"""
         from shared.errors import FeishuAgentError
         if not hasattr(self, "planner"):
@@ -662,7 +664,7 @@ class Orchestrator:
         return self.process_phase6(incoming)
 
     # === Phase 8 ===
-    def process_phase8(self, incoming) -> dict:
+    def process_phase8(self, incoming: IncomingMessage) -> dict[str, Any]:
         """Phase 8 入口：市场指令路由 + 复用 process_phase7。"""
         from shared.errors import FeishuAgentError
         if not hasattr(self, "planner"):
@@ -676,7 +678,7 @@ class Orchestrator:
         return self.process_phase7(incoming)
 
     # === Phase 9 ===
-    def process_phase9(self, incoming) -> dict:
+    def process_phase9(self, incoming: IncomingMessage) -> dict[str, Any]:
         """Phase 9 入口：市场指令路由 + 复用 process_phase8。"""
         from shared.errors import FeishuAgentError
         if not hasattr(self, "planner"):
@@ -689,7 +691,8 @@ class Orchestrator:
         # 普通消息：复用 process_phase8
         return self.process_phase8(incoming)
 
-    def _try_market_commands(self, incoming: IncomingMessage) -> Optional[dict]:
+    def _try_market_commands(
+            self, incoming: IncomingMessage) -> Optional[dict[str, Any]]:
         """模板市场/评论闭环指令路由（Phase 5-9 全量 12 条）。
 
         生产 process() 与 process_phase5-9 共用本路由器，保证指令行为单份维护。

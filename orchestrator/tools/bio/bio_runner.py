@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ def compute_dataset_id_dir(abs_dir: str) -> str:
     return digest[:12]
 
 
-def parse_gene_list(genes) -> list[str]:
+def parse_gene_list(genes: Any) -> list[str]:
     """宽松解析 genes 参数：接受 list / repr 字符串 / 单基因名字符串。
 
     planner 偶发把 list 参数序列化成 Python repr 串（"['A', 'B']"，
@@ -85,10 +86,10 @@ def parse_gene_list(genes) -> list[str]:
         except (ValueError, SyntaxError):
             pass
         return [genes] if genes.strip() else []
-    return genes
+    return cast(list[str], genes)
 
 
-def touch_last_access(workspace_root: str, dataset_id) -> None:
+def touch_last_access(workspace_root: str, dataset_id: Any) -> None:
     """Phase 23：GC 打点——更新 <workspace_root>/<dataset_id>/.last_access。
 
     best-effort：dataset_id 为空或非 12hex（dataset_ref 来自 LLM/planner，
@@ -150,10 +151,11 @@ class BioRunner:
 
     # --- 执行 ---
 
-    def run(self, script: str, args: dict, *, timeout_sec: int | None = None,
+    def run(self, script: str, args: dict[str, Any], *,
+            timeout_sec: int | None = None,
             mounts: list[tuple[str, str]] | None = None,
             image: str | None = None, script_dir: str = "/opt/sc_tools",
-            gpus: bool = False) -> dict:
+            gpus: bool = False) -> dict[str, Any]:
         """跑 <script_dir>/<script>.py，返回 stdout JSON dict。
 
         mounts: 额外 (主机目录, 容器目录) 挂载（sc_load 的数据目录）。
@@ -218,4 +220,4 @@ class BioRunner:
             raise BioRunError(
                 out.get("error_code", "SC_SCRIPT_FAILED"),
                 out.get("error_message", "unknown script error"))
-        return out
+        return cast(dict[str, Any], out)

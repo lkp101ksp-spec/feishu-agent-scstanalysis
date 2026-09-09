@@ -12,7 +12,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +32,13 @@ class LoopResult:
     steps: int                        # 已消耗的 LLM 轮数
     approx_tokens: int
     abort_reason: str = ""
-    tool_events: list[dict] = field(default_factory=list)  # {step,name,ok}
+    tool_events: list[dict[str, Any]] = field(default_factory=list)  # {step,name,ok}
     # 连败禁用是否触发过（Phase 27 真机修复）：禁用后模型按引导文字收尾
     # 会得到 final 状态，诊断链依赖该标记区分"实质失败的 final"
     tools_disabled: bool = False
 
 
-def truncate_observation(payload: dict, limit: int = OBS_TRUNCATE) -> str:
+def truncate_observation(payload: dict[str, Any], limit: int = OBS_TRUNCATE) -> str:
     """观察 dict → JSON 字符串，超限头尾保留截断。"""
     s = json.dumps(payload, ensure_ascii=False, default=str)
     if len(s) <= limit:
@@ -47,7 +47,9 @@ def truncate_observation(payload: dict, limit: int = OBS_TRUNCATE) -> str:
     return s[:head] + f"\n...[truncated {len(s) - head - tail} chars]...\n" + s[-tail:]
 
 
-def compress_messages(messages: list[dict], keep_tail: int = COMPRESS_KEEP_TAIL) -> list[dict]:
+def compress_messages(
+    messages: list[dict[str, Any]], keep_tail: int = COMPRESS_KEEP_TAIL
+) -> list[dict[str, Any]]:
     """历史压缩：system + 中段一行简报 + 最近 keep_tail 条。"""
     if len(messages) <= keep_tail + 1:
         return messages
@@ -65,16 +67,16 @@ class AgentLoop:
 
     def __init__(
         self,
-        llm,
-        tools_schema: list[dict],
-        dispatch: Callable[[str, object], dict],
+        llm: Any,
+        tools_schema: list[dict[str, Any]],
+        dispatch: Callable[[str, Any], dict[str, Any]],
         *,
         max_steps: int = 25,
         token_budget: int = 200_000,
         timeout_sec: int = 3600,
         risk_map: Optional[dict[str, str]] = None,
         approve_fn: Optional[Callable[[list[str]], bool]] = None,
-        on_step: Optional[Callable[[int, dict], None]] = None,
+        on_step: Optional[Callable[[int, dict[str, Any]], None]] = None,
         model: Optional[str] = None,
     ) -> None:
         self.llm = llm
@@ -87,13 +89,13 @@ class AgentLoop:
         self.approve_fn = approve_fn
         self.on_step = on_step
         self.model = model
-        self.events: list[dict] = []   # tool_event 累积（随 LoopResult 返回）
+        self.events: list[dict[str, Any]] = []   # tool_event 累积（随 LoopResult 返回）
 
     # ------------------------------------------------------------------ #
     def run(self, system: str, task: str) -> LoopResult:
         """执行循环直至终止；返回 LoopResult。"""
         started = time.monotonic()
-        messages: list[dict] = [
+        messages: list[dict[str, Any]] = [
             {"role": "system", "content": system},
             {"role": "user", "content": task},
         ]
@@ -195,7 +197,7 @@ class AgentLoop:
                           self.events, disabled)
 
     # ------------------------------------------------------------------ #
-    def _execute_tool(self, name: str, arguments) -> dict:
+    def _execute_tool(self, name: str, arguments: Any) -> dict[str, Any]:
         """L2 审批 → dispatch；异常与审批拒绝均转观察 dict。"""
         if isinstance(arguments, str):
             try:
@@ -215,7 +217,7 @@ class AgentLoop:
         return result if isinstance(result, dict) else {"ok": True, "result": result}
 
     @staticmethod
-    def _refresh_memory_message(messages: list[dict],
+    def _refresh_memory_message(messages: list[dict[str, Any]],
                                 fail_lines: list[str],
                                 ok_lines: list[str]) -> None:
         """把最近记忆写入/更新为紧随 system 的 user 消息（滚动窗口）。
@@ -241,7 +243,7 @@ class AgentLoop:
         messages.insert(1, {"role": "user", "content": content})
 
     @staticmethod
-    def _ok_summary(obs: dict, limit: int = 80) -> str:
+    def _ok_summary(obs: dict[str, Any], limit: int = 80) -> str:
         """成功观察 → 产出摘要：stdout 优先，result 次之，空则 'ok'。"""
         for key in ("stdout", "result"):
             val = obs.get(key)
@@ -250,7 +252,7 @@ class AgentLoop:
         return "ok"
 
     @staticmethod
-    def _error_summary(obs: dict, limit: int = 500) -> str:
+    def _error_summary(obs: dict[str, Any], limit: int = 500) -> str:
         """观察 dict → 失败摘要："error_code: error_message" 形态，截断 500 字符。
 
         覆盖三种错误形态：skill 子进程（error_code+error_message）、
@@ -262,12 +264,12 @@ class AgentLoop:
             return f"{code}: {detail}"[:limit]
         return (code or detail or "unknown error")[:limit]
 
-    def _approx_tokens(self, messages: list[dict]) -> int:
+    def _approx_tokens(self, messages: list[dict[str, Any]]) -> int:
         """粗估 token：消息 JSON 字符数 / 4。"""
         return sum(len(json.dumps(m, ensure_ascii=False, default=str))
                    for m in messages) // 4
 
-    def _emit(self, step: int, event: dict) -> None:
+    def _emit(self, step: int, event: dict[str, Any]) -> None:
         """触发 on_step 回调（CodingRunner 用于过程反馈节流）。"""
         if self.on_step is not None:
             try:

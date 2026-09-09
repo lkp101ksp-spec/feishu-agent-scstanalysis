@@ -1,11 +1,13 @@
 """Phase 7: fork public template to user-owned."""
 from __future__ import annotations
 
+from persistence.models import TemplateRow
+from persistence.repositories.template_repo import TemplateRepo
 from shared.ulid_ import new_ulid
 
 
 class ForkService:
-    def __init__(self, template_repo) -> None:
+    def __init__(self, template_repo: TemplateRepo) -> None:
         self.template_repo = template_repo
 
     def fork_from_public(
@@ -32,5 +34,5 @@ class ForkService:
         )
         return new_id
 
-    def list_forks(self, source_template_id: str) -> list:
+    def list_forks(self, source_template_id: str) -> list[TemplateRow]:
         return self.template_repo.list_by_lineage(source_template_id)

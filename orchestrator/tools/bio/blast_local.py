@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from typing import Optional
+from typing import Any, Optional
 
 from orchestrator.tools.bio.rate_limiter import RateLimiter
 
@@ -28,7 +28,7 @@ class BlastLocalTool:
         self.mode = mode
 
     def handle(self, *, query: str, database: str = "nr",
-               max_hits: int = 5) -> dict:
+               max_hits: int = 5) -> dict[str, Any]:
         if not query or not query.strip():
             return {"error_code": "BLAST_INVALID_QUERY",
                     "error_message": "query is empty"}
@@ -89,8 +89,8 @@ class BlastLocalTool:
                 return True
         return False
 
-    def _parse_hits(self, data: dict) -> list[dict]:
-        records: list[dict] = []
+    def _parse_hits(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
         for r in data.get("BlastOutput2", []):
             search = r.get("report", {}).get("results", {}).get("search", {})
             for hit in search.get("hits", []):

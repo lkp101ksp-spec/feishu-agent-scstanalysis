@@ -3,9 +3,12 @@ from __future__ import annotations
 
 from typing import Optional
 
+from persistence.models import TemplateRow
+from persistence.repositories.template_repo import TemplateRepo
+
 
 class ShareService:
-    def __init__(self, template_repo) -> None:
+    def __init__(self, template_repo: TemplateRepo) -> None:
         self.template_repo = template_repo
 
     def share_to_chat(
@@ -27,7 +30,7 @@ class ShareService:
             scope="chat", chat_id=chat_id,
         )
 
-    def list_for_chat(self, chat_id: str) -> list:
+    def list_for_chat(self, chat_id: str) -> list[TemplateRow]:
         return self.template_repo.list_by_chat(chat_id)
 
     def can_access(

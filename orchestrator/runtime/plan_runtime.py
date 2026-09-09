@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional, Protocol
 
 from orchestrator.planner.dag_schema import DAGNode, DAGPlan, validate_dag
+from persistence.repositories.plan_runtime_state_repo import PlanRuntimeStateRepo
 from shared.errors import DynamicAppendError, LoopMaxIterError
 from shared.ulid_ import new_ulid
 
@@ -24,12 +25,31 @@ class RuntimeState(str, Enum):
     TERMINAL = "terminal"
 
 
+class _AuditSink(Protocol):
+    """PlanRuntime 实际依赖的审计写入契约（duck-typed）。
+
+    与 persistence AuditRepo.write 不同：此处不传 audit_id（由实现方
+    自行生成），生产侧当前未接线，测试用 FakeAuditRepo(write(**kw))。
+    """
+
+    def write(
+        self,
+        *,
+        actor_type: str,
+        actor_id: str,
+        action: str,
+        target_type: str,
+        target_id: str,
+        detail: dict[str, Any],
+    ) -> Any: ...
+
+
 class PlanRuntime:
     def __init__(
         self,
         *,
-        state_repo,
-        audit_repo,
+        state_repo: Optional[PlanRuntimeStateRepo],
+        audit_repo: Optional[_AuditSink],
         max_iterations: int = 10,
         plan_id: Optional[str] = None,
     ) -> None:
@@ -39,8 +59,8 @@ class PlanRuntime:
         self.plan_id = plan_id
         self.state = RuntimeState.INIT
         self._loop_counters: dict[str, int] = {}
-        self._dynamic_nodes: list[dict] = []
-        self._iteration_vars: dict[str, list] = {}
+        self._dynamic_nodes: list[dict[str, Any]] = []
+        self._iteration_vars: dict[str, list[Any]] = {}
 
     # === 动态追加 ===
     def append_dynamic_nodes(
@@ -136,7 +156,7 @@ class PlanRuntime:
             )
         return new_sid
 
-    async def run(self, plan: DAGPlan) -> dict:
+    async def run(self, plan: DAGPlan) -> dict[str, Any]:
         """Phase 3 简化版入口。Phase 3.1 接入完整调度逻辑。"""
         self.state = RuntimeState.RUNNING
         try:

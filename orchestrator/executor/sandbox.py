@@ -10,11 +10,13 @@ import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
+from typing import Callable, cast
 
+from config.settings import Settings
 from shared.errors import SandboxUnavailableError
 
 
-def _kill_process_tree(proc: subprocess.Popen) -> None:
+def _kill_process_tree(proc: subprocess.Popen[str]) -> None:
     """杀整棵进程树：Windows 用 taskkill /F /T，POSIX 杀本体即可。"""
     if sys.platform == "win32":
         subprocess.run(
@@ -25,8 +27,9 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
         proc.kill()
 
 
-def _run_subprocess(args, *, capture_output=True, text=True,
-                    input=None, timeout=None) -> subprocess.CompletedProcess:
+def _run_subprocess(args: list[str], *, capture_output: bool = True,
+                    text: bool = True, input: str | None = None,
+                    timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     """subprocess.run 的进程树安全版。
 
     Windows 下 docker.exe 会派生子进程持有 stdio 管道句柄；subprocess.run 超时
@@ -46,7 +49,7 @@ def _run_subprocess(args, *, capture_output=True, text=True,
         _kill_process_tree(proc)
         stdout, stderr = proc.communicate()
         raise subprocess.TimeoutExpired(
-            args, timeout, output=stdout, stderr=stderr,
+            args, cast(float, timeout), output=stdout, stderr=stderr,
         ) from None
     return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
 
@@ -63,7 +66,7 @@ class DockerSandboxConfig:
     tmpfs_workspace_mb: int = 512
 
     @classmethod
-    def from_settings(cls, settings) -> "DockerSandboxConfig":
+    def from_settings(cls, settings: Settings) -> "DockerSandboxConfig":
         return cls(
             image=settings.docker_image,
             cpu_limit=settings.docker_cpu_limit,
@@ -75,7 +78,12 @@ class DockerSandboxConfig:
 
 
 class DockerSandbox:
-    def __init__(self, config: DockerSandboxConfig, *, run_subprocess=_run_subprocess) -> None:
+    def __init__(
+        self,
+        config: DockerSandboxConfig,
+        *,
+        run_subprocess: Callable[..., subprocess.CompletedProcess[str]] = _run_subprocess,
+    ) -> None:
         self.config = config
         self._run = run_subprocess
 
@@ -122,7 +130,7 @@ class DockerSandbox:
             pass
 
     def exec(self, container_name: str, cmd: list[str], *, timeout_sec: int = 60,
-             input_text: str | None = None):
+             input_text: str | None = None) -> subprocess.CompletedProcess[str]:
         """docker exec；input_text 经 stdin 透传（T2：用户代码零转义写入）。"""
         return self._run(
             ["docker", "exec"] + (["-i"] if input_text is not None else [])

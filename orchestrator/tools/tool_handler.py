@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from orchestrator.tools.ast_guard import ASTGuard
 from orchestrator.tools.param_coerce import coerce_params
@@ -17,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ToolResult:
-    outputs: dict
+    outputs: dict[str, Any]
     artifacts_ids: list[str]
     error_code: str | None = None
     error_message: str | None = None
-    blocks: list | None = None  # Phase 5: 富文本块
+    blocks: list[Any] | None = None  # Phase 5: 富文本块
 
 
 class ToolHandler:
@@ -29,7 +30,7 @@ class ToolHandler:
         self,
         registry: ToolRegistry,
         *,
-        settings=None,
+        settings: Any = None,
     ) -> None:
         self.registry = registry
         self._ast = ASTGuard()
@@ -39,7 +40,7 @@ class ToolHandler:
     def execute(
         self,
         tool_name: str,
-        inputs: dict,
+        inputs: dict[str, Any],
         *,
         actor_open_id: str = "",
         session_id: str = "",
@@ -73,7 +74,7 @@ class ToolHandler:
                     error_message=str(e),
                 )
         # L1: P1/P2 notices 通过 outputs.ast_notices 透传（Phase 3）
-        outputs_extra: dict = {}
+        outputs_extra: dict[str, Any] = {}
         if ast_report is not None and ast_report.notices:
             outputs_extra["ast_notices"] = [
                 {"level": n[0], "message": n[1], "line": n[2]}

@@ -5,6 +5,8 @@
 """
 from __future__ import annotations
 
+from typing import Any
+
 from orchestrator.tools.bio.bio_runner import (
     BioRunError,
     BioRunner,
@@ -16,7 +18,7 @@ from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 _ST_SCRIPT_DIR = "/opt/st_tools"
 
 
-def _err(exc: BioRunError) -> dict:
+def _err(exc: BioRunError) -> dict[str, str]:
     """BioRunError → 工具错误输出（ToolHandler 透传 error_code）。"""
     return {"error_code": exc.error_code, "error_message": str(exc)}
 
@@ -32,7 +34,7 @@ def register_l3_spatial(
     由 settings.st_deconvolve_timeout_sec 注入覆盖）。
     """
 
-    def st_load(*, path: str) -> dict:
+    def st_load(*, path: str) -> dict[str, Any]:
         """读入空间转录组数据（visium/h5ad/mtx+coords）→ dataset_ref + 概要。"""
         try:
             mount_root, rel, host = runner.resolve_data_path(path)
@@ -47,7 +49,7 @@ def register_l3_spatial(
         return out
 
     def st_qc(*, dataset_ref: str, min_genes: int = 50,
-              max_genes: int = 6000, max_mt_pct: float = 20.0) -> dict:
+              max_genes: int = 6000, max_mt_pct: float = 20.0) -> dict[str, Any]:
         """spot 级质控过滤 → filtered.h5ad + 前后统计。"""
         try:
             out = runner.run(
@@ -62,7 +64,7 @@ def register_l3_spatial(
         return out
 
     def st_process(*, dataset_ref: str, n_pcs: int = 30,
-                   resolution: float = 1.0, n_neighbors: int = 15) -> dict:
+                   resolution: float = 1.0, n_neighbors: int = 15) -> dict[str, Any]:
         """空间邻域 + PCA + Leiden 空间域 → processed.h5ad + 空间着色图。"""
         try:
             out = runner.run(
@@ -76,7 +78,7 @@ def register_l3_spatial(
         return out
 
     def st_markers(*, dataset_ref: str, method: str = "wilcoxon",
-                   top_n: int = 10) -> dict:
+                   top_n: int = 10) -> dict[str, Any]:
         """空间域差异基因 → markers JSON + dotplot.png。"""
         try:
             out = runner.run(
@@ -90,7 +92,7 @@ def register_l3_spatial(
         return out
 
     def st_plot(*, dataset_ref: str, genes: list[str] | None = None,
-                color_by: str = "") -> dict:
+                color_by: str = "") -> dict[str, Any]:
         """spatial 着色图（基因表达/obs 列）→ png 列表。"""
         try:
             out = runner.run(
@@ -104,7 +106,7 @@ def register_l3_spatial(
         return out
 
     def st_domains(*, dataset_ref: str, method: str = "banksy",
-                   resolution: float = 1.0) -> dict:
+                   resolution: float = 1.0) -> dict[str, Any]:
         """空间域细分（banksy-lite 邻域均值特征 / leiden）→ 新域 + ARI 对比。"""
         try:
             out = runner.run(
@@ -118,7 +120,7 @@ def register_l3_spatial(
         return out
 
     def st_commot(*, dataset_ref: str, species: str = "human",
-                  dis_thr: float = 200.0) -> dict:
+                  dis_thr: float = 200.0) -> dict[str, Any]:
         """配体受体空间通讯（COMMOT + CellChat 库）→ 通讯图 + top LR 对。"""
         try:
             out = runner.run(
@@ -136,7 +138,7 @@ def register_l3_spatial(
                       n_cells_per_location: float = 8.0,
                       detection_alpha: float = 20.0,
                       ref_label_col: str = "",
-                      deconv_timeout: int = st_deconvolve_timeout) -> dict:
+                      deconv_timeout: int = st_deconvolve_timeout) -> dict[str, Any]:
         """cell2location 反卷积：sc_ref 为 sc 产物 dataset_ref（12hex）或
         白名单内参考 h5ad 路径。"""
         import re as _re

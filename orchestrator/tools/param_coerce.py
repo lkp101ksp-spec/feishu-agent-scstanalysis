@@ -13,6 +13,7 @@ from __future__ import annotations
 import ast
 import json
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 _COERCIBLE = {"array": list, "object": dict}
 
 
-def _try_parse(raw: str):
+def _try_parse(raw: str) -> Any:
     """str → 值：JSON 优先、Python repr 兜底；都失败返回 None。"""
     try:
         return json.loads(raw)
@@ -32,8 +33,8 @@ def _try_parse(raw: str):
         return None
 
 
-def coerce_params(parameters_schema: dict,
-                  inputs: dict) -> tuple[dict, list[str]]:
+def coerce_params(parameters_schema: dict[str, Any],
+                  inputs: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """按 schema 声明纠正 repr 串参数，返回 (纠正后 inputs 副本, 纠正参数名)。
 
     只动声明 array/object 且收到非空 str 的参数；解析结果类型须与声明
