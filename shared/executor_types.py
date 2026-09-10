@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 
 class ExecutionState(str, Enum):
@@ -26,7 +26,7 @@ class ExecutionTask:
     task_id: str
     node_id: str
     tool_name: str
-    inputs: dict
+    inputs: dict[str, Any]
     risk_level: str = "L1_compute"
     timeout_sec: int = 60
     max_retries: int = 1
@@ -43,7 +43,7 @@ class TaskHandle:
     state: ExecutionState
     started_at: datetime
     finished_at: Optional[datetime] = None
-    outputs: Optional[dict] = None
+    outputs: Optional[dict[str, Any]] = None
     error_code: Optional[str] = None
     error_message: Optional[str] = None
     artifacts_ids: list[str] = field(default_factory=list)

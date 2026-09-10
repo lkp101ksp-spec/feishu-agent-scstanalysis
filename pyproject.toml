@@ -62,21 +62,16 @@ ignore = ["E701"]
 "tests/**" = ["E501", "F841", "E741"]
 
 [tool.mypy]
-# 宽松基线门禁（2026-09-08 方案 A）：防 Optional 解引用/签名漂移类错误；
-# strict 全量为 679 错存量，留待后续分层推进，勿直接开
+# 全库 strict（2026-09-10 收官）：方案 B（persistence）→ 方案 C（gateway/orchestrator）
+# → 第三批（feishu_adapter/config/shared/sandbox，skills 本就 0 错）逐层清零后，
+# strict flags 从 per-module overrides 升为全局——此时全库等价，且彻底规避
+# mypy 2.3.1 "overrides 内 strict = true 泄漏为全局"的坑（已无泄漏与否的问题）。
 explicit_package_bases = true  # sandbox\sc_tools 与 st_tools 各有 common.py，防模块名撞车
 ignore_missing_imports = true  # lark-oapi/anndata/squidpy 等 103 处无 stub 导入
 packages = [
     "gateway", "orchestrator", "sandbox", "shared",
     "persistence", "skills", "feishu_adapter", "config",
 ]
-
-# 方案 B（2026-09-09）：persistence 层率先提 strict——数据层契约最硬，
-# JSON 列 dict[str, Any] 泛型化后可防"裸 dict 装一切"漂移；其余包仍走宽松基线。
-# 注意：mypy 2.3.1 实测 overrides 内 strict = true 会泄漏为全局 strict（0→554 错），
-# 故显式展开 per-module flags。
-[[tool.mypy.overrides]]
-module = ["persistence.*", "gateway.*", "orchestrator.*"]
 disallow_any_generics = true
 disallow_subclassing_any = true
 disallow_untyped_calls = true

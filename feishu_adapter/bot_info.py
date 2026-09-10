@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
 import lark_oapi as lark
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 _CACHE: dict[str, str | None] = {}
 
 
-def get_bot_open_id(sdk_client) -> str | None:
+def get_bot_open_id(sdk_client: Any) -> str | None:
     """获取 bot open_id（进程级缓存）；失败返回 None（调用方保守跳过）。"""
     if "v" in _CACHE:
         return _CACHE["v"]

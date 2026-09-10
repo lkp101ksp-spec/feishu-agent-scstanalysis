@@ -10,11 +10,12 @@ bbknn（镜像 pip 层安装）：normalize→HVG→scale→PCA→bbknn 邻居�
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from common import WS_ROOT, emit, load_adata, read_args, run
 
 
-def _cat_cols(adata) -> str:
+def _cat_cols(adata: Any) -> str:
     """列出可作 batch 的 obs 列（2..50 个取值），错误消息引导自纠。"""
     cols = []
     for c in adata.obs.columns:

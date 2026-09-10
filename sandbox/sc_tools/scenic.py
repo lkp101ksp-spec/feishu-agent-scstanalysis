@@ -24,9 +24,13 @@ import io
 import json
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import numpy as np
 import pandas as pd
+
+if TYPE_CHECKING:
+    from dask.distributed import Client, LocalCluster
 
 # numpy>=1.24 移除的别名 shim（pyscenic 0.12.1 transform/diptest/rss 仍引用）；
 # 须在 import pyscenic 任何子模块之前执行。容器内另有 site-packages/
@@ -77,24 +81,32 @@ def _grn(expr: pd.DataFrame, tfs: list[str], n_workers: int,
     from arboreto.core import SGBM_KWARGS, create_graph
     from dask.distributed import Client, LocalCluster
 
-    cluster = LocalCluster(n_workers=n_workers, threads_per_worker=1,
-                           processes=True, dashboard_address=None,
-                           silence_logs=30)
-    client = Client(cluster)
+    # distributed 带 py.typed 但 LocalCluster/Client 构造、compute、close
+    # 无注解——no-untyped-call 经 callable 别名收口；真类型走 TYPE_CHECKING
+    # 导入，cast 首参必须字符串形式（运行时不求值）
+    _mk_cluster = cast("Callable[..., LocalCluster]", LocalCluster)
+    _mk_client = cast("Callable[..., Client]", Client)
+    cluster = _mk_cluster(n_workers=n_workers, threads_per_worker=1,
+                          processes=True, dashboard_address=None,
+                          silence_logs=30)
+    client = _mk_client(cluster)
     try:
         matrix, gene_names, tf_names = _prepare_input(expr, None, tfs)
         links_graph, _meta_graph = create_graph(
             matrix, gene_names, tf_names, "GBM", SGBM_KWARGS, client,
             include_meta=True, seed=seed)
-        adj = client.compute(links_graph, sync=True).sort_values(
+        _compute = cast("Callable[..., pd.DataFrame]", client.compute)
+        adj = _compute(links_graph, sync=True).sort_values(
             by="importance", ascending=False)
     finally:
-        client.close()
+        _close = cast("Callable[[], None]", client.close)
+        _close()
         cluster.close()
     return adj
 
 
-def _prune(dbs, modules, motif_tbl: Path, n_workers: int) -> pd.DataFrame:
+def _prune(dbs: list[Any], modules: list[Any], motif_tbl: Path,
+           n_workers: int) -> pd.DataFrame:
     """cisTarget motif 剪枝：prune2df 把 generator 传给新版 dask
     from_delayed（无 len）→ monkeypatch 先物化 list。
     另：默认 dask_multiprocessing 调度 spawn 的子进程不继承进程内
@@ -120,7 +132,8 @@ def _prune(dbs, modules, motif_tbl: Path, n_workers: int) -> pd.DataFrame:
         import sys
         print(f"[scenic] {msg}", file=sys.stderr, flush=True)
 
-    def _union_prefetch(self, region_or_gene_ids, sort=False):
+    def _union_prefetch(self: Any, region_or_gene_ids: Any,
+                        sort: bool = False) -> None:
         if getattr(self, "_scenic_union_done", False):
             return  # 并集已覆盖所有模块基因，后续调用无需再取数
         with _prefetch_lock:
@@ -144,7 +157,7 @@ def _prune(dbs, modules, motif_tbl: Path, n_workers: int) -> pd.DataFrame:
 
     _orig_fd = prune_mod.from_delayed
 
-    def _fd_compat(dfs, *args, **kwargs):
+    def _fd_compat(dfs: Any, *args: Any, **kwargs: Any) -> Any:
         """dask-expr 的 from_delayed 不接受 generator，先物化。"""
         if not isinstance(dfs, (list, tuple)):
             dfs = list(dfs)
@@ -156,17 +169,20 @@ def _prune(dbs, modules, motif_tbl: Path, n_workers: int) -> pd.DataFrame:
     # memory_limit=0 关闭 worker 内存管理：容器 --memory 16g 时 distributed
     # 按 cgroup 限额算 spill 阈值（0.6×16=9.6GB），并集缓存表把 RSS 顶到
     # 阈值后 worker 陷入 spill/pause 死循环（CPU 3% 假死，实测两物种复现）
-    cluster = LocalCluster(n_workers=n_workers, threads_per_worker=1,
-                           processes=False, dashboard_address=None,
-                           silence_logs=30, memory_limit=0)
-    client = Client(cluster)
+    _mk_cluster = cast("Callable[..., LocalCluster]", LocalCluster)
+    _mk_client = cast("Callable[..., Client]", Client)
+    cluster = _mk_cluster(n_workers=n_workers, threads_per_worker=1,
+                          processes=False, dashboard_address=None,
+                          silence_logs=30, memory_limit=0)
+    client = _mk_client(cluster)
     try:
         df = prune2df(dbs, modules, str(motif_tbl),
                       client_or_address=client, num_workers=n_workers)
         _log(f"ctx done: {len(df)} enriched rows")
         return df
     finally:
-        client.close()
+        _close = cast("Callable[[], None]", client.close)
+        _close()
         cluster.close()
 
 
@@ -272,7 +288,7 @@ def main() -> None:
         {r.name: sorted(r.genes) for r in regulons}, ensure_ascii=False),
         encoding="utf-8")
 
-    result: dict = {
+    result: dict[str, Any] = {
         "ok": True,
         "dataset_ref": args["dataset_id"],
         "species": species, "db": db,

@@ -27,7 +27,7 @@ from typing import Any, cast
 from common import emit, run
 
 
-def _load_ref(args: dict):
+def _load_ref(args: dict[str, Any]) -> tuple[Any, str]:
     """双来源读取参考：返回 (counts AnnData, label 来源描述)。
 
     场景 A（sc_ref_dataset=12hex）：workspace 内 sc 产物——counts 取
@@ -89,7 +89,7 @@ def _load_ref(args: dict):
     raise SystemExit(1)
 
 
-def _strip_mt(adata) -> None:
+def _strip_mt(adata: Any) -> None:
     """剔除 MT- 基因并把其计数快照存 obsm["MT"]（官方建议存档）。
 
     Index.str.startswith 返回 ndarray（非 Series），不可再 .values。

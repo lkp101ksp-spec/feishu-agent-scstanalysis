@@ -11,6 +11,7 @@ import ast
 import contextlib
 import io
 import sys
+from typing import Any
 
 SENTINEL = "###RESULT###"
 
@@ -30,7 +31,7 @@ def main() -> int:
     mod = ast.Module(body=body, type_ignores=[])
 
     buf = io.StringIO()
-    g: dict = {"__name__": "__main__"}
+    g: dict[str, Any] = {"__name__": "__main__"}
     try:
         with contextlib.redirect_stdout(buf):
             exec(compile(mod, path, "exec"), g)  # noqa: S102 沙箱内执行用户代码

@@ -20,10 +20,10 @@ if TYPE_CHECKING:
 class _AttrWrap:
     """dict → 属性访问包装（适配层统一按属性读，测试可传 MagicMock/对象）。"""
 
-    def __init__(self, d: dict | None) -> None:
+    def __init__(self, d: dict[str, Any] | None) -> None:
         self._d = d or {}
 
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         v = self._d.get(name)
         if isinstance(v, dict):
             return _AttrWrap(v)
@@ -49,7 +49,7 @@ def _extract_text(reply: Any) -> str:
     return "".join(parts)
 
 
-def _to_flat(fc: Any) -> dict:
+def _to_flat(fc: Any) -> dict[str, Any]:
     """官方 FileComment（属性对象）→ 下游扁平 dict；root 正文取 replies[0]。"""
     reply_list = getattr(fc, "reply_list", None)
     replies = list(getattr(reply_list, "replies", None) or []) \
@@ -75,12 +75,13 @@ def _to_flat(fc: Any) -> dict:
 class CommentClient:
     """评论 API 客户端：列表（扁平适配）+ 回复写回（ADR-0034 回执用）。"""
 
-    def __init__(self, *, sdk_client, rate_limiter: "RateLimiter") -> None:
+    def __init__(self, *, sdk_client: Any, rate_limiter: "RateLimiter") -> None:
         self.sdk = sdk_client
         self.rate_limiter = rate_limiter
 
-    def _request(self, method, uri: str, *, queries: dict | None = None,
-                 body: dict | None = None) -> dict:
+    def _request(self, method: lark.HttpMethod, uri: str,
+                 *, queries: dict[str, list[str]] | None = None,
+                 body: dict[str, Any] | None = None) -> dict[str, Any]:
         """BaseRequest 直调评论 API（tenant token 由 SDK 托管），返回 data 段。"""
         builder = (lark.BaseRequest.builder()
                    .http_method(method)
@@ -97,15 +98,16 @@ class CommentClient:
             raise FeishuAgentError(
                 f"comment api failed: code={payload.get('code')} "
                 f"msg={payload.get('msg')} uri={uri}")
-        return payload.get("data", {})
+        data: dict[str, Any] = payload.get("data", {})
+        return data
 
-    def list_comments(self, *, doc_id: str, max_pages: int = 20) -> list[dict]:
+    def list_comments(self, *, doc_id: str, max_pages: int = 20) -> list[dict[str, Any]]:
         """列出文档全部评论（Phase 18 分页循环拉全量）；适配为下游扁平 dict。
 
         page_token 透传翻页，has_more 为假或达 max_pages 上限（防死循环保护）
         即停；单页条数由服务端默认值决定。
         """
-        flat: list[dict] = []
+        flat: list[dict[str, Any]] = []
         page_token: str | None = None
         for _ in range(max_pages):
             queries = {"file_type": ["docx"], "user_id_type": ["open_id"]}
@@ -123,13 +125,13 @@ class CommentClient:
                 break
         return flat
 
-    def list_block_comments(self, *, doc_id: str, block_id: str) -> list[dict]:
+    def list_block_comments(self, *, doc_id: str, block_id: str) -> list[dict[str, Any]]:
         """列出指定块的评论（list 接口无 block_id，本地过滤恒空，保留兼容）。"""
         return [c for c in self.list_comments(doc_id=doc_id)
                 if c.get("block_id") == block_id]
 
     def reply_comment(self, *, file_token: str, comment_id: str,
-                      text: str) -> dict:
+                      text: str) -> dict[str, Any]:
         """在指定评论下回复纯文本（回执写回，ADR-0034）。"""
         data = self._request(
             lark.HttpMethod.POST,

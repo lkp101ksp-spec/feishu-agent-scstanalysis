@@ -51,7 +51,8 @@ class LarkCLI:
         if not out:
             return {}
         try:
-            return json.loads(out)
+            data: dict[str, Any] = json.loads(out)
+            return data
         except json.JSONDecodeError as e:
             raise LarkCLIError(
                 f"lark-cli returned non-json output: {out[:200]}"

@@ -6,11 +6,12 @@ BioRunner 预计算注入；path 已是容器内 /data 视角路径）
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from common import DATA_ROOT, WS_ROOT, emit, fail, run
 
 
-def _detect_and_read(path: str):
+def _detect_and_read(path: str) -> Any:
     """h5ad 直读；目录视为 10x mtx（matrix.mtx + barcodes/features）。"""
     import anndata as ad
 

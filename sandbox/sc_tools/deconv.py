@@ -9,12 +9,14 @@ method=nusvr：CIBERSORT 式线性 NuSVR（简化版，无 nu 调参特征选择
 """
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from common import DATA_ROOT, WS_ROOT, emit, load_adata, read_args, run
 
 
-def _cat_cols(adata) -> str:
+def _cat_cols(adata: Any) -> str:
     """列出可作细胞标签的 obs 列（2..50 个取值），错误消息引导 planner 自纠。"""
     cols = []
     for c in adata.obs.columns:

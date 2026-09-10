@@ -1,5 +1,5 @@
 """Pydantic 数据模型。"""
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -43,4 +43,4 @@ class AuditRecord(BaseModel):
     action: str
     target_type: str
     target_id: str
-    detail: dict = Field(default_factory=dict)
+    detail: dict[str, Any] = Field(default_factory=dict)

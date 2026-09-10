@@ -5,12 +5,15 @@
 - cli / base_url+api_token：lark-cli 子进程 / httpx 直连（历史路径，供单测 mock）
 """
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 import lark_oapi as lark
 
 from feishu_adapter.client import LarkCLI, LarkCLIError
+
+if TYPE_CHECKING:
+    from orchestrator.tools.bio.rate_limiter import RateLimiter
 
 # 官方 docx block_type 数值枚举（仅 SDK 路径使用）
 _SDK_HEADING_TYPE = {f"heading{i}": 2 + i for i in range(1, 10)}
@@ -28,7 +31,8 @@ class DocAdapter:
 
     def __init__(self, cli: LarkCLI | None = None,
                  base_url: str = "", api_token: str = "",
-                 rate_limiter=None, sdk_client=None):
+                 rate_limiter: "RateLimiter | None" = None,
+                 sdk_client: Any = None) -> None:
         self.cli = cli or LarkCLI()
         self.base_url = base_url
         self.api_token = api_token
@@ -44,7 +48,8 @@ class DocAdapter:
         if self.sdk_client is not None:
             return self._sdk_list_blocks(doc_id)
         result = self.cli.run(["docx", "block", "list", "--doc-id", doc_id])
-        return result.get("blocks", [])
+        blocks: list[dict[str, Any]] = result.get("blocks", [])
+        return blocks
 
     def upload_doc_image(self, doc_id: str, image_path: str) -> str:
         """上传图片素材 → file_token（parent_node 需为 image block_id）。
@@ -94,7 +99,7 @@ class DocAdapter:
             doc_id, [{"block_type": 27, "image": {}}], index=index)
         if not children:
             raise LarkCLIError("create empty image block returned nothing")
-        block_id = children[0].get("block_id", "")
+        block_id: str = children[0].get("block_id", "")
         if not block_id:
             raise LarkCLIError("create empty image block returned no block_id")
         # ② 上传素材（parent_node = image block_id）
@@ -122,14 +127,17 @@ class DocAdapter:
             blocks = [{"block_type": 2, "text": {
                 "elements": [{"text_run": {"content": text}}]}}]
             children = self._sdk_create_children(doc_id, blocks, index=index)
-            return children[0].get("block_id", "") if children else ""
+            block_id: str = (children[0].get("block_id", "")
+                             if children else "")
+            return block_id
         result = self.cli.run([
             "docx", "block", "create",
             "--doc-id", doc_id,
             "--block-type", "text",
             "--content", text,
         ])
-        return result.get("block_id", "")
+        block_id = result.get("block_id", "")
+        return block_id
 
     def resolve_wiki_token(self, wiki_token: str) -> str:
         """wiki 节点 token → 真实 docx document_id（SDK 路径，get_node 接口）。
@@ -156,10 +164,12 @@ class DocAdapter:
             raise LarkCLIError(
                 f"wiki 节点不是云文档（obj_type={node.get('obj_type')}），"
                 "请绑定 docx 类型文档")
-        return node.get("obj_token", "")
+        obj_token: str = node.get("obj_token", "")
+        return obj_token
 
     # === lark-oapi SDK 直连路径 ===
-    def _sdk_request(self, method, uri: str, body: dict | None = None) -> dict:
+    def _sdk_request(self, method: lark.HttpMethod, uri: str,
+                     body: dict[str, Any] | None = None) -> dict[str, Any]:
         """原始 BaseRequest 调 docx API（tenant token 由 SDK 托管），返回 data 段。"""
         builder = (lark.BaseRequest.builder()
                    .http_method(method)
@@ -174,17 +184,19 @@ class DocAdapter:
             raise LarkCLIError(
                 f"docx api failed: code={payload.get('code')} "
                 f"msg={payload.get('msg')} uri={uri}")
-        return payload.get("data", {})
+        data: dict[str, Any] = payload.get("data", {})
+        return data
 
-    def _sdk_create_children(self, doc_id: str, blocks: list[dict],
-                             index: int = -1) -> list[dict]:
+    def _sdk_create_children(self, doc_id: str, blocks: list[dict[str, Any]],
+                             index: int = -1) -> list[dict[str, Any]]:
         """在文档根块创建子块，返回新建块列表。index=-1 末尾追加，>=0 指定位置。"""
         data = self._sdk_request(
             lark.HttpMethod.POST,
             f"/open-apis/docx/v1/documents/{doc_id}/blocks/{doc_id}/children",
             body={"children": blocks, "index": index},
         )
-        return data.get("children", [])
+        children: list[dict[str, Any]] = data.get("children", [])
+        return children
 
     def list_root_children(self, doc_id: str) -> list[dict[str, Any]]:
         """按序列出文档根块的一级子块（锚点定位用，仅 SDK 路径）。"""
@@ -239,7 +251,7 @@ class DocAdapter:
                 return items
             page_token = data.get("page_token", "")
 
-    def _to_sdk_blocks(self, block) -> list[dict]:
+    def _to_sdk_blocks(self, block: Any) -> list[dict[str, Any]]:
         """Block → 官方数值 block_type 的子块列表（SDK 路径）。
 
         复杂容器/媒体块（table/image/callout 等创建受限）降级为文本块，
@@ -279,7 +291,7 @@ class DocAdapter:
         return [{"block_type": 2, "text": {
             "elements": [{"text_run": {"content": f"[{t}] {fallback}"}}]}}]
 
-    def _sdk_render_blocks(self, doc_id: str, blocks) -> "str | None":
+    def _sdk_render_blocks(self, doc_id: str, blocks: list[Any]) -> "str | None":
         """SDK 路径：逐块展开批量追加到文档末尾；返回最后写入块的 id。
 
         返回值供锚点续写跟随定位（Phase 14 后续：anchor_block_id 补齐）。
@@ -291,7 +303,7 @@ class DocAdapter:
 
         log = _logging.getLogger(__name__)
         last_block_id = None
-        batch: list[dict] = []
+        batch: list[dict[str, Any]] = []
 
         def _flush() -> None:
             nonlocal last_block_id, batch
@@ -320,7 +332,7 @@ class DocAdapter:
         return last_block_id
 
     # === Phase 5 ===
-    def render_blocks(self, doc_id: str, blocks) -> "str | None":
+    def render_blocks(self, doc_id: str, blocks: list[Any]) -> "str | None":
         """Phase 5: 渲染块到飞书 doc；SDK 路径返回最后写入块 id（CLI 路径 None）。"""
         if self.sdk_client is not None:
             return self._sdk_render_blocks(doc_id, blocks)
@@ -330,7 +342,7 @@ class DocAdapter:
             self._post_block(doc_id, payload)
         return None
 
-    def _to_feishu_payload(self, block) -> dict:
+    def _to_feishu_payload(self, block: Any) -> dict[str, Any]:
         """Phase 5: 6 类 Block → 飞书 doc API payload。"""
         t = block.type
         if t == "heading":
@@ -417,7 +429,7 @@ class DocAdapter:
                              "name": block.name, "size": block.size}}
         raise ValueError(f"unsupported block type: {t}")
 
-    def _post_block(self, doc_id: str, payload: dict) -> None:
+    def _post_block(self, doc_id: str, payload: dict[str, Any]) -> None:
         """Phase 5: HTTP POST 飞书 doc API。生产中用真实 API；测试用 respx mock。"""
         if not self.base_url:
             return  # 测试 / dry-run

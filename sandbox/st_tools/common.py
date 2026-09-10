@@ -13,6 +13,7 @@ import json
 import sys
 import traceback
 from pathlib import Path
+from typing import Any, Callable, cast
 
 import matplotlib
 
@@ -26,15 +27,15 @@ WS_ROOT = Path("/ws")
 _REAL_STDOUT = sys.stdout
 
 
-def read_args() -> dict:
+def read_args() -> dict[str, Any]:
     """读 stdin JSON 参数；空 stdin 返回空 dict。"""
     raw = sys.stdin.read().strip()
     if not raw:
         return {}
-    return json.loads(raw)
+    return cast(dict[str, Any], json.loads(raw))
 
 
-def emit(obj: dict) -> None:
+def emit(obj: dict[str, Any]) -> None:
     """结果 JSON 写 stdout（唯一 stdout 输出，图/日志走 stderr）。"""
     json.dump(obj, _REAL_STDOUT, ensure_ascii=False)
     _REAL_STDOUT.write("\n")
@@ -46,7 +47,7 @@ def fail(error_code: str, error_message: str) -> None:
     emit({"ok": False, "error_code": error_code, "error_message": error_message})
 
 
-def run(main) -> None:
+def run(main: Callable[[], None]) -> None:
     """脚本入口包装：异常吃掉转统一 JSON 错误（含 traceback 首 3 帧）。
 
     执行期间把 sys.stdout 替换为 stderr——squidpy 等库的 INFO 日志
@@ -66,7 +67,7 @@ def run(main) -> None:
         sys.stdout = _REAL_STDOUT
 
 
-def ensure_spatial(adata) -> None:
+def ensure_spatial(adata: Any) -> None:
     """校验空间坐标存在于 obsm["spatial"] 且形状合法（ST 下游脚本前置）。
 
     抛 ValueError（脚本层转 ST_FORMAT_INVALID 语义）当坐标缺失或
@@ -86,7 +87,7 @@ def ensure_spatial(adata) -> None:
             f"matching n_obs={adata.n_obs}")
 
 
-def load_adata(input_ref: dict):
+def load_adata(input_ref: dict[str, Any]) -> Any:
     """按回退链读 AnnData：filtered.h5ad → raw.h5ad（st 与 sc 同模式）。
 
     input_ref: {"dataset_id": str, "file": "filtered"|"raw"|"processed"}

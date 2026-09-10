@@ -28,13 +28,14 @@ class RuntimeState(str, Enum):
 class _AuditSink(Protocol):
     """PlanRuntime 实际依赖的审计写入契约（duck-typed）。
 
-    与 persistence AuditRepo.write 不同：此处不传 audit_id（由实现方
-    自行生成），生产侧当前未接线，测试用 FakeAuditRepo(write(**kw))。
+    签名与 persistence AuditRepo.write 对齐：audit_id 必填，由调用方
+    （PlanRuntime）逐条生成 ULID。生产侧当前未接线，测试用 FakeAuditRepo。
     """
 
     def write(
         self,
         *,
+        audit_id: str,
         actor_type: str,
         actor_id: str,
         action: str,
@@ -90,6 +91,7 @@ class PlanRuntime:
         except Exception as e:
             if self.audit_repo is not None:
                 self.audit_repo.write(
+                    audit_id=new_ulid(),
                     actor_type="system", actor_id="plan_runtime",
                     action="dynamic_append_failed", target_type="plan",
                     target_id=plan_id, detail={"parent": parent_node_id, "error": str(e)},
@@ -115,6 +117,7 @@ class PlanRuntime:
         # 4. 审计
         if self.audit_repo is not None:
             self.audit_repo.write(
+                audit_id=new_ulid(),
                 actor_type="system", actor_id="plan_runtime",
                 action="append_dynamic_nodes", target_type="plan",
                 target_id=plan_id, detail={"parent": parent_node_id, "count": len(new_nodes)},
@@ -127,6 +130,7 @@ class PlanRuntime:
         if self._loop_counters[loop_id] > self.max_iterations:
             if self.audit_repo is not None:
                 self.audit_repo.write(
+                    audit_id=new_ulid(),
                     actor_type="system", actor_id="plan_runtime",
                     action="loop_max_iter", target_type="loop",
                     target_id=loop_id, detail={"count": self._loop_counters[loop_id]},
@@ -140,6 +144,7 @@ class PlanRuntime:
         self._loop_counters.pop(loop_id, None)
         if self.audit_repo is not None:
             self.audit_repo.write(
+                audit_id=new_ulid(),
                 actor_type="system", actor_id="plan_runtime",
                 action="loop_exit", target_type="loop", target_id=loop_id, detail={},
             )
@@ -150,6 +155,7 @@ class PlanRuntime:
         new_sid = new_ulid()
         if self.audit_repo is not None:
             self.audit_repo.write(
+                audit_id=new_ulid(),
                 actor_type="system", actor_id="plan_runtime",
                 action="freeze_session", target_type="session",
                 target_id=origin_session_id, detail={"new_session_id": new_sid},

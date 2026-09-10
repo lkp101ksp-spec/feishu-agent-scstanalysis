@@ -6,10 +6,13 @@ features) + coords.csv 的目录（coords.csv 需含 spot,x,y 三列）。
 """
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 from common import DATA_ROOT, WS_ROOT, emit, fail, run
 
 
-def _read_visium(p):
+def _read_visium(p: Path) -> Any:
     """spaceranger 目录：sq.read.visium（需 filtered_feature_bc_matrix.h5 + spatial/）。"""
     h5 = p / "filtered_feature_bc_matrix.h5"
     if not h5.exists():
@@ -27,7 +30,7 @@ def _read_visium(p):
     return sq.read.visium(p, counts_file=h5.name, library_id="st")
 
 
-def _read_h5ad(p):
+def _read_h5ad(p: Path) -> Any:
     """h5ad：直读 + 校验空间坐标。"""
     import anndata as ad
 
@@ -40,7 +43,7 @@ def _read_h5ad(p):
     return adata
 
 
-def _read_mtx_coords(p):
+def _read_mtx_coords(p: Path) -> Any:
     """mtx + coords.csv：scanpy 读矩阵 + 坐标注入 obsm["spatial"]。"""
     import pandas as pd
     import scanpy as sc
@@ -84,7 +87,7 @@ def _read_mtx_coords(p):
     return adata
 
 
-def _detect_and_read(path: str):
+def _detect_and_read(path: str) -> Any:
     """auto 探测：h5ad 文件 / spaceranger 目录 / mtx+coords 目录。"""
     p = DATA_ROOT / path.lstrip("/")
     if not p.exists():

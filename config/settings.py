@@ -1,6 +1,7 @@
 """从 yaml + 环境变量构造 Settings 单例。"""
 import os
 from dataclasses import dataclass
+from typing import Any
 
 import yaml
 
@@ -162,9 +163,10 @@ class Settings:
     intent_gate_ttl_sec: int = 1800
 
 
-def _load_yaml(path: str) -> dict:
+def _load_yaml(path: str) -> dict[str, Any]:
     with open(path) as f:
-        return yaml.safe_load(f)
+        data: dict[str, Any] = yaml.safe_load(f)
+    return data
 
 
 def load_env_file(path: str = ".env") -> None:
@@ -186,7 +188,7 @@ def load_env_file(path: str = ".env") -> None:
             )
 
 
-def _parse_providers(cfg: dict) -> tuple[ProviderCfg, ...]:
+def _parse_providers(cfg: dict[str, Any]) -> tuple[ProviderCfg, ...]:
     """解析 llm.yaml providers 段：缺 env 的条目跳过（不阻塞启动，卡片不显示）。"""
     out: list[ProviderCfg] = []
     for p in cfg.get("providers") or []:

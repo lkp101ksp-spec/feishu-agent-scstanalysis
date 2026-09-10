@@ -5,6 +5,7 @@ Phase 2 通过 lark-cli 子进程调用；Phase 5 切 OpenAPI。
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from shared.errors import ArtifactNotFoundError, FileTooLargeError
 
@@ -30,8 +31,8 @@ class DriveAdapter:
         self,
         *,
         parent_node_token: str,
-        lark_cli,
-        artifact_repo,
+        lark_cli: Any,
+        artifact_repo: Any,
         max_size_mb: int = 500,
     ) -> None:
         self.parent_node_token = parent_node_token

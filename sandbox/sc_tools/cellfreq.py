@@ -8,13 +8,15 @@ stdin: {"dataset_id": ..., "by": "sample", "group": "condition",
 """
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
 from scipy.stats import chi2_contingency
 
 
-def _cat_cols(adata) -> str:
+def _cat_cols(adata: Any) -> str:
     """列出可作分组的 obs 列（2..50 个取值），错误消息引导自纠。"""
     cols = []
     for c in adata.obs.columns:
@@ -84,7 +86,7 @@ def main() -> None:
     plt.close(fig)
 
     # 每簇卡方检验（group 列给出时：该簇 vs 其余 × group）
-    tests: list[dict] = []
+    tests: list[dict[str, Any]] = []
     if group:
         g_s = adata.obs[group].astype(str)
         for c in order:

@@ -9,6 +9,7 @@ stdin: {"dataset_id": ...,
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -54,7 +55,7 @@ def main() -> None:
     raw_vars = set(adata.raw.var_names)
     clusters = adata.obs["leiden"].astype(str)
     used: set[str] = set()
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
     skipped: list[str] = []
 
     for name, genes in gene_sets.items():

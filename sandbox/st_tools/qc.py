@@ -6,10 +6,12 @@ stdin: {"dataset_id": "...", "min_genes": 50, "max_genes": 6000,
 """
 from __future__ import annotations
 
+from typing import Any
+
 from common import emit, fail, run
 
 
-def _distribution(values) -> dict:
+def _distribution(values: Any) -> dict[str, float]:
     """genes/spot 分布摘要（失败消息调参依据）。"""
     import numpy as np
 

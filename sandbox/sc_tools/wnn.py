@@ -16,10 +16,12 @@ UMAP png。
 """
 from __future__ import annotations
 
+from typing import Any
+
 from common import DATA_ROOT, WS_ROOT, emit, read_args, run
 
 
-def _read(rel: str):
+def _read(rel: str) -> Any:
     """从 /data 挂载读 h5ad（resolve_data_path 白名单已在 handler 层把关）。
 
     容忍以 "/" 开头的容器绝对路径（异根挂载时 ADT 走 /data_adt/...），
@@ -35,7 +37,7 @@ def _read(rel: str):
     return ad.read_h5ad(p)
 
 
-def _prep_rna(adata, dims: int):
+def _prep_rna(adata: Any, dims: int) -> tuple[Any, Any]:
     """RNA 模态：归一化→log1p→HVG→scale→PCA→neighbors（muon 前置要求）。"""
     import scanpy as sc
 
@@ -51,7 +53,7 @@ def _prep_rna(adata, dims: int):
     return adata, hvg  # adata 持有 lognorm 全基因（作 raw），hvg 供 WNN
 
 
-def _prep_adt(adata, dims: int):
+def _prep_adt(adata: Any, dims: int) -> Any:
     """ADT 模态：CLR 归一化 → PCA → neighbors。"""
     import muon as mu
     import scanpy as sc

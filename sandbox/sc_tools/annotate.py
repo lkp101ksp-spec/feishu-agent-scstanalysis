@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
@@ -24,7 +25,7 @@ from common import WS_ROOT, emit, load_adata, read_args, run
 MODEL_DIR = Path("/opt/celltypist_models")
 
 
-def _cat_cols(adata) -> str:
+def _cat_cols(adata: Any) -> str:
     """列出可作分组的 obs 列（2..50 个取值），错误消息引导 planner 自纠。"""
     cols = []
     for c in adata.obs.columns:
@@ -34,7 +35,7 @@ def _cat_cols(adata) -> str:
     return ", ".join(cols) or "<none>"
 
 
-def _umap_by_label(adata, col: str, png_path: Path, title: str) -> None:
+def _umap_by_label(adata: Any, col: str, png_path: Path, title: str) -> None:
     """按标签列手绘 UMAP（避免 scanpy 多类图例截断）。"""
     import matplotlib.pyplot as plt
 
@@ -57,8 +58,8 @@ def _umap_by_label(adata, col: str, png_path: Path, title: str) -> None:
     plt.close(fig)
 
 
-def _run_celltypist(adata, model: str, celltype_col: str,
-                    out_dir: Path) -> dict:
+def _run_celltypist(adata: Any, model: str, celltype_col: str,
+                    out_dir: Path) -> dict[str, Any]:
     """CellTypist 参考注释：本地模型 + celltype_col 级 majority voting。"""
     import celltypist
 
@@ -98,8 +99,8 @@ def _run_celltypist(adata, model: str, celltype_col: str,
     }
 
 
-def _run_markers(adata, marker_sets, celltype_col: str, out_col: str,
-                 out_dir: Path) -> dict:
+def _run_markers(adata: Any, marker_sets: Any, celltype_col: str, out_col: str,
+                 out_dir: Path) -> dict[str, Any]:
     """marker 基因集路：逐集打分 → 簇均值 argmax 定标签。"""
     import scanpy as sc
 

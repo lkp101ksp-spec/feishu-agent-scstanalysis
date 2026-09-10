@@ -12,6 +12,7 @@ import json
 import sys
 import traceback
 from pathlib import Path
+from typing import Any, Callable, cast
 
 import matplotlib
 
@@ -31,15 +32,15 @@ DATA_ROOT = Path("/data")
 WS_ROOT = Path("/ws")
 
 
-def read_args() -> dict:
+def read_args() -> dict[str, Any]:
     """读 stdin JSON 参数；空 stdin 返回空 dict。"""
     raw = sys.stdin.read().strip()
     if not raw:
         return {}
-    return json.loads(raw)
+    return cast(dict[str, Any], json.loads(raw))
 
 
-def emit(obj: dict) -> None:
+def emit(obj: dict[str, Any]) -> None:
     """结果 JSON 写 stdout（唯一 stdout 输出，图/日志走 stderr）。"""
     json.dump(obj, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
@@ -50,7 +51,7 @@ def fail(error_code: str, error_message: str) -> None:
     emit({"ok": False, "error_code": error_code, "error_message": error_message})
 
 
-def run(main) -> None:
+def run(main: Callable[[], None]) -> None:
     """脚本入口包装：异常吃掉转统一 JSON 错误（含 traceback 首 3 帧）。"""
     try:
         main()
@@ -70,7 +71,7 @@ def ws_path(name: str) -> Path:
     return p
 
 
-def load_adata(input_ref: dict):
+def load_adata(input_ref: dict[str, Any]) -> Any:
     """按回退链读 AnnData：filtered.h5ad → raw.h5ad（spec §4）。
 
     input_ref: {"dataset_id": str, "file": "filtered"|"raw"|"processed"}
@@ -93,7 +94,7 @@ def load_adata(input_ref: dict):
         "run sc_load first")
 
 
-def upper_gene_map(var_names, target_genes) -> list:
+def upper_gene_map(var_names: Any, target_genes: Any) -> list[str]:
     """按 str.upper() 对齐匹配 target_genes 到 var_names，返回原始 var 名（保序去重）。
 
     小鼠符号（Mki67）与人源资源（MKI67）的大小写桥接；跳过一对多/多对一的

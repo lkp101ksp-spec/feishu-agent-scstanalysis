@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 from common import WS_ROOT, emit, load_adata, read_args, run
 
@@ -27,7 +28,7 @@ GENE_SET_DIR = Path("/opt/gene_sets")
 ORA_MAX_GENES = 300
 
 
-def _load_lib(alias: str) -> dict:
+def _load_lib(alias: str) -> dict[str, list[str]]:
     """读镜像内预取基因集 JSON；缺失说明镜像未重建，给出明确提示。"""
     _, fname = GS_KEYS[alias]
     p = GENE_SET_DIR / fname
@@ -35,7 +36,8 @@ def _load_lib(alias: str) -> dict:
         raise FileNotFoundError(
             f"{p} not found; rebuild bio image with gene_sets stage "
             "(docker build ... sandbox/bio.Dockerfile)")
-    return json.loads(p.read_text(encoding="utf-8"))
+    return cast(dict[str, list[str]],
+                json.loads(p.read_text(encoding="utf-8")))
 
 
 def main() -> None:
@@ -79,8 +81,8 @@ def main() -> None:
     ds_dir = WS_ROOT / args["dataset_id"] / "enrichment"
     ds_dir.mkdir(parents=True, exist_ok=True)
 
-    ora_rows: list[dict] = []
-    gsea_rows: list[dict] = []
+    ora_rows: list[pd.DataFrame] = []
+    gsea_rows: list[pd.DataFrame] = []
     for alias in aliases:
         lib = _load_lib(alias)
         # 小鼠库符号全大写（ABCA2 式），DEG 基因名需 .upper() 对齐；人源库不动
@@ -148,7 +150,7 @@ def main() -> None:
     fig.savefig(gsea_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
-    def _ora_top(alias: str) -> list[dict]:
+    def _ora_top(alias: str) -> list[dict[str, Any]]:
         sub = ora_df[ora_df["gene_set"] == alias].head(top_n)
         return [
             {"term": r["Term"], "adj_p": round(float(r["Adjusted P-value"]), 5),
@@ -156,7 +158,7 @@ def main() -> None:
              "genes": str(r["Genes"])[:200]}
             for _, r in sub.iterrows()]
 
-    def _gsea_top(alias: str) -> list[dict]:
+    def _gsea_top(alias: str) -> list[dict[str, Any]]:
         sub = gsea_df[gsea_df["gene_set"] == alias].copy()
         sub["NESf"] = sub["NES"].astype(float).abs()
         sub = sub.sort_values("NESf", ascending=False).head(top_n)

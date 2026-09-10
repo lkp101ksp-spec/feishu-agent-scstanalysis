@@ -9,12 +9,14 @@ rank_genes_groups 定向对比 a vs b：上调 = log2fc > 0（a 相对 b）。
 """
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
 
 
-def _cat_cols(adata) -> str:
+def _cat_cols(adata: Any) -> str:
     """列出可作分组的 obs 列（2..50 个取值），错误消息引导 planner 自纠。"""
     cols = []
     for c in adata.obs.columns:
@@ -106,7 +108,7 @@ def main() -> None:
     fig.savefig(volcano_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
-    def _top(sub: pd.DataFrame) -> list[dict]:
+    def _top(sub: pd.DataFrame) -> list[dict[str, Any]]:
         return [
             {"gene": r["gene"], "log2fc": round(float(r["log2fc"]), 2),
              "pval_adj": float(f"{r['pval_adj']:.2e}")}

@@ -5,6 +5,7 @@
 - cli      ：lark-cli 子进程（历史路径，保留供单测 mock）
 """
 import json
+from typing import Any
 
 from lark_oapi.api.im.v1 import (
     CreateMessageRequest,
@@ -19,7 +20,7 @@ from feishu_adapter.client import LarkCLI, LarkCLIError
 class IMAdapter:
     """对飞书 IM 消息发送的薄封装。"""
 
-    def __init__(self, cli: LarkCLI | None = None, sdk_client=None):
+    def __init__(self, cli: LarkCLI | None = None, sdk_client: Any = None) -> None:
         self.cli = cli or LarkCLI()
         self.sdk_client = sdk_client
 
@@ -35,7 +36,8 @@ class IMAdapter:
             "--msg-type", "text",
             "--content", text,
         ])
-        return result.get("message_id", "")
+        message_id: str = result.get("message_id", "")
+        return message_id
 
     def send(self, receive_id: str, receive_id_type: str, msg_type: str, content: str) -> str:
         """通用发送：支持 open_id / chat_id / email 等不同 receive_id_type。"""
@@ -50,7 +52,8 @@ class IMAdapter:
             "--msg-type", msg_type,
             "--content", content,
         ])
-        return result.get("message_id", "")
+        message_id: str = result.get("message_id", "")
+        return message_id
 
     def upload_image(self, image_path: str) -> str:
         """上传本地图片 → image_key（Phase 20：sc 分析图 IM 回传）。
@@ -83,7 +86,7 @@ class IMAdapter:
         return self.send(chat_id, "chat_id", "image",
                          json.dumps({"image_key": image_key}))
 
-    def send_card(self, chat_id: str, card: dict) -> str:
+    def send_card(self, chat_id: str, card: dict[str, Any]) -> str:
         """发送交互卡片。card 为简化结构 {header, elements}，返回新消息 ID。
 
         header 兼容两种形态：字符串标题（旧调用方）与完整 dict
@@ -100,9 +103,10 @@ class IMAdapter:
             "--msg-type", "interactive",
             "--content", card_json,
         ])
-        return result.get("message_id", "")
+        message_id: str = result.get("message_id", "")
+        return message_id
 
-    def update_card(self, message_id: str, card: dict) -> None:
+    def update_card(self, message_id: str, card: dict[str, Any]) -> None:
         """原地更新已发出的交互卡片（PATCH im/v1/messages/:message_id）。
 
         Phase 39：/code 进度卡 v2 原地刷新用（受理发一卡 → 节流刷新 →
@@ -124,7 +128,7 @@ class IMAdapter:
                 f"im patch failed: code={resp.code} msg={resp.msg}")
 
     @staticmethod
-    def _card_json(card: dict) -> str:
+    def _card_json(card: dict[str, Any]) -> str:
         """简化卡片结构 → 合法卡片 JSON 串（header 字符串/dict 双形态归一）。"""
         header = card.get("header", "")
         if not isinstance(header, dict):

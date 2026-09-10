@@ -9,12 +9,14 @@ liana 内置 cellchat 方法 + 随包资源库（human=consensus / mouse=mouseco
 """
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
 
 
-def _cat_cols(adata) -> str:
+def _cat_cols(adata: Any) -> str:
     """列出可作细胞标签的 obs 列（2..50 个取值），错误消息引导 planner 自纠。"""
     cols = []
     for c in adata.obs.columns:
@@ -71,7 +73,7 @@ def main() -> None:
     # 固定 random_state=42 保证可复现；0=全量。
     n_cells_total = adata.n_obs
     if max_cells_per_group > 0:
-        idx: list = []
+        idx: list[Any] = []
         for _, g in adata.obs.groupby(celltype_col):
             idx.extend(g.sample(n=min(max_cells_per_group, len(g)),
                                 random_state=42).index)
