@@ -113,6 +113,8 @@ class Settings:
     bio_gpu_image: str = "feishu-research-agent/bio:gpu-latest"  # env BIO_GPU_IMAGE
     # dataset workspace 根目录（h5ad 中间产物/图落此处，主机路径）
     bio_workspace_root: str = "./bio_workspace"
+    # Phase D：报告汇编新建云文档的目标文件夹 token；空 = 应用根目录
+    report_folder_token: str = ""
     # 数据白名单根目录（逗号分隔；sc_load 的 path 必须位于其一之内）
     bio_data_roots: str = ""
     # bio 脚本容器超时（秒）；plan 含 sc_* 时 research wall-clock 放大到 research_sc_timeout_sec
@@ -286,6 +288,7 @@ def load_settings() -> Settings:
             "BIO_GPU_IMAGE", "feishu-research-agent/bio:gpu-latest"),
         bio_workspace_root=os.environ.get(
             "BIO_WORKSPACE_ROOT", "./bio_workspace"),
+        report_folder_token=os.environ.get("REPORT_FOLDER_TOKEN", ""),
         bio_data_roots=os.environ.get("BIO_DATA_ROOTS", ""),
         bio_script_timeout_sec=int(
             os.environ.get("BIO_SCRIPT_TIMEOUT_SEC", "900")),

@@ -116,6 +116,57 @@ class DocAdapter:
                  doc_id, block_id, image_path)
         return block_id
 
+    def create_document(self, title: str,
+                        folder_token: str | None = None) -> str:
+        """新建空云文档（POST /open-apis/docx/v1/documents），返回 document_id。
+
+        folder_token 缺省建到应用根目录；仅 SDK 直连通道。
+        独立 BaseRequest（不带 docx 块接口的 document_revision_id 查询参数）。
+        """
+        if self.sdk_client is None:
+            raise LarkCLIError("create_document 需要 SDK 直连通道（sdk_client 未注入）")
+        body: dict[str, Any] = {"title": title}
+        if folder_token:
+            body["folder_token"] = folder_token
+        req = (lark.BaseRequest.builder()
+               .http_method(lark.HttpMethod.POST)
+               .uri("/open-apis/docx/v1/documents")
+               .token_types({lark.AccessTokenType.TENANT})
+               .body(body)
+               .build())
+        resp = self.sdk_client.request(req)
+        payload = json.loads(resp.raw.content)
+        if payload.get("code") != 0:
+            raise LarkCLIError(
+                f"create document failed: code={payload.get('code')} "
+                f"msg={payload.get('msg')}")
+        doc_id: str = payload.get("data", {}).get("document", {}) \
+            .get("document_id", "")
+        if not doc_id:
+            raise LarkCLIError("create_document returned empty document_id")
+        return doc_id
+
+    def grant_doc_view(self, doc_id: str, open_id: str) -> None:
+        """授权指定用户可阅读文档（drive permissions members，perm=view）。
+
+        仅 SDK 直连通道；应用需 drive:drive 权限域。
+        """
+        if self.sdk_client is None:
+            raise LarkCLIError("grant_doc_view 需要 SDK 直连通道（sdk_client 未注入）")
+        req = (lark.BaseRequest.builder()
+               .http_method(lark.HttpMethod.POST)
+               .uri(f"/open-apis/drive/v1/permissions/{doc_id}/members?type=docx")
+               .token_types({lark.AccessTokenType.TENANT})
+               .body({"member_type": "openid", "member_id": open_id,
+                      "perm": "view"})
+               .build())
+        resp = self.sdk_client.request(req)
+        payload = json.loads(resp.raw.content)
+        if payload.get("code") != 0:
+            raise LarkCLIError(
+                f"grant doc view failed: code={payload.get('code')} "
+                f"msg={payload.get('msg')}")
+
     def append_plain_text(self, doc_id: str, text: str,
                           index: int = -1) -> str:
         """追加一段纯文本块。返回新 block_id。
