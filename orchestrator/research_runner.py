@@ -588,6 +588,25 @@ class ResearchRunner:
         # 5.5 Phase 20：sc_* 节点产图回传（umap/dotplot/violin → IM 图片消息）
         images_sent = self._send_sc_images(incoming, plan, scheduler)
 
+        # 5.6 Phase D：sc 流程报告自动汇编（条件触发 + 故障隔离，
+        # 任何汇编异常不影响任务终态与既有收尾链）
+        try:
+            from orchestrator.report import maybe_build_report
+            maybe_build_report(
+                plan=plan, scheduler=scheduler,
+                ws_root=getattr(self.orch.settings, "bio_workspace_root", ""),
+                llm=_research_llm(self.orch),
+                doc_adapter=getattr(self.orch, "doc_adapter", None),
+                im=self.im, chat_id=incoming.chat_id,
+                sender_open_id=incoming.sender_open_id,
+                folder_token=getattr(
+                    self.orch.settings, "report_folder_token", ""),
+                task_text=task_text,
+            )
+        except Exception as e:
+            logger.warning("report build failed: %s", e)
+            self.im.reply(incoming.chat_id, f"[报告] 生成失败：{e}")
+
         # Phase 41：终态定格（完成卡）
         card.finish(result.status,
                     {k: v.value for k, v in result.node_states.items()})

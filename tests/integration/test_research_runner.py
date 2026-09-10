@@ -937,3 +937,71 @@ def test_st_node_extends_wallclock_timeout(db, monkeypatch):
 
     assert _wait_reply_count(orch.im, 2)
     assert captured["timeout"] == 3600
+
+
+# === Phase D：sc 流程报告自动汇编钩子 ===
+
+def test_sc_flow_auto_builds_and_sends_report(db, tmp_path):
+    """sc 流程收尾：自动建云文档 + 授权提问人 + IM 发链接 + md 底稿落盘。"""
+    orch = _orch(db)
+    orch.planner.plan.return_value = _sc_plan()
+    orch.executor = _FakeExecutor(outputs={
+        "dataset_ref": "ds", "n_cells": 8000,
+        "umap_png": "/ws/ds/umap.png",
+        "de_csv": "/ws/ds/de/de.csv",
+    })
+    orch.settings.bio_workspace_root = str(tmp_path)
+    orch.im.upload_image.return_value = "img_v2_001"
+    orch.doc_adapter.sdk_client = object()  # 伪 SDK 通道（truthy）
+    orch.doc_adapter.create_document.return_value = "doc_auto_1"
+
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 单细胞分析"))
+
+    assert _wait_reply_count(orch.im, 3)  # 受理 + 完成 + 报告链接
+    texts = [c.args[1] for c in orch.im.reply.call_args_list]
+    assert any("https://feishu.cn/docx/doc_auto_1" in t for t in texts)
+    orch.doc_adapter.render_blocks.assert_called_once()
+    orch.doc_adapter.grant_doc_view.assert_called_once_with(
+        "doc_auto_1", "ou_r")
+    md_dir = tmp_path / "ds" / "report"
+    mds = list(md_dir.glob("report_*.md"))
+    assert len(mds) == 1
+    assert "数据质控与预处理" in mds[0].read_text(encoding="utf-8")
+
+
+def test_report_hook_failure_does_not_break_flow(db, tmp_path):
+    """汇编内部抛错：主流程照常完成，仅多一条失败提示（故障隔离）。"""
+    orch = _orch(db)
+    orch.planner.plan.return_value = _sc_plan()
+    orch.executor = _FakeExecutor(outputs={
+        "dataset_ref": "ds", "umap_png": "/ws/ds/umap.png"})
+    orch.settings.bio_workspace_root = str(tmp_path)
+    orch.im.upload_image.return_value = "img_v2_001"
+
+    import orchestrator.report as report_mod
+    original = report_mod.maybe_build_report
+    report_mod.maybe_build_report = MagicMock(
+        side_effect=RuntimeError("boom"))
+    try:
+        runner = ResearchRunner(orchestrator=orch, session_factory=db)
+        runner.handle(_incoming("/research 单细胞分析"))
+        assert _wait_reply_count(orch.im, 3)  # 受理 + 完成 + 失败提示
+    finally:
+        report_mod.maybe_build_report = original
+    texts = [c.args[1] for c in orch.im.reply.call_args_list]
+    assert any(t.startswith("[研究任务] 执行完成") for t in texts)
+    assert any("生成失败" in t and "boom" in t for t in texts)
+
+
+def test_non_sc_flow_skips_report(db, tmp_path):
+    """非 sc 流程（默认 summarize_text 计划）：不产生任何报告动作。"""
+    orch = _orch(db)
+    orch.settings.bio_workspace_root = str(tmp_path)
+
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结一下"))
+
+    assert _wait_reply_count(orch.im, 2)  # 受理 + 完成，无报告回复
+    orch.doc_adapter.create_document.assert_not_called()
+    assert not list(tmp_path.glob("**/report/report_*.md"))
