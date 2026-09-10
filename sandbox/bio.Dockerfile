@@ -84,6 +84,15 @@ RUN apt-get update \
     && apt-get purge -y --no-install-recommends r-base-dev g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# B1 CNV 推断：infercnvpy（成熟默认）+ cnvturbo（对齐 R inferCNV HMM i6）
+# 双后端。纯 CPU 工具；若装包报原生编译缺失，按 bbknn 层先例同层临时
+# 装 g++ 编译后 purge。两层分离：改坐标脚本不重装 pip。
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple infercnvpy==0.6.1 cnvturbo==0.3.0 \
+    && python -c "import infercnvpy, cnvturbo; print('cnv deps ok')"
+COPY fetch_gene_pos.py /tmp/fetch_gene_pos.py
+RUN python /tmp/fetch_gene_pos.py && rm /tmp/fetch_gene_pos.py
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
