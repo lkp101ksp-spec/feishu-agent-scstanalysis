@@ -839,3 +839,48 @@ def test_sc_milo_forwards_max_cells_per_sample(tmp_path):
     assert out["subsampled"] is True
     props = reg.get("sc_milo").parameters["properties"]
     assert props["max_cells_per_sample"]["default"] == 0
+
+
+# === B1：sc_cnv 注册与参数透传 ===
+
+def test_register_sc_cnv(tmp_path):
+    """B1 CNV：sc_cnv 注册、planner 可见、L1_compute。"""
+    reg, _ = _registry(tmp_path)
+    names = [t.name for t in reg.list(planner_visible=True)]
+    assert "sc_cnv" in names
+    assert reg.get("sc_cnv").risk_level == "L1_compute"
+    assert reg.get("sc_cnv").timeout_sec == 3600
+
+
+def test_sc_cnv_forwards_params(tmp_path):
+    """B1 CNV：参数透传进容器 payload，timeout 与 ToolSpec 一致。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "n_malignant": 5}
+
+    out = reg.get("sc_cnv").handler(
+        dataset_ref="d", method="cnvturbo",
+        celltype_col="celltypist_label",
+        ref_groups=["T cells"], resolution=0.8)
+
+    script, payload = runner.run.call_args[0]
+    assert script == "cnv"
+    assert payload == {"dataset_id": "d", "method": "cnvturbo",
+                       "celltype_col": "celltypist_label",
+                       "ref_groups": ["T cells"], "resolution": 0.8}
+    assert runner.run.call_args[1]["timeout_sec"] == 3600
+    assert "ok" not in out
+    assert out["n_malignant"] == 5
+
+
+def test_sc_cnv_default_params(tmp_path):
+    """B1 CNV：缺省 method=infercnvpy / celltype_col=leiden / ref_groups=None。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True, "dataset_ref": "d"}
+
+    reg.get("sc_cnv").handler(dataset_ref="d")
+
+    _, payload = runner.run.call_args[0]
+    assert payload == {"dataset_id": "d", "method": "infercnvpy",
+                       "celltype_col": "leiden", "ref_groups": None,
+                       "resolution": 1.0}

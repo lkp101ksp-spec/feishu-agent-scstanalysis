@@ -1,4 +1,4 @@
-"""Phase 20/31/32/33/34/35/36/37：单细胞 sc_* 工具注册（spec §4；23 个 L1_compute 工具）。
+"""Phase 20/31/32/33/34/35/36/37/B1：单细胞 sc_* 工具注册（spec §4；25 个 L1_compute 工具）。
 
 BioRunner 由 runtime 组装注入（image/workspace/data_roots 可配）；
 handler 捕获 BioRunError 转工具级 error_code/error_message。
@@ -30,7 +30,7 @@ def register_l3_singlecell(
     bio_gpu_image: str = "feishu-research-agent/bio:gpu-latest",
     bio_scenic_db_root: str = "",
 ) -> None:
-    """注册 sc_* 23 工具（runner 由 runtime 装配后传入）。
+    """注册 sc_* 25 工具（runner 由 runtime 装配后传入）。
 
     bio_use_gpu=True 时 sc_process/sc_markers 切 GPU 镜像 + --gpus all
     （Phase 25，spec 2026-09-02-bio-gpu-image-design §1.5）。
@@ -441,6 +441,22 @@ def register_l3_singlecell(
                 "celltype_col": celltype_col, "group": group,
                 "n_genes": n_genes, "n_net": n_net, "n_cells": n_cells,
                 "min_lib_size": min_lib_size, "mt_threshold": mt_threshold,
+            }, timeout_sec=3600)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_cnv(*, dataset_ref: str, method: str = "infercnvpy",
+               celltype_col: str = "leiden",
+               ref_groups: list[str] | None = None,
+               resolution: float = 1.0) -> dict[str, Any]:
+        """CNV 推断与恶性判定（B1）：双后端 → 亚克隆。"""
+        try:
+            out = runner.run("cnv", {
+                "dataset_id": dataset_ref, "method": method,
+                "celltype_col": celltype_col, "ref_groups": ref_groups,
+                "resolution": resolution,
             }, timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
@@ -1146,5 +1162,43 @@ def register_l3_singlecell(
         },
         risk_level="L1_compute",
         handler=sc_knockout,
+        timeout_sec=3600,
+    ))
+    registry.register(ToolSpec(
+        name="sc_cnv",
+        description=(
+            "CNV 推断与恶性判定（B1，inferCNV 式有参考模式）：以免疫/"
+            "基质等非恶性细胞为基线推断全基因组拷贝数变异，输出每细胞"
+            " cnv_score、恶性判定 is_malignant 与恶性亚克隆 cnv_subclone"
+            "（写回 processed.h5ad），附染色体热图与注释类型×恶性计数表。"
+            "method 默认 infercnvpy（成熟参考实现），可选 cnvturbo（对齐"
+            " R inferCNV HMM i6，可交叉验证）。参考细胞默认从 "
+            "celltype_col 按内置非恶性清单子串匹配（T/B/NK/Macrophage/"
+            "Monocyte/Dendritic/Neutrophil/Fibroblast/Endothelial/"
+            "Pericyte/Smooth muscle/Erythrocyte），也可 ref_groups 显式"
+            "指定（如含正常上皮时传 ['T cells', 'Epithelial']）；零匹配"
+            "报错（不静默降级）。需先 sc_process；人源 GRCh38 基因符号。"
+            "结果列可作 sc_plot/sc_de 分组。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "method": {"type": "string", "default": "infercnvpy",
+                           "enum": ["infercnvpy", "cnvturbo"]},
+                "celltype_col": {"type": "string", "default": "leiden",
+                                 "description": "参考细胞来源列"
+                                                "（leiden 或注释列）"},
+                "ref_groups": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "显式参考细胞类型列表（覆盖默认清单）"},
+                "resolution": {"type": "number", "default": 1.0,
+                               "description": "恶性亚克隆 leiden 分辨率"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_cnv,
         timeout_sec=3600,
     ))
