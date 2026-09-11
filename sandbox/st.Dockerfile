@@ -41,6 +41,11 @@ RUN pip install --no-cache-dir \
 COPY fetch_gene_pos.py /tmp/fetch_gene_pos.py
 RUN python /tmp/fetch_gene_pos.py && rm /tmp/fetch_gene_pos.py
 
+# Phase 49 st_misty：liana（MISTy 多视图学习，纯 Python/scverse）
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple liana==1.10.0 \
+    && python -c "import liana; print('liana', liana.__version__)"
+
 # 非 root 用户 + 可写目录（与 bio:cpu 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
