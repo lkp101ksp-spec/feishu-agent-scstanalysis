@@ -15,6 +15,9 @@ squidpy 1.8.3 容器探针已核实：
 """
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
+
 from common import emit, fail, run
 
 ANALYSES = ("autocorr", "cooccurrence", "nhood_enrichment")
@@ -22,7 +25,7 @@ CLUSTER_FALLBACK = ("spatial_domain", "banksy_domain", "leiden", "clusters")
 AUTOCORR_DEFAULT_N_GENES = 50
 
 
-def _build_neighbors(adata, coord_type: str, n_neighs: int) -> None:
+def _build_neighbors(adata: Any, coord_type: str, n_neighs: int) -> None:
     """复用 st_process 已建邻域图；缺失才按参数补建（不写回）。"""
     if "spatial_connectivities" in adata.obsp:
         return
@@ -33,7 +36,7 @@ def _build_neighbors(adata, coord_type: str, n_neighs: int) -> None:
         sq.gr.spatial_neighbors(adata, coord_type="grid", n_neighs=n_neighs)
 
 
-def _resolve_cluster_key(adata, cluster_key: str) -> str:
+def _resolve_cluster_key(adata: Any, cluster_key: str) -> str:
     """显式列名优先；留空按回退链探测；全灭报错列可用 obs 列。"""
     if cluster_key:
         if cluster_key not in adata.obs.columns:
@@ -51,7 +54,7 @@ def _resolve_cluster_key(adata, cluster_key: str) -> str:
     raise SystemExit(1)
 
 
-def _scatter_img_kwargs(adata) -> dict:
+def _scatter_img_kwargs(adata: Any) -> dict[str, Any]:
     """spatial_scatter 图像参数：无 uns['spatial']（h5ad 来源合成/外部
     数据）补空壳 + img=False；有真实组织图（visium 加载）则默认带图。
 
@@ -71,7 +74,8 @@ def _scatter_img_kwargs(adata) -> dict:
     return {} if has_img else {"img": False}
 
 
-def _do_autocorr(adata, out_dir, mode: str, genes: list[str]) -> None:
+def _do_autocorr(adata: Any, out_dir: Path, mode: str,
+                 genes: list[str]) -> None:
     """Moran's I / Geary's C：逐基因统计 csv + top4 空间分布 png。"""
     import matplotlib.pyplot as plt
     import squidpy as sq
@@ -113,7 +117,7 @@ def _do_autocorr(adata, out_dir, mode: str, genes: list[str]) -> None:
           "pngs": [f"{out_dir}/autocorr_{g}.png" for g in top_genes]})
 
 
-def _do_cooccurrence(adata, out_dir, cluster_key: str) -> None:
+def _do_cooccurrence(adata: Any, out_dir: Path, cluster_key: str) -> None:
     """簇间空间共现：长表 csv + 共现曲线 png。"""
     import matplotlib.pyplot as plt
     import numpy as np
@@ -143,7 +147,8 @@ def _do_cooccurrence(adata, out_dir, cluster_key: str) -> None:
           "pngs": [f"{out_dir}/cooccurrence.png"]})
 
 
-def _do_nhood(adata, out_dir, cluster_key: str, n_perms: int) -> None:
+def _do_nhood(adata: Any, out_dir: Path, cluster_key: str,
+              n_perms: int) -> None:
     """邻域富集：zscore/count 双矩阵 csv + 热图 png。"""
     import matplotlib.pyplot as plt
     import numpy as np
