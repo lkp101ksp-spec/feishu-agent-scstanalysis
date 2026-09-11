@@ -1,10 +1,12 @@
-"""st_misty：多视图空间建模（Phase 49，liana MISTy）。
+"""st_misty：多视图空间建模（Phase 49 liana MISTy；Phase 50 PROGENy 视图）。
 
-stdin: {"dataset_id": ..., "n_hvg": 50, "bandwidth": 0}
+stdin: {"dataset_id": ..., "n_hvg": 50, "bandwidth": 0, "extra_mode": "hvg"}
 intra=deconv.h5ad 细胞型组成（obsm["q05_cell_abundance_w_sf"] 去前缀，
-缺失报 ST_MISTY_NO_DECONV）；extra=processed.h5ad top HVG 表达（离线
-安全，不用联网通路）；两者附 obsm["spatial"] 后 genericMistyData 自建
-juxta（n_neighs=6 紧邻）+ para（bandwidth 半径）视图，RandomForestModel
+缺失报 ST_MISTY_NO_DECONV）；extra 二选一（extra_mode）：hvg=processed
+top HVG 表达（默认，离线安全）；progeny=PROGENy 14 通路活性（decoupler
+MLM，模型为构建期快照 /opt/progeny/progeny_human_top500.tsv，运行期
+断网）。两者附 obsm["spatial"] 后 genericMistyData 自建 juxta
+（n_neighs=6 紧邻）+ para（bandwidth 半径）视图，RandomForestModel
 逐目标建模（n_jobs=2 内存纪律）。bandwidth=0 → 5×中位近邻距
 （tool-misty l=5 口径）。
 产物落 /ws/{ds}/misty/：视图贡献热图 + para 视图 target×predictor
@@ -13,6 +15,9 @@ juxta（n_neighs=6 紧邻）+ para（bandwidth 半径）视图，RandomForestMod
 target/intra_R2/multi_R2/gain_R2/intra/juxta/para（后三=视图贡献）；
 uns["interactions"] 列 target/predictor/view/importances，view ∈
 {intra,juxta,para}；纯噪声数据 gain_R2=0 甚至可为负（CV R² 性质）。
+decoupler 2.2.0 实测：dc.op.progeny(human, top=500)→6463 行 14 通路；
+dc.mt.mlm(adata, net, tmin=5) 返回 None，写 obsm["score_mlm"]（n×14
+DataFrame）——dc.mlm 不存在，方法在 dc.mt 命名空间。
 """
 from __future__ import annotations
 
@@ -34,6 +39,7 @@ from common import (
 ABUND_KEY = "q05_cell_abundance_w_sf"
 ABUND_PREFIX = "q05cell_abundance_w_sf_"
 VIEW_COLS = ["intra", "juxta", "para"]
+PROGENY_TSV = Path("/opt/progeny/progeny_human_top500.tsv")
 
 
 def _load_intra(dataset_id: str, obs_names: pd.Index,
@@ -79,6 +85,38 @@ def _auto_bandwidth(coords: np.ndarray) -> float:
     from scipy.spatial import cKDTree
     dist, _ = cKDTree(coords).query(coords, k=2)
     return float(np.median(dist[:, 1]) * 5.0)
+
+
+def _load_progeny_extra(adata: Any, intra: Any,
+                        coords: np.ndarray) -> Any:
+    """PROGENy MLM 通路活性 → extra AnnData（14 通路列，附 spatial）。
+
+    net=构建期快照 TSV（运行期断网）；dc.mt.mlm 写 obsm['score_mlm']
+    （spot×14 DataFrame，列=通路）。net 靶基因∩数据 var_names <100 →
+    INVALID_INPUT（基因名非人类 symbol/物种不符）。
+    """
+    import anndata as ad
+    if not PROGENY_TSV.exists():
+        fail("ST_MISTY_NO_PROGENY",
+             f"{PROGENY_TSV} 缺失（镜像快照层异常，重建 st 镜像）")
+        raise SystemExit(1)
+    net = pd.read_csv(PROGENY_TSV, sep="\t")
+    n_overlap = len(set(net["target"]) & set(adata.var_names))
+    if n_overlap < 100:
+        fail("INVALID_INPUT",
+             f"PROGENy 靶基因与数据交集过少: {n_overlap} (<100，"
+             "基因名需为人类 symbol)")
+        raise SystemExit(1)
+    sub = adata[intra.obs_names, :].copy()
+    import decoupler as dc
+    dc.mt.mlm(sub, net, tmin=5, verbose=False)
+    scores = sub.obsm["score_mlm"].astype(np.float32)
+    extra = ad.AnnData(X=scores.to_numpy(),
+                       var=pd.DataFrame(index=scores.columns))
+    extra.obs_names = intra.obs_names
+    extra.obsm["spatial"] = coords[
+        adata.obs_names.isin(intra.obs_names)]
+    return extra
 
 
 def _contributions_heatmap(tm: pd.DataFrame, png_path: Path) -> None:
@@ -136,6 +174,11 @@ def main() -> None:
     if bandwidth < 0:
         fail("INVALID_INPUT", f"bandwidth={bandwidth} 不能为负")
         raise SystemExit(1)
+    extra_mode = str(args.get("extra_mode", "hvg"))
+    if extra_mode not in ("hvg", "progeny"):
+        fail("INVALID_INPUT",
+             f"extra_mode={extra_mode!r} 非法（需 hvg|progeny）")
+        raise SystemExit(1)
 
     adata = load_adata({"dataset_id": args["dataset_id"],
                         "file": "processed"})
@@ -143,27 +186,36 @@ def main() -> None:
     coords = np.asarray(adata.obsm["spatial"], dtype=np.float64)
     intra = _load_intra(args["dataset_id"], adata.obs_names, coords)
 
-    # extra：top HVG 表达（var 有 highly_variable 用之，否则按方差取），
-    # 与 intra 同 spot 顺序对齐（intra.obs_names 即 common 交集顺序）
+    # extra 二选一：hvg=top HVG 表达（var 有 highly_variable 用之，否则
+    # 按方差取）；progeny=PROGENy 通路活性。均与 intra 同 spot 顺序对齐
+    # （intra.obs_names 即 common 交集顺序）
     import anndata as ad
-    hvgs: list[str]
-    if "highly_variable" in adata.var.columns:
-        hvgs = adata.var.index[adata.var["highly_variable"]].tolist()[:n_hvg]
+    if extra_mode == "progeny":
+        extra = _load_progeny_extra(adata, intra, coords)
+        n_pred = int(extra.n_vars)
     else:
-        x = adata.X
-        x_var = np.asarray(x.var(axis=0)).ravel()
-        hvgs = adata.var.index[np.argsort(x_var)[::-1][:n_hvg]].tolist()
-    if len(hvgs) < 10:
-        fail("INVALID_INPUT", f"可用 HVG 过少（{len(hvgs)} < 10）")
-        raise SystemExit(1)
-    sub = adata[intra.obs_names, hvgs]
-    extra = ad.AnnData(
-        X=np.asarray(sub.X.todense() if hasattr(sub.X, "todense") else sub.X,
-                     dtype=np.float32),
-        var=pd.DataFrame(index=hvgs))
-    extra.obs_names = intra.obs_names
-    extra.obsm["spatial"] = coords[
-        adata.obs_names.isin(intra.obs_names)]
+        hvgs: list[str]
+        if "highly_variable" in adata.var.columns:
+            hvgs = adata.var.index[
+                adata.var["highly_variable"]].tolist()[:n_hvg]
+        else:
+            x = adata.X
+            x_var = np.asarray(x.var(axis=0)).ravel()
+            hvgs = adata.var.index[
+                np.argsort(x_var)[::-1][:n_hvg]].tolist()
+        if len(hvgs) < 10:
+            fail("INVALID_INPUT", f"可用 HVG 过少（{len(hvgs)} < 10）")
+            raise SystemExit(1)
+        sub = adata[intra.obs_names, hvgs]
+        extra = ad.AnnData(
+            X=np.asarray(
+                sub.X.todense() if hasattr(sub.X, "todense") else sub.X,
+                dtype=np.float32),
+            var=pd.DataFrame(index=hvgs))
+        extra.obs_names = intra.obs_names
+        extra.obsm["spatial"] = coords[
+            adata.obs_names.isin(intra.obs_names)]
+        n_pred = len(hvgs)
 
     bw = bandwidth if bandwidth > 0 else _auto_bandwidth(
         extra.obsm["spatial"])
@@ -198,8 +250,9 @@ def main() -> None:
     emit({
         "ok": True,
         "dataset_ref": args["dataset_id"],
+        "extra_mode": extra_mode,
         "n_targets": int(tm.shape[0]),
-        "n_predictors": int(len(hvgs)),
+        "n_predictors": n_pred,
         "n_spots": int(intra.n_obs),
         "bandwidth": round(bw, 2),
         "mean_gain_R2": round(float(tm["gain_R2"].mean()), 4),
@@ -211,8 +264,9 @@ def main() -> None:
         "target_metrics_csv": str(tm_csv),
         "interactions_csv": str(inter_csv),
         "note": "liana MISTy（genericMistyData intra/juxta/para + "
-                "RandomForestModel）；intra=细胞型组成，extra=top HVG "
-                "表达；importance=Gini 下降",
+                "RandomForestModel）；intra=细胞型组成，extra="
+                "top HVG 表达或 PROGENy 通路活性（extra_mode）；"
+                "importance=Gini 下降",
     })
 
 

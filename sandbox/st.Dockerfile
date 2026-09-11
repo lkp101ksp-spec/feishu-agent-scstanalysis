@@ -46,6 +46,14 @@ RUN pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple liana==1.10.0 \
     && python -c "import liana; print('liana', liana.__version__)"
 
+# Phase 50 st_misty PROGENy 通路视图：decoupler + OmniPath 模型快照
+# （两层分离——改快照脚本不重装 pip；快照需构建期网络，运行期断网读 TSV）
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple decoupler==2.2.0 \
+    && python -c "import decoupler; print('decoupler', decoupler.__version__)"
+COPY fetch_progeny.py /tmp/fetch_progeny.py
+RUN python /tmp/fetch_progeny.py && rm /tmp/fetch_progeny.py
+
 # 非 root 用户 + 可写目录（与 bio:cpu 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
