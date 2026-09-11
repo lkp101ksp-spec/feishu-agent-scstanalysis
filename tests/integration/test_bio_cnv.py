@@ -119,6 +119,11 @@ def test_sc_cnv_detects_synthetic_malignant(bio_ws: Path,
                 "subclone_by_chromosome_csv"):
         host = Path(res[key].replace("/ws", str(bio_ws)))
         assert host.exists(), f"missing {key}: {host}"
+    # pngs 聚合键（宿主 IM 发图/D 报告共用收集口径）
+    assert len(res["pngs"]) == 3
+    for p in res["pngs"]:
+        assert Path(p.replace("/ws", str(bio_ws))).exists()
+    assert res["genes"]["expressed"] <= res["genes"]["total"]
     # obs 写回（容器内回读验证）
     check = subprocess.run(
         ["docker", "run", "--rm", "-v", f"{bio_ws}:/ws", _IMAGE,

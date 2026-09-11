@@ -118,6 +118,7 @@ def _run_infercnvpy(cnv_ad: Any, celltype_col: str,
 
     sc.pp.normalize_total(cnv_ad, target_sum=1e4)
     sc.pp.log1p(cnv_ad)
+    cnv_ad.X = cnv_ad.X.astype(np.float32)  # 稠密化内存减半
     result = cnv.tl.infercnv(
         cnv_ad,
         reference_key=celltype_col,
@@ -125,12 +126,13 @@ def _run_infercnvpy(cnv_ad: Any, celltype_col: str,
         window_size=250,
         exclude_chromosomes=(),
         calculate_gene_values=True,
+        n_jobs=2,  # 限并发防 worker 内存叠加（容器 --cpus 4/--memory 16g）
         inplace=False,
     )
     gene_values = result[2]
     if sparse.issparse(gene_values):
         gene_values = gene_values.toarray()
-    return np.asarray(gene_values, dtype=np.float64)
+    return np.asarray(gene_values, dtype=np.float32)
 
 
 def _run_cnvturbo(cnv_ad: Any, celltype_col: str,
@@ -150,7 +152,7 @@ def _run_cnvturbo(cnv_ad: Any, celltype_col: str,
     from cnvturbo import tl as ct_tl
     from scipy import sparse
 
-    cnv_ad.layers["counts"] = cnv_ad.X.copy()
+    cnv_ad.layers["counts"] = cnv_ad.X.copy().astype(np.float32)  # 内存减半
     ct_tl.infercnv_r_compat(
         cnv_ad,
         raw_layer="counts",
@@ -198,7 +200,7 @@ def _run_cnvturbo(cnv_ad: Any, celltype_col: str,
         x_cnv = x_cnv.toarray()
     calls = cnv_ad.obs["cnv_call"].astype(str).to_numpy()
     is_mal = np.asarray(calls == "Tumor", dtype=bool)
-    return np.asarray(x_cnv, dtype=np.float64), is_mal, kept
+    return np.asarray(x_cnv, dtype=np.float32), is_mal, kept
 
 
 def _cell_scores(x_cnv: np.ndarray, ref_mask: np.ndarray) -> np.ndarray:
@@ -355,6 +357,18 @@ def main() -> None:
                          "check ref choice")
 
     genes_total = int(cnv_ad.n_vars)
+    # 基因表达预过滤（R inferCNV cutoff=0.1 语义：平均 counts≥0.1 才进
+    # 推断）：双后端同源口径，并把稠密矩阵规模压进容器 16g 限额
+    # （2026-09-11 真机验收：20533×31884 float64 多份拷贝 OOM，joblib
+    #  worker 被杀 → BrokenProcessPool）
+    mean_counts = np.asarray(cnv_ad.X.mean(axis=0)).ravel()
+    keep = mean_counts >= 0.1
+    if int(keep.sum()) < 1000:
+        raise ValueError(
+            f"too few expressed genes after count cutoff 0.1: "
+            f"{int(keep.sum())} (<1000)")
+    cnv_ad = cnv_ad[:, keep].copy()
+    genes_expressed = int(cnv_ad.n_vars)
     cnv_ad = _attach_gene_pos(cnv_ad)
     n_positioned = int(cnv_ad.n_vars)
 
@@ -381,12 +395,28 @@ def main() -> None:
             f"X_cnv columns ({x_cnv.shape[1]}) != expected genes "
             f"({len(chrom_col)}); backend var tracking changed")
 
+    # NaN 防御列剔除：基因过少染色体/窗口边界的 infercnv 输出会带 NaN
+    # 列（2026-09-11 真机实测，下游 PCA 拒绝 NaN）；chrom_col 同步对齐
+    finite = np.isfinite(x_cnv).all(axis=0)
+    if not bool(finite.all()):
+        bad_chroms = sorted(set(chrom_col[~finite].tolist()))
+        x_cnv = np.ascontiguousarray(x_cnv[:, finite])
+        chrom_col = chrom_col[finite]
+        note_nan = (f"；剔除 NaN 基因列 {int((~finite).sum())} 个"
+                    f"（涉及 {'/'.join(bad_chroms)}）")
+    else:
+        note_nan = ""
+    if x_cnv.shape[1] < 100 or not bool(np.isfinite(x_cnv).all()):
+        raise ValueError(
+            f"X_cnv 有效基因列过少或仍含非有限值（{x_cnv.shape}），"
+            "推断矩阵异常")
+
     ref_mask = cnv_ad.obs[celltype_col].isin(ref_cats).to_numpy(dtype=bool)
     scores = _cell_scores(x_cnv, ref_mask)
     ref_scores = scores[ref_mask]
     threshold = float(ref_scores.mean() + 3.0 * ref_scores.std())
 
-    note = ""
+    note = note_nan
     if turbo_calls is not None:
         is_mal = turbo_calls
         note = "cnvturbo HMM i6 细胞级判定"
@@ -472,7 +502,8 @@ def main() -> None:
         "annotation_values": values,
         "n_reference_cells": n_ref,
         "n_cells": int(len(common_cells)),
-        "genes": {"total": genes_total, "positioned": n_positioned},
+        "genes": {"total": genes_total, "expressed": genes_expressed,
+                  "positioned": n_positioned},
         "n_malignant": n_mal,
         "malignant_ratio": round(n_mal / max(1, len(common_cells)), 4),
         "threshold": round(threshold, 4),
@@ -480,6 +511,9 @@ def main() -> None:
         "subclone_sizes": {c: int((subclone == c).sum())
                            for c in sub_labels},
         "malignant_by_celltype": malignant_by_ct,
+        # pngs 聚合键：IM 发图与 D 报告共用宿主四键收集（umap/dotplot/
+        # spatial/pngs），2026-09-11 验收发现单名键导致图漏收
+        "pngs": [str(heatmap_png), str(score_png), str(sub_png)],
         "chromosome_heatmap_png": str(heatmap_png),
         "score_umap_png": str(score_png),
         "subclone_umap_png": str(sub_png),
