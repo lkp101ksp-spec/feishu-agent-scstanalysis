@@ -78,6 +78,16 @@ def test_interpret_conclusion_failure_omitted():
     assert len(built) == 3
 
 
+def test_interpret_prompt_free_of_artifact_meta():
+    """逐节解读 prompt 不含产物数量等流程元信息（防 LLM 抄进解读正文）。"""
+    llm = _FakeLLM()
+    interpret_sections(_sections(), llm)
+    for call in llm.calls[:-1]:  # 末次为总评
+        user_msg = call[1].content
+        assert "产物图片" not in user_msg
+        assert "数据表" not in user_msg
+
+
 def _report(img_dir: Path | None = None) -> Report:
     built, conclusion = interpret_sections(_sections(img_dir), _FakeLLM())
     return Report(title="单细胞分析报告 · 测试", dataset_id="ds",
@@ -183,3 +193,12 @@ def test_maybe_build_report_md_only_without_sdk(tmp_path):
     assert status["status"] == "md_only"
     doc.create_document.assert_not_called()
     assert "底稿" in im.reply.call_args.args[1]
+
+
+def test_section_prompt_free_of_meta_counts():
+    """LLM 输入不含产物数量等流程元信息（防止被抄进解读正文）。"""
+    llm = _FakeLLM()
+    interpret_sections(_sections(), llm)
+    user_msg = llm.calls[0][1].content
+    assert "产物图片" not in user_msg
+    assert "数据表" not in user_msg

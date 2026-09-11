@@ -18,7 +18,8 @@ CONCLUSION_TITLE = "总体结论"
 SECTION_SYSTEM = (
     "你是资深单细胞生信分析师。根据给定分析环节的输出摘要撰写中文结果解读："
     "150-300字，点明关键趋势与数字；所有数字必须来自输入数据，禁止编造；"
-    "只输出一段连贯文字，不要标题、列表或 Markdown 标记。")
+    "只输出一段连贯文字，不要标题、列表或 Markdown 标记；"
+    "不要提及产物图片/数据表数量等流程元信息。")
 CONCLUSION_SYSTEM = (
     "你是资深单细胞生信分析师。以下是本次单细胞分析各环节的结果解读，"
     "请综合为不超过300字的总体结论段落，突出最重要的生物学发现；"
@@ -60,9 +61,7 @@ def interpret_sections(sections: list[Section],
                                       interpretation=_fallback_text(section)))
             continue
         digest = section_digest_text(section)
-        user = (f"分析环节：{section.title}（工具 {section.tool_name}）\n"
-                f"产物图片 {len(section.images)} 张、"
-                f"数据表 {len(section.csvs)} 个。\n{digest}")
+        user = f"分析环节：{section.title}（工具 {section.tool_name}）\n{digest}"
         try:
             text = llm.chat([
                 ChatMessage(role="system", content=SECTION_SYSTEM),

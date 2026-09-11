@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from orchestrator.report.section_digest import (
     CSV_HEAD_LINES,
     DIGEST_LIMIT,
+    SECTION_TITLES,
     collect_sections,
     csv_digest,
     section_digest_text,
@@ -117,3 +118,36 @@ def test_section_digest_text_combines_numbers_and_csv(tmp_path):
     assert "n_malignant=150" in text
     assert "cnv_celltype_summary.csv" in text
     assert "celltype,n" in text
+
+
+def test_section_titles_cover_all_registered_bio_tools():
+    """SECTION_TITLES 覆盖全部已注册 sc_/st_ 工具，新工具漏映射即红。"""
+    from unittest.mock import MagicMock
+
+    from orchestrator.tools.builtin.l3_singlecell import register_l3_singlecell
+    from orchestrator.tools.builtin.l3_spatial import register_l3_spatial
+    from orchestrator.tools.tool_registry import ToolRegistry
+
+    registry = ToolRegistry()
+    register_l3_singlecell(registry, MagicMock())
+    register_l3_spatial(registry, MagicMock())
+    names = {s.name for s in registry.list()
+             if s.name.startswith(("sc_", "st_"))}
+    missing = names - set(SECTION_TITLES)
+    assert not missing, f"缺少章节标题映射: {sorted(missing)}"
+
+
+def test_section_titles_cover_all_sc_tools(tmp_path):
+    """SECTION_TITLES 覆盖全部已注册 sc_/st_ 工具（防章节标题回退为工具名）。"""
+    from unittest.mock import MagicMock
+
+    from orchestrator.tools.builtin.l3_singlecell import register_l3_singlecell
+    from orchestrator.tools.tool_registry import ToolRegistry
+
+    runner = SimpleNamespace(run=MagicMock(return_value={"ok": True}),
+                             resolve_data_path=MagicMock())
+    reg = ToolRegistry()
+    register_l3_singlecell(reg, runner)
+    names = {s.name for s in reg.list() if s.name.startswith(("sc_", "st_"))}
+    missing = names - set(SECTION_TITLES)
+    assert not missing, f"SECTION_TITLES 缺映射: {sorted(missing)}"
