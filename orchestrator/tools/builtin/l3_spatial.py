@@ -218,6 +218,22 @@ def register_l3_spatial(
         out.pop("ok", None)
         return out
 
+    def st_vicinity(*, dataset_ref: str, max_layers: int = 5,
+                    coord_type: str = "grid") -> dict[str, Any]:
+        """肿瘤邻域分层：恶性种子沿空间邻居图 BFS 分层写回。"""
+        try:
+            out = runner.run(
+                "vicinity", {
+                    "dataset_id": dataset_ref,
+                    "max_layers": max_layers,
+                    "coord_type": coord_type,
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=600)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     registry.register(ToolSpec(
         name="st_load",
         description=(
@@ -494,5 +510,33 @@ def register_l3_spatial(
         },
         risk_level="L1_compute",
         handler=st_niche,
+        timeout_sec=600,
+    ))
+    registry.register(ToolSpec(
+        name="st_vicinity",
+        description=(
+            "肿瘤邻域分层：以 st_cnv 判定的恶性 spot（obs['is_malignant']）"
+            "为种子，沿空间邻居图 BFS 向外分层（tumor / L1..Ln / distal），"
+            "刻画肿瘤核心→侵袭前沿→远端梯度；输出分层空间着色图、层尺寸"
+            "csv，deconv.h5ad 存在时追加层×细胞型组成热图（免疫/基质随"
+            "距离梯度）；obs['vicinity'] 写回 processed.h5ad（st_plot 可"
+            "着色、st_stats 可作 cluster_key）。需先跑 st_process 与 "
+            "st_cnv。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_load 输出的 dataset_ref"},
+                "max_layers": {"type": "integer", "default": 5,
+                               "description": "BFS 最大层数（1..10）"},
+                "coord_type": {"type": "string", "default": "grid",
+                               "enum": ["grid", "generic"],
+                               "description": "补建邻居图坐标类型"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_vicinity,
         timeout_sec=600,
     ))
