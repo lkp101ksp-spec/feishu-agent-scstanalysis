@@ -51,6 +51,26 @@ def _resolve_cluster_key(adata, cluster_key: str) -> str:
     raise SystemExit(1)
 
 
+def _scatter_img_kwargs(adata) -> dict:
+    """spatial_scatter 图像参数：无 uns['spatial']（h5ad 来源合成/外部
+    数据）补空壳 + img=False；有真实组织图（visium 加载）则默认带图。
+
+    容器探针（2026-09-11）：uns 缺 'spatial' → KeyError；空 images 壳
+    不指定 img=False → 仍尝试取 hires 报错；两坑同避。
+    """
+    sp = adata.uns.get("spatial")
+    if not isinstance(sp, dict) or not sp:
+        import numpy as np
+        adata.uns["spatial"] = {"_placeholder": {
+            "images": {"hires": np.zeros((8, 8, 3))},
+            "scalefactors": {"tissue_hires_scalef": 1.0,
+                             "spot_diameter_fullres": 1.0}}}
+        return {"img": False}
+    has_img = any(isinstance(lib, dict) and lib.get("images")
+                  for lib in sp.values())
+    return {} if has_img else {"img": False}
+
+
 def _do_autocorr(adata, out_dir, mode: str, genes: list[str]) -> None:
     """Moran's I / Geary's C：逐基因统计 csv + top4 空间分布 png。"""
     import matplotlib.pyplot as plt
@@ -77,9 +97,11 @@ def _do_autocorr(adata, out_dir, mode: str, genes: list[str]) -> None:
     df.to_csv(out_dir / f"autocorr_{mode}.csv", index=False)
     top = df.iloc[0]
     top_genes = list(df["gene"].head(4))
+    img_kw = _scatter_img_kwargs(adata)
     for g in top_genes:
         stat = float(df.loc[df["gene"] == g, stat_col].iloc[0])
-        ax = sq.pl.spatial_scatter(adata, color=[g], return_ax=True)
+        ax = sq.pl.spatial_scatter(adata, color=[g], return_ax=True,
+                                   **img_kw)
         ax.set_title(f"{g} ({stat_col}={stat:.3f})")
         ax.figure.savefig(out_dir / f"autocorr_{g}.png", dpi=150,
                           bbox_inches="tight")
@@ -111,7 +133,7 @@ def _do_cooccurrence(adata, out_dir, cluster_key: str) -> None:
     pd.DataFrame(rows).to_csv(out_dir / "cooccurrence.csv", index=False)
     sq.pl.co_occurrence(adata, cluster_key=cluster_key,
                         clusters=clusters[: min(6, len(clusters))],
-                        figsize=(8, 6), show=False)
+                        figsize=(8, 6))
     plt.gcf().savefig(out_dir / "cooccurrence.png", dpi=150,
                       bbox_inches="tight")
     plt.close("all")
@@ -139,9 +161,11 @@ def _do_nhood(adata, out_dir, cluster_key: str, n_perms: int) -> None:
     pd.DataFrame(cnt, index=cats, columns=cats).to_csv(
         out_dir / "nhood_count.csv")
     mask = ~np.eye(len(cats), dtype=bool)
-    i, j = np.unravel_index(np.nanargmax(np.where(mask, z, np.nan)), z.shape)
+    z_off = np.where(mask, z, np.nan)
+    # 取 |z| 最强非对角对：分离结构中强耗竭（负 z）本身就是核心信号
+    i, j = np.unravel_index(np.nanargmax(np.abs(z_off)), z.shape)
     sq.pl.nhood_enrichment(adata, cluster_key=cluster_key, method="ward",
-                           figsize=(8, 6), show=False)
+                           figsize=(8, 6))
     plt.gcf().savefig(out_dir / "nhood_enrichment.png", dpi=150,
                       bbox_inches="tight")
     plt.close("all")
