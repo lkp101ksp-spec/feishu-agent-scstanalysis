@@ -15,6 +15,7 @@ from pathlib import Path
 WS = Path("I:/飞书agent/bio_workspace")
 DS = "stmistysmoke"
 DS_NODEC = "stmistynodec"
+DS_PROG = "stmistyprog"
 IMG = "feishu-research-agent/bio:st-cpu-latest"
 BASE = ["docker", "run", "--rm", "-i", "--network", "none",
         "-v", f"{str(WS).replace(chr(92), '/')}:/ws", IMG]
@@ -61,6 +62,27 @@ proc2 = ad.AnnData(X=X.copy(), obs=pd.DataFrame(index=barcodes),
                    var=pd.DataFrame(index=genes))
 proc2.obsm["spatial"] = coords
 proc2.write_h5ad("/ws/stmistynodec/processed.h5ad")
+# stmistyprog：真实 PROGENy 基因名，EGFR target 按 weight×tumor 梯度
+# 注入（探针 B 同款，corr=0.998 实测可回收；此处无 log1p 中间变换，
+# 直接加在最终表达矩阵上即有效——教训十六）
+net = pd.read_csv("/opt/progeny/progeny_human_top500.tsv", sep="\t")
+egfr = net[net["source"] == "EGFR"][["target", "weight"]].drop_duplicates(
+    "target")
+others = sorted(set(net["target"]) - set(egfr["target"]))
+fill = np.random.default_rng(7).choice(others, size=150,
+                                       replace=False).tolist()
+genes2 = egfr["target"].tolist() + fill
+g2idx = pd.Index(genes2)
+X2 = np.random.default_rng(0).normal(0, 1, (n, len(genes2))).astype(
+    np.float32)
+cols = g2idx.get_indexer(egfr["target"])
+X2[:, cols] += (tumor_frac * 3).astype(np.float32)[:, None] * \
+    egfr["weight"].to_numpy(dtype=np.float32)[None, :] * 0.5
+proc3 = ad.AnnData(X=X2, obs=pd.DataFrame(index=barcodes),
+                   var=pd.DataFrame(index=genes2))
+proc3.obsm["spatial"] = coords
+proc3.write_h5ad("/ws/stmistyprog/processed.h5ad")
+dec.write_h5ad("/ws/stmistyprog/deconv.h5ad")
 print("built", n)
 '''
 
@@ -72,6 +94,7 @@ def build_dataset() -> None:
     (bdir / "build_data.py").write_text(_BUILDER, encoding="utf-8")
     (WS / DS).mkdir(parents=True, exist_ok=True)
     (WS / DS_NODEC).mkdir(parents=True, exist_ok=True)
+    (WS / DS_PROG).mkdir(parents=True, exist_ok=True)
     out = subprocess.run(
         ["docker", "run", "--rm", "--network", "none",
          "-v", f"{str(WS).replace(chr(92), '/')}:/ws",
@@ -126,7 +149,33 @@ assert not bad["ok"] and bad["error_code"] == "INVALID_INPUT", bad
 no_dec = run_misty(DS_NODEC, n_hvg=30)
 assert not no_dec["ok"] and no_dec["error_code"] == "ST_MISTY_NO_DECONV", no_dec
 
+# progeny 主跑：extra=PROGENy 14 通路活性，EGFR 信号应回收
+p = run_misty(DS_PROG, extra_mode="progeny", bandwidth=2.0)
+assert p["ok"], p
+assert p["extra_mode"] == "progeny", p
+assert p["n_predictors"] == 14, p
+assert p["n_targets"] == 3, p
+with open(WS / DS_PROG / "misty/misty_interactions.csv",
+          newline="") as fh:
+    prows = list(_csv.DictReader(fh))
+pt = [r for r in prows
+      if r["view"] == "para" and r["target"] == "Tumor"]
+pt.sort(key=lambda r: float(r["importances"]), reverse=True)
+ptop3 = {r["predictor"] for r in pt[:3]}
+assert "EGFR" in ptop3, f"EGFR not in para top3 for Tumor: {ptop3}"
+
+# 基因名零交集（stmistysmoke 的 g0..g59 非 symbol）→ INVALID_INPUT
+no_ov = run_misty(DS, extra_mode="progeny")
+assert not no_ov["ok"] and no_ov["error_code"] == "INVALID_INPUT", no_ov
+
+# 非法 extra_mode → INVALID_INPUT
+bad_mode = run_misty(DS, extra_mode="bogus")
+assert not bad_mode["ok"] and bad_mode["error_code"] == "INVALID_INPUT", \
+    bad_mode
+
 print("SMOKE OK | targets:", o["n_targets"],
       "| mean_gain_R2:", o["mean_gain_R2"],
       "| g0 recovered in Tumor para top3",
-      "| INVALID_INPUT/NO_DECONV rejected")
+      "| EGFR recovered in progeny para top3 (n_predictors=%d)"
+      % p["n_predictors"],
+      "| INVALID_INPUT/NO_DECONV/bad-mode/no-overlap rejected")
