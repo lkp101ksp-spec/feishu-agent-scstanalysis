@@ -206,6 +206,18 @@ def register_l3_spatial(
         out.pop("ok", None)
         return out
 
+    def st_niche(*, dataset_ref: str, k: int = 12) -> dict[str, Any]:
+        """空间生态位重构：细胞型组成 ward 层次聚类 → niche 标签写回。"""
+        try:
+            out = runner.run(
+                "niche", {"dataset_id": dataset_ref, "k": k},
+                image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=600)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     registry.register(ToolSpec(
         name="st_load",
         description=(
@@ -459,4 +471,28 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_cnv,
         timeout_sec=3600,
+    ))
+    registry.register(ToolSpec(
+        name="st_niche",
+        description=(
+            "空间生态位（niche）重构：基于 st_deconvolve 的细胞型组成矩阵"
+            "（行归一化）做 ward 层次聚类，把组成相似的 spot 聚为生态位，"
+            "输出 niche 空间着色图、niche×细胞型组成热图与矩阵 csv；"
+            "obs['niche'] 写回 processed.h5ad（st_plot 可着色、st_stats "
+            "可作 cluster_key）。k 为 niche 数（默认 12）。需先跑 "
+            "st_process 与 st_deconvolve。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_load 输出的 dataset_ref"},
+                "k": {"type": "integer", "default": 12,
+                      "description": "niche 数（2 ≤ k < n_spots）"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_niche,
+        timeout_sec=600,
     ))

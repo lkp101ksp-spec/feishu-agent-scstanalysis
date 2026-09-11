@@ -28,12 +28,12 @@ def reg(runner):
     return registry
 
 
-def test_st_registers_ten_tools(reg):
-    """st_* 10 工具全部注册为 L1_compute（Phase 46 +st_cnv）。"""
+def test_st_registers_eleven_tools(reg):
+    """st_* 11 工具全部注册为 L1_compute（Phase 47 +st_niche）。"""
     names = sorted(t.name for t in reg.list())
     assert names == ["st_cnv", "st_commot", "st_deconvolve", "st_domains",
-                     "st_load", "st_markers", "st_plot", "st_process",
-                     "st_qc", "st_stats"]
+                     "st_load", "st_markers", "st_niche", "st_plot",
+                     "st_process", "st_qc", "st_stats"]
     for t in reg.list():
         assert t.risk_level == "L1_compute"
 
@@ -107,12 +107,13 @@ def test_st_plot_genes_plain_string_wraps_list(runner, reg):
     assert args[1]["genes"] == ["MARKER_D1_0"]
 
 
-def test_register_ten_st_tools(reg):
-    """Phase 46 后 st_* 共 10 工具（9 + st_cnv）。"""
+def test_register_eleven_st_tools(reg):
+    """Phase 47 后 st_* 共 11 工具（10 + st_niche）。"""
     names = sorted(t.name for t in reg.list() if t.name.startswith("st_"))
     assert names == [
         "st_cnv", "st_commot", "st_deconvolve", "st_domains", "st_load",
-        "st_markers", "st_plot", "st_process", "st_qc", "st_stats"]
+        "st_markers", "st_niche", "st_plot", "st_process", "st_qc",
+        "st_stats"]
 
 
 def test_st_domains_forwards_params(runner, reg):
