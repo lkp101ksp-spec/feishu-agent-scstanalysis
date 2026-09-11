@@ -235,14 +235,16 @@ def register_l3_spatial(
         return out
 
     def st_misty(*, dataset_ref: str, n_hvg: int = 50,
-                 bandwidth: float = 0) -> dict[str, Any]:
-        """多视图空间建模（liana MISTy）：组成=intra，HVG=juxta/para。"""
+                 bandwidth: float = 0,
+                 extra_mode: str = "hvg") -> dict[str, Any]:
+        """多视图空间建模（liana MISTy）：组成=intra，HVG/通路=juxta/para。"""
         try:
             out = runner.run(
                 "misty", {
                     "dataset_id": dataset_ref,
                     "n_hvg": n_hvg,
                     "bandwidth": bandwidth,
+                    "extra_mode": extra_mode,
                 }, image=st_image, script_dir=_ST_SCRIPT_DIR,
                 timeout_sec=1800)
         except BioRunError as e:
@@ -576,6 +578,11 @@ def register_l3_spatial(
                           "description": "extra 视图 top HVG 数（10..500）"},
                 "bandwidth": {"type": "number", "default": 0,
                               "description": "para 半径；0=自动"},
+                "extra_mode": {"type": "string", "default": "hvg",
+                               "enum": ["hvg", "progeny"],
+                               "description": "extra 视图来源：hvg=top HVG "
+                                              "表达；progeny=PROGENy 14 通路"
+                                              "活性（decoupler MLM，离线）"},
             },
             "required": ["dataset_ref"],
         },
