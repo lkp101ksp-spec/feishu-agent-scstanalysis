@@ -234,6 +234,22 @@ def register_l3_spatial(
         out.pop("ok", None)
         return out
 
+    def st_misty(*, dataset_ref: str, n_hvg: int = 50,
+                 bandwidth: float = 0) -> dict[str, Any]:
+        """多视图空间建模（liana MISTy）：组成=intra，HVG=juxta/para。"""
+        try:
+            out = runner.run(
+                "misty", {
+                    "dataset_id": dataset_ref,
+                    "n_hvg": n_hvg,
+                    "bandwidth": bandwidth,
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=1800)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     registry.register(ToolSpec(
         name="st_load",
         description=(
@@ -539,4 +555,31 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_vicinity,
         timeout_sec=600,
+    ))
+    registry.register(ToolSpec(
+        name="st_misty",
+        description=(
+            "多视图空间建模（liana MISTy）：以细胞型组成（st_deconvolve "
+            "产物）为 intra 目标视图、top HVG 基因表达为 juxta（紧邻）+ "
+            "para（旁分泌半径）预测视图，随机森林逐目标建模，回答哪些"
+            "细胞型/基因在空间上互相解释；输出视图贡献热图、para 视图 "
+            "target×predictor 重要性热图与两个全量 csv。bandwidth 为 "
+            "para 半径（坐标单位），0=自动（5×中位近邻距）。需先跑 "
+            "st_process 与 st_deconvolve。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_load 输出的 dataset_ref"},
+                "n_hvg": {"type": "integer", "default": 50,
+                          "description": "extra 视图 top HVG 数（10..500）"},
+                "bandwidth": {"type": "number", "default": 0,
+                              "description": "para 半径；0=自动"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_misty,
+        timeout_sec=1800,
     ))
