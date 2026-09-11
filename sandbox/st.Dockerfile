@@ -33,6 +33,14 @@ RUN pip install --no-cache-dir \
         -exec sed -i 's/np\.Inf\b/np.inf/g' {} +; \
     python -c "import cell2location; print('cell2location', cell2location.__version__)"
 
+# Phase 46 st_cnv：infercnvpy + GRCh38 坐标 TSV（与 bio.Dockerfile B1 层
+# 同构；两层分离——改坐标脚本不重装 pip；fetch 需构建期网络）
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple infercnvpy==0.6.1 \
+    && python -c "import infercnvpy; print('infercnvpy', infercnvpy.__version__)"
+COPY fetch_gene_pos.py /tmp/fetch_gene_pos.py
+RUN python /tmp/fetch_gene_pos.py && rm /tmp/fetch_gene_pos.py
+
 # 非 root 用户 + 可写目录（与 bio:cpu 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
