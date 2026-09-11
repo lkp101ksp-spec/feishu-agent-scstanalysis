@@ -34,6 +34,7 @@ from config.settings import Settings
 from gateway.app import process_card_payload, run_im_pipeline
 from gateway.normalizer import NormalizeError
 from gateway.runtime import Runtime, build_runtime
+from gateway.startup_wait import wait_for_dependency
 from orchestrator.bind_doc_service import BindDocService
 from orchestrator.bio_workspace_gc import _SweepResult, sweep
 from orchestrator.executor.kernel_manager import KernelPool
@@ -490,6 +491,22 @@ def acquire_single_instance(force: bool = False) -> None:
     atexit.register(_release_pidfile)
 
 
+def wait_for_pg_ready(settings: Any, *, probe: Any = None) -> None:
+    """启动期 pg 依赖等待（2026-09-11 连崩 189 次事故驱动）。
+
+    sqlite 直通；pg 走短超时探针（默认 health_monitor.probe_pg_url，
+    单测注入假探针）。不就绪则 5s 重试、30 分钟封顶后 SystemExit(3)
+    交 guardian 重新拉起。
+    """
+    url = settings.database_url
+    if url.startswith("sqlite"):
+        return
+    if probe is None:
+        from gateway.health_monitor import probe_pg_url
+        probe = probe_pg_url
+    wait_for_dependency(lambda: probe(url), name="pg")
+
+
 def main() -> None:
     """长连接进程入口：组装 runtime → 建 ws client → 阻塞接收。"""
     logging.basicConfig(
@@ -510,7 +527,11 @@ def main() -> None:
     logging.getLogger().addHandler(file_handler)
     # Phase 22：单实例守卫（四轮真机双实例复发；--force 显式替换）
     acquire_single_instance(force="--force" in sys.argv)
-    rt = build_runtime()
+    # 启动期依赖等待：pg（Docker 容器）未就绪先等，免崩溃循环
+    from config.settings import load_settings
+    settings = load_settings()
+    wait_for_pg_ready(settings)
+    rt = build_runtime(settings)
     start_renew_scanner(rt)
     start_auto_sync_scanner(
         rt.auto_sync_worker,
