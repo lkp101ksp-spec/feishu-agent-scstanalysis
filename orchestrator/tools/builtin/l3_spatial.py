@@ -168,6 +168,26 @@ def register_l3_spatial(
         out.pop("ok", None)
         return out
 
+    def st_stats(*, dataset_ref: str, analysis: str,
+                 mode: str = "moran",
+                 genes: list[str] | None = None,
+                 cluster_key: str = "", n_perms: int = 1000,
+                 coord_type: str = "grid", n_neighs: int = 6) -> dict[str, Any]:
+        """空间统计三分析（Moran/Geary 自相关、共现、邻域富集）。"""
+        try:
+            out = runner.run(
+                "stats", {
+                    "dataset_id": dataset_ref, "analysis": analysis,
+                    "mode": mode, "genes": parse_gene_list(genes),
+                    "cluster_key": cluster_key, "n_perms": n_perms,
+                    "coord_type": coord_type, "n_neighs": n_neighs,
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=1800)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     registry.register(ToolSpec(
         name="st_load",
         description=(
@@ -350,4 +370,44 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_deconvolve,
         timeout_sec=st_deconvolve_timeout,
+    ))
+    registry.register(ToolSpec(
+        name="st_stats",
+        description=(
+            "空间统计分析三合一：autocorr（Moran's I/Geary's C 空间自相关，"
+            "识别空间可变基因，输出逐基因统计表与 top4 空间分布图）、"
+            "cooccurrence（簇间空间共现曲线）、nhood_enrichment（簇间邻域"
+            "富集 zscore 热图）。cluster_key 留空自动回退 spatial_domain→"
+            "banksy_domain→leiden→clusters。需先跑 st_process；"
+            "cooccurrence/nhood_enrichment 建议先跑 st_domains。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string"},
+                "analysis": {"type": "string",
+                             "enum": ["autocorr", "cooccurrence",
+                                      "nhood_enrichment"]},
+                "mode": {"type": "string", "enum": ["moran", "geary"],
+                         "default": "moran",
+                         "description": "仅 autocorr"},
+                "genes": {"type": "array", "items": {"type": "string"},
+                          "description": "仅 autocorr：显式基因列表"
+                                         "（空=高变基因前 50）"},
+                "cluster_key": {"type": "string", "default": "",
+                                "description": "仅后两个分析：obs 列名"
+                                               "（留空自动回退）"},
+                "n_perms": {"type": "integer", "default": 1000,
+                            "description": "仅 nhood_enrichment：排列次数"},
+                "coord_type": {"type": "string", "enum": ["grid", "generic"],
+                               "default": "grid",
+                               "description": "邻域图类型（仅 processed 无"
+                                              "既有邻域图时兜底生效）"},
+                "n_neighs": {"type": "integer", "default": 6},
+            },
+            "required": ["dataset_ref", "analysis"],
+        },
+        risk_level="L1_compute",
+        handler=st_stats,
+        timeout_sec=1800,
     ))

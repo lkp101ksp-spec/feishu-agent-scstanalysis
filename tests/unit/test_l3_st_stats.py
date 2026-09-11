@@ -48,6 +48,7 @@ def test_st_stats_forwards_params(runner, reg):
     assert args[0] == "stats"
     assert args[1] == {"dataset_id": "abc123",
                        "analysis": "nhood_enrichment",
+                       "mode": "moran", "genes": [],
                        "cluster_key": "spatial_domain",
                        "n_perms": 500,
                        "coord_type": "generic", "n_neighs": 8}

@@ -51,6 +51,7 @@ SECTION_TITLES: dict[str, str] = {
     "st_domains": "空间结构域识别",
     "st_commot": "空间细胞通讯（COMMOT）",
     "st_deconvolve": "空间反卷积",
+    "st_stats": "空间统计分析",
 }
 
 
