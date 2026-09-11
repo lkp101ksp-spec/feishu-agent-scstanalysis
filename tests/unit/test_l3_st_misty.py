@@ -36,6 +36,7 @@ def test_st_misty_registered(reg):
     assert spec.parameters["required"] == ["dataset_ref"]
     assert props["n_hvg"]["default"] == 50
     assert "bandwidth" in props
+    assert props["extra_mode"]["default"] == "hvg"
 
 
 def test_st_misty_forwards_params(runner, reg):
@@ -45,7 +46,7 @@ def test_st_misty_forwards_params(runner, reg):
     args, kw = runner.run.call_args
     assert args[0] == "misty"
     assert args[1] == {"dataset_id": "abc123", "n_hvg": 80,
-                       "bandwidth": 250.0}
+                       "bandwidth": 250.0, "extra_mode": "hvg"}
     assert kw["image"] == ST_IMAGE
     assert kw["script_dir"] == "/opt/st_tools"
     assert kw["timeout_sec"] == 1800
@@ -73,3 +74,18 @@ def test_st_misty_error_passthrough(runner, reg):
     out = reg.get("st_misty").handler(dataset_ref="abc123")
     assert out == {"error_code": "ST_MISTY_NO_DECONV",
                    "error_message": "deconv.h5ad 不存在"}
+
+
+def test_st_misty_extra_mode_default(runner, reg):
+    """extra_mode 默认 hvg（向后兼容）并透传进 args payload。"""
+    reg.get("st_misty").handler(dataset_ref="abc123")
+    args, _ = runner.run.call_args
+    assert args[1]["extra_mode"] == "hvg"
+
+
+def test_st_misty_extra_mode_forwarded(runner, reg):
+    """extra_mode=progeny 透传进 args payload。"""
+    reg.get("st_misty").handler(dataset_ref="abc123",
+                                extra_mode="progeny")
+    args, _ = runner.run.call_args
+    assert args[1]["extra_mode"] == "progeny"
