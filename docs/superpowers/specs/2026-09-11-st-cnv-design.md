@@ -7,8 +7,8 @@
 
 `st_cnv`：st_* 第 10 个工具，空间转录组 spot 级拷贝数变异推断与恶性 spot 判定。
 
-- L3 注册：`orchestrator/tools/builtin/l3_spatial.py` 新增 handler + ToolSpec（`risk_level="L1_compute"`，`timeout_sec=1800`，对齐 st_stats）
-- 容器脚本：`sandbox/st_tools/cnv.py`（st 镜像，infercnvpy 已烘焙）
+- L3 注册：`orchestrator/tools/builtin/l3_spatial.py` 新增 handler + ToolSpec（`risk_level="L1_compute"`，`timeout_sec=3600`，对齐 sc_cnv——CNV 重负，真机 humantest 超时纪律）
+- 容器脚本：`sandbox/st_tools/cnv.py`（st 镜像；**探针发现 st 镜像原缺 infercnvpy 与坐标 TSV**——st.Dockerfile 需补层，与 bio.Dockerfile B1 层同构）
 - 后端：**仅 infercnvpy**（与 sc_cnv 交叉验证口径一致；cnvturbo/fastCNV 不做，见非目标）
 
 **最大化复用 sc_cnv 成熟件**（`sandbox/sc_tools/cnv.py`，2026-09-11 真机验收过）：

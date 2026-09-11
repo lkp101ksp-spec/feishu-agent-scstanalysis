@@ -188,6 +188,24 @@ def register_l3_spatial(
         out.pop("ok", None)
         return out
 
+    def st_cnv(*, dataset_ref: str, annotation_key: str = "",
+               ref_groups: list[str] | None = None,
+               resolution: float = 1.0) -> dict[str, Any]:
+        """空间 CNV 推断与恶性 spot 判定（infercnvpy）→ 组织定位图。"""
+        try:
+            out = runner.run(
+                "cnv", {
+                    "dataset_id": dataset_ref,
+                    "annotation_key": annotation_key,
+                    "ref_groups": ref_groups,
+                    "resolution": resolution,
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=3600)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     registry.register(ToolSpec(
         name="st_load",
         description=(
@@ -410,4 +428,35 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_stats,
         timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="st_cnv",
+        description=(
+            "空间 CNV 推断与恶性 spot 判定（infercnvpy）：从原始 counts "
+            "推断拷贝数变异，以内置非恶性清单（或 ref_groups 显式指定）为"
+            "参考做恶性判定，输出染色体热图、cnv_score/cnv_subclone 空间"
+            "组织定位图与统计表；cnv_score/is_malignant/cnv_subclone 写回 "
+            "processed.h5ad（st_plot 可着色）。annotation_key 指定 spot "
+            "注释列，留空回退 cell_type→spatial_domain→leiden，特殊值 "
+            "'deconv' 用 st_deconvolve 产物的权重最大型（可命中内置非恶性"
+            "清单）。需先跑 st_load/st_process；注释列为数字簇时无法匹配"
+            "参考清单，请传 ref_groups 或改用 annotation_key='deconv'。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_load 输出的 dataset_ref"},
+                "annotation_key": {"type": "string", "default": "",
+                                   "description": "spot 注释列名，或 'deconv'"},
+                "ref_groups": {"type": "array", "items": {"type": "string"},
+                               "description": "显式参考组（注释取值列表）"},
+                "resolution": {"type": "number", "default": 1.0,
+                               "description": "亚克隆 leiden 分辨率"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_cnv,
+        timeout_sec=3600,
     ))
