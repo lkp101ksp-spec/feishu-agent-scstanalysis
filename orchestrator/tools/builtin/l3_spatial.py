@@ -252,6 +252,24 @@ def register_l3_spatial(
         out.pop("ok", None)
         return out
 
+    def st_trajectory(*, dataset_ref: str, root_mode: str = "marker",
+                      root_marker: str = "",
+                      root_layer: str = "tumor") -> dict[str, Any]:
+        """空间拟时序：表达图 DPT + PAGA 映射回组织坐标。"""
+        try:
+            out = runner.run(
+                "trajectory", {
+                    "dataset_id": dataset_ref,
+                    "root_mode": root_mode,
+                    "root_marker": root_marker,
+                    "root_layer": root_layer,
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=600)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     registry.register(ToolSpec(
         name="st_load",
         description=(
@@ -589,4 +607,38 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_misty,
         timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="st_trajectory",
+        description=(
+            "空间拟时序：表达邻居图扩散伪时序（scanpy diffmap + DPT）+ "
+            "PAGA 域拓扑，映射回组织空间坐标，回答表达进程是否沿空间"
+            "方向展开。root_mode=marker：root_marker 表达最高 spot 为根"
+            "（空则 spot #0）；root_mode=vicinity：st_vicinity 层"
+            "（root_layer，默认 tumor）内度中位 spot 为根。需先跑 "
+            "st_process；vicinity 模式需先跑 st_vicinity。产物 "
+            "trajectory/：pseudotime.csv + 空间着色图 + PAGA 空间质心图"
+            "（obs 有 vicinity 时附分层 boxplot + Spearman ρ）；"
+            "dpt_pseudotime 写回 obs 供 st_plot 叠加。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_load 输出的 dataset_ref"},
+                "root_mode": {"type": "string", "default": "marker",
+                              "enum": ["marker", "vicinity"],
+                              "description": "定根模式：marker=基因表达最高"
+                                             " spot；vicinity=st_vicinity 层"},
+                "root_marker": {"type": "string", "default": "",
+                                "description": "marker 模式根基因 symbol"},
+                "root_layer": {"type": "string", "default": "tumor",
+                               "description": "vicinity 模式根层"
+                                              "（tumor/distal/L1..Ln）"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_trajectory,
+        timeout_sec=600,
     ))

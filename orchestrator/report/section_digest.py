@@ -56,6 +56,7 @@ SECTION_TITLES: dict[str, str] = {
     "st_niche": "空间生态位重构",
     "st_vicinity": "肿瘤邻域分层",
     "st_misty": "多视图空间建模",
+    "st_trajectory": "空间拟时序",
 }
 
 
