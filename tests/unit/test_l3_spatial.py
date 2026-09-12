@@ -75,6 +75,31 @@ def test_st_load_path_forbidden(runner, reg):
                    "error_message": "outside allowed roots"}
 
 
+def test_st_load_h5ad_file_uses_file_dataset_id(runner, reg, monkeypatch):
+    """st_load：.h5ad 文件路径用文件级 dataset_id（真机验收发现的修复）。
+
+    修复前 handler 无条件 compute_dataset_id_dir（目录聚合 hash），
+    h5ad 文件路径在宿主侧即抛 SC_FILE_NOT_FOUND；load.py 容器脚本
+    本就支持 .h5ad（suffix 探测）——分支口径与之一致。
+    """
+    seen = []
+    runner.resolve_data_path.return_value = (
+        "I:/bio_data", "oscc.h5ad", "I:/bio_data/oscc.h5ad")
+
+    def fake_file_dataset_id(host):
+        seen.append(host)
+        return "filehash789"
+
+    monkeypatch.setattr(
+        "orchestrator.tools.builtin.l3_spatial.compute_dataset_id",
+        fake_file_dataset_id)
+    out = reg.get("st_load").handler(path="I:/bio_data/oscc.h5ad")
+    assert out["dataset_ref"] == "abc123"
+    assert seen == ["I:/bio_data/oscc.h5ad"]
+    args, _ = runner.run.call_args
+    assert args[1]["dataset_id"] == "filehash789"
+
+
 def test_st_qc_params_passthrough(runner, reg):
     """st_qc 参数透传到容器脚本。"""
     reg.get("st_qc").handler(dataset_ref="abc123", min_genes=10,

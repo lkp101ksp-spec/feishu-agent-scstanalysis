@@ -10,6 +10,7 @@ from typing import Any
 from orchestrator.tools.bio.bio_runner import (
     BioRunError,
     BioRunner,
+    compute_dataset_id,
     compute_dataset_id_dir,
     parse_gene_list,
 )
@@ -38,7 +39,12 @@ def register_l3_spatial(
         """读入空间转录组数据（visium/h5ad/mtx+coords）→ dataset_ref + 概要。"""
         try:
             mount_root, rel, host = runner.resolve_data_path(path)
-            dataset_id = compute_dataset_id_dir(host)
+            # .h5ad 文件按文件级 hash、目录按聚合 hash——与 load.py 的
+            # suffix 探测同一口径（修复前 h5ad 路径在宿主侧即抛
+            # SC_FILE_NOT_FOUND，真实 Visium 验收发现）。
+            dataset_id = (compute_dataset_id(host)
+                          if host.lower().endswith(".h5ad")
+                          else compute_dataset_id_dir(host))
             out = runner.run(
                 "load", {"path": rel, "dataset_id": dataset_id},
                 mounts=[(mount_root, "/data")],
