@@ -597,10 +597,11 @@ def register_l3_spatial(
                 "bandwidth": {"type": "number", "default": 0,
                               "description": "para 半径；0=自动"},
                 "extra_mode": {"type": "string", "default": "hvg",
-                               "enum": ["hvg", "progeny"],
+                               "enum": ["hvg", "progeny", "tf"],
                                "description": "extra 视图来源：hvg=top HVG "
                                               "表达；progeny=PROGENy 14 通路"
-                                              "活性（decoupler MLM，离线）"},
+                                              "活性；tf=CollecTRI TF 活性"
+                                              "（decoupler MLM，离线）"},
             },
             "required": ["dataset_ref"],
         },
