@@ -40,6 +40,7 @@ ABUND_KEY = "q05_cell_abundance_w_sf"
 ABUND_PREFIX = "q05cell_abundance_w_sf_"
 VIEW_COLS = ["intra", "juxta", "para"]
 PROGENY_TSV = Path("/opt/progeny/progeny_human_top500.tsv")
+COLLECTRI_TSV = Path("/opt/collectri/collectri_human.tsv")
 
 
 def _load_intra(dataset_id: str, obs_names: pd.Index,
@@ -119,6 +120,39 @@ def _load_progeny_extra(adata: Any, intra: Any,
     return extra
 
 
+def _load_collectri_extra(adata: Any, intra: Any,
+                          coords: np.ndarray) -> Any:
+    """CollecTRI MLM TF 活性 → extra AnnData（~772 TF 列，附 spatial）。
+
+    net=构建期快照 TSV（运行期断网）；dc.mt.mlm 写 obsm['score_mlm']
+    （spot×n_TF DataFrame，列=TF，tmin=5 过滤后 ~772）。net 靶基因∩
+    数据 var_names <500 → INVALID_INPUT（探针实证：overlap=100 时
+    MLM 因邻接矩阵秩 < 协变量数断言失败；真实 Visium 交集数千）。
+    """
+    import anndata as ad
+    if not COLLECTRI_TSV.exists():
+        fail("ST_MISTY_NO_COLLECTRI",
+             f"{COLLECTRI_TSV} 缺失（镜像快照层异常，重建 st 镜像）")
+        raise SystemExit(1)
+    net = pd.read_csv(COLLECTRI_TSV, sep="\t")
+    n_overlap = len(set(net["target"]) & set(adata.var_names))
+    if n_overlap < 500:
+        fail("INVALID_INPUT",
+             f"CollecTRI 靶基因与数据交集过少: {n_overlap} (<500，"
+             "基因名需为人类 symbol)")
+        raise SystemExit(1)
+    sub = adata[intra.obs_names, :].copy()
+    import decoupler as dc
+    dc.mt.mlm(sub, net, tmin=5, verbose=False)
+    scores = sub.obsm["score_mlm"].astype(np.float32)
+    extra = ad.AnnData(X=scores.to_numpy(),
+                       var=pd.DataFrame(index=scores.columns))
+    extra.obs_names = intra.obs_names
+    extra.obsm["spatial"] = coords[
+        adata.obs_names.isin(intra.obs_names)]
+    return extra
+
+
 def _contributions_heatmap(tm: pd.DataFrame, png_path: Path) -> None:
     """视图贡献热图：行=target，列=intra/juxta/para 贡献。"""
     import matplotlib.pyplot as plt
@@ -139,12 +173,21 @@ def _contributions_heatmap(tm: pd.DataFrame, png_path: Path) -> None:
 
 
 def _para_interactions_heatmap(inter: pd.DataFrame,
-                               png_path: Path) -> pd.DataFrame:
-    """para 视图 target×predictor importance 热图。返回透视矩阵。"""
+                               png_path: Path,
+                               top_n: int = 0) -> pd.DataFrame:
+    """para 视图 target×predictor importance 热图。返回透视矩阵。
+
+    top_n>0 且预测子数超出时，只画 importance 总和 top top_n 列
+    （tf 模式 ~772 列不可读；csv 仍全量不截断）。
+    """
     import matplotlib.pyplot as plt
     para = inter[inter["view"] == "para"]
     mat = para.pivot_table(index="target", columns="predictor",
                            values="importances", fill_value=0.0)
+    if top_n > 0 and mat.shape[1] > top_n:
+        keep = mat.sum(axis=0).sort_values(
+            ascending=False).head(top_n).index
+        mat = mat[keep]
     fig, ax = plt.subplots(
         figsize=(max(6.0, mat.shape[1] * 0.35),
                  max(3.5, mat.shape[0] * 0.35 + 1.5)))
@@ -192,6 +235,9 @@ def main() -> None:
     import anndata as ad
     if extra_mode == "progeny":
         extra = _load_progeny_extra(adata, intra, coords)
+        n_pred = int(extra.n_vars)
+    elif extra_mode == "tf":
+        extra = _load_collectri_extra(adata, intra, coords)
         n_pred = int(extra.n_vars)
     else:
         hvgs: list[str]
@@ -253,6 +299,8 @@ def main() -> None:
         "extra_mode": extra_mode,
         "n_targets": int(tm.shape[0]),
         "n_predictors": n_pred,
+        "n_predictors_total": n_pred,
+        "n_predictors_shown": min(top_n, n_pred) if top_n else n_pred,
         "n_spots": int(intra.n_obs),
         "bandwidth": round(bw, 2),
         "mean_gain_R2": round(float(tm["gain_R2"].mean()), 4),
@@ -265,8 +313,8 @@ def main() -> None:
         "interactions_csv": str(inter_csv),
         "note": "liana MISTy（genericMistyData intra/juxta/para + "
                 "RandomForestModel）；intra=细胞型组成，extra="
-                "top HVG 表达或 PROGENy 通路活性（extra_mode）；"
-                "importance=Gini 下降",
+                "top HVG 表达或 PROGENy 通路活性或 CollecTRI TF 活性"
+                "（extra_mode）；importance=Gini 下降",
     })
 
 

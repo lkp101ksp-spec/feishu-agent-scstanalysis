@@ -54,6 +54,11 @@ RUN pip install --no-cache-dir \
 COPY fetch_progeny.py /tmp/fetch_progeny.py
 RUN python /tmp/fetch_progeny.py && rm /tmp/fetch_progeny.py
 
+# Phase 52 st_misty TF 调控子视图：CollecTRI 模型快照（decoupler Phase 50
+# 已装，零 pip 改动；快照需构建期网络，运行期断网读 TSV）
+COPY fetch_collectri.py /tmp/fetch_collectri.py
+RUN python /tmp/fetch_collectri.py && rm /tmp/fetch_collectri.py
+
 # 非 root 用户 + 可写目录（与 bio:cpu 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
