@@ -67,7 +67,7 @@ def _load_ref(args: dict[str, Any]) -> tuple[Any, str]:
             raise SystemExit(1)
         label = proc_obs.loc[common, "leiden"].astype(str)
         ref = ref[common].copy()
-        ref.obs["c2l_label"] = label.values
+        ref.obs["c2l_label"] = _clean_label(label.values)
         return ref, "workspace sc dataset"
     ref = ad.read_h5ad(DATA_ROOT / args["sc_ref_path"])
     if ref.X is not None and (cast(Any, ref.X).min() < 0
@@ -81,12 +81,22 @@ def _load_ref(args: dict[str, Any]) -> tuple[Any, str]:
         "celltype", "cell_type", "CellType", "leiden", "cluster"]
     for c in cands:
         if c in ref.obs.columns and ref.obs[c].nunique() >= 2:
-            ref.obs["c2l_label"] = ref.obs[c].astype(str).values
+            ref.obs["c2l_label"] = _clean_label(
+                ref.obs[c].astype(str).values)
             return ref, c
     fail("ST_REF_INVALID",
          f"ref h5ad has no usable label column; obs columns: "
          f"{list(ref.obs.columns)[:20]}; pass ref_label_col")
     raise SystemExit(1)
+
+
+def _clean_label(values: Any) -> Any:
+    """净化细胞类型标签：h5py 禁止 obs 键含 "/"（真实 OSCC 参考的
+    "Tem/Effector helper T cells" 触发 SCRIPT_ERROR，训练 2h 后写出
+    才炸——真实 Visium 验收发现），统一替换为 "_"。"""
+    import pandas as pd
+
+    return pd.Index(values).str.replace("/", "_", regex=False).values
 
 
 def _strip_mt(adata: Any) -> None:

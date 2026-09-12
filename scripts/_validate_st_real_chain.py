@@ -108,6 +108,9 @@ def main() -> None:
     """真实数据全链驱动：逐步跑 14 工具并落交叉对照报告。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("--epochs", type=int, default=10000)
+    ap.add_argument("--deconv-timeout", type=int, default=7200)
+    ap.add_argument("--start-from", default="st_load",
+                    help="从指定步骤续跑（产物已在盘上时跳过前序）")
     args = ap.parse_args()
 
     settings = load_settings()
@@ -124,42 +127,50 @@ def main() -> None:
     reg = ToolRegistry()
     register_l3_spatial(
         reg, runner, st_image=settings.bio_st_image,
-        st_deconvolve_timeout=settings.st_deconvolve_timeout_sec)
+        st_deconvolve_timeout=args.deconv_timeout)
     h = lambda n: reg.get(n).handler  # noqa: E731
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     res: dict = {}
 
-    r = _step("st_load", res, h("st_load"),
-              path=r"I:\飞书agent\bio_test_data\oscc_visium.h5ad")
-    ds = r["dataset_ref"]
-    (REPORT_DIR / "ds_id.txt").write_text(ds)
-    print(f"dataset_ref = {ds}")
-
-    _step("st_qc", res, h("st_qc"), dataset_ref=ds, max_genes=10000)
-    _step("st_process", res, h("st_process"), dataset_ref=ds)
-    _step("st_stats", res, h("st_stats"), dataset_ref=ds,
-          analysis="autocorr", mode="moran",
-          genes=["EPCAM", "PTPRC", "COL1A1"])
-    _step("st_domains", res, h("st_domains"), dataset_ref=ds,
-          method="banksy")
-    _step("st_markers", res, h("st_markers"), dataset_ref=ds)
-    _step("st_deconvolve", res, h("st_deconvolve"), dataset_ref=ds,
-          sc_ref=r"I:\飞书agent\bio_test_data\oscc_sc_ref.h5ad",
-          ref_label_col="cell_type", max_epochs=args.epochs)
-    _step("st_cnv", res, h("st_cnv"), dataset_ref=ds,
-          annotation_key="pathologist_anno.x",
-          ref_groups=["Non-cancerous Mucosa"])
-    _step("st_niche", res, h("st_niche"), dataset_ref=ds)
-    _step("st_vicinity", res, h("st_vicinity"), dataset_ref=ds)
-    _step("st_misty_hvg", res, h("st_misty"), dataset_ref=ds,
-          extra_mode="hvg")
-    _step("st_misty_progeny", res, h("st_misty"), dataset_ref=ds,
-          extra_mode="progeny")
-    _step("st_misty_tf", res, h("st_misty"), dataset_ref=ds,
-          extra_mode="tf")
-    _step("st_trajectory", res, h("st_trajectory"), dataset_ref=ds,
-          root_mode="vicinity", root_layer="tumor")
+    seq: list[tuple[str, str, dict]] = [
+        ("st_load", "st_load",
+         {"path": r"I:\飞书agent\bio_test_data\oscc_visium.h5ad"}),
+        ("st_qc", "st_qc", {"max_genes": 10000}),
+        ("st_process", "st_process", {}),
+        ("st_stats", "st_stats",
+         {"analysis": "autocorr", "mode": "moran",
+          "genes": ["EPCAM", "PTPRC", "COL1A1"]}),
+        ("st_domains", "st_domains", {"method": "banksy"}),
+        ("st_markers", "st_markers", {}),
+        ("st_deconvolve", "st_deconvolve",
+         {"sc_ref": r"I:\飞书agent\bio_test_data\oscc_sc_ref_sub.h5ad",
+          "ref_label_col": "cell_type", "max_epochs": args.epochs}),
+        ("st_cnv", "st_cnv",
+         {"annotation_key": "pathologist_anno.x",
+          "ref_groups": ["Non-cancerous Mucosa"]}),
+        ("st_niche", "st_niche", {}),
+        ("st_vicinity", "st_vicinity", {}),
+        ("st_misty_hvg", "st_misty", {"extra_mode": "hvg"}),
+        ("st_misty_progeny", "st_misty", {"extra_mode": "progeny"}),
+        ("st_misty_tf", "st_misty", {"extra_mode": "tf"}),
+        ("st_trajectory", "st_trajectory",
+         {"root_mode": "vicinity", "root_layer": "tumor"}),
+    ]
+    names = [s[0] for s in seq]
+    if args.start_from not in names:
+        print(f"--start-from 需为 {names} 之一")
+        raise SystemExit(2)
+    ds = ((REPORT_DIR / "ds_id.txt").read_text().strip()
+          if args.start_from != "st_load" else "")
+    for name, tool, kw in seq[names.index(args.start_from):]:
+        if name != "st_load":
+            kw = {"dataset_ref": ds, **kw}
+        out = _step(name, res, h(tool), **kw)
+        if name == "st_load":
+            ds = out["dataset_ref"]
+            (REPORT_DIR / "ds_id.txt").write_text(ds)
+            print(f"dataset_ref = {ds}")
 
     (REPORT_DIR / "_cross.py").write_text(_CROSS, encoding="utf-8")
     cp = subprocess.run(
