@@ -13,8 +13,10 @@ import json
 import subprocess
 from pathlib import Path
 
+import anndata as ad
 import numpy as np
 import pandas as pd
+from scipy.stats import spearmanr
 
 WS = Path("I:/飞书agent/bio_workspace")
 DS = "sttrajsmoke"
@@ -111,14 +113,12 @@ for f in ("trajectory/pseudotime.csv", "trajectory/trajectory_spatial.png",
     assert (ds_dir / f).exists(), f
 assert "spearman_rho" in o, o
 df = pd.read_csv(ds_dir / "trajectory/pseudotime.csv", index_col=0)
-from scipy.stats import spearmanr
 col_idx = pd.Index([f"s{i}" for i in range(144)])
 xs, ys = np.meshgrid(np.arange(12), np.arange(12))
 col = pd.Series(xs.ravel(), index=col_idx)  # coords[:,1]=xs=轨迹轴（builder 同口径）
 rho_x, _ = spearmanr(df["dpt_pseudotime"], col)
 assert rho_x > 0.9, f"pseudotime~x Spearman={rho_x:.3f} (<0.9)"
 # 写回核验：processed.h5ad obs 有 dpt_pseudotime
-import anndata as ad
 back = ad.read_h5ad(ds_dir / "processed.h5ad")
 assert "dpt_pseudotime" in back.obs, "write-back missing"
 

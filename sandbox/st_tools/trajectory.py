@@ -22,8 +22,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from common import (WS_ROOT, emit, ensure_spatial, fail, load_adata,
-                    read_args, run)
+from common import WS_ROOT, emit, ensure_spatial, fail, load_adata, read_args, run
 
 
 def _rf(x: float) -> float | None:
