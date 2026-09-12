@@ -89,3 +89,16 @@ def test_st_misty_extra_mode_forwarded(runner, reg):
                                 extra_mode="progeny")
     args, _ = runner.run.call_args
     assert args[1]["extra_mode"] == "progeny"
+
+
+def test_st_misty_extra_mode_tf_forwarded(runner, reg):
+    """extra_mode=tf 透传进 args payload。"""
+    reg.get("st_misty").handler(dataset_ref="abc123", extra_mode="tf")
+    args, _ = runner.run.call_args
+    assert args[1]["extra_mode"] == "tf"
+
+
+def test_st_misty_extra_mode_enum(reg):
+    """extra_mode enum 含 tf（CollecTRI 调控子视图）。"""
+    props = reg.get("st_misty").parameters["properties"]
+    assert props["extra_mode"]["enum"] == ["hvg", "progeny", "tf"]
