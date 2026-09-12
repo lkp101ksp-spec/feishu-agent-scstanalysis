@@ -16,6 +16,7 @@ WS = Path("I:/飞书agent/bio_workspace")
 DS = "stmistysmoke"
 DS_NODEC = "stmistynodec"
 DS_PROG = "stmistyprog"
+DS_TF = "stmistytf"
 IMG = "feishu-research-agent/bio:st-cpu-latest"
 BASE = ["docker", "run", "--rm", "-i", "--network", "none",
         "-v", f"{str(WS).replace(chr(92), '/')}:/ws", IMG]
@@ -83,6 +84,27 @@ proc3 = ad.AnnData(X=X2, obs=pd.DataFrame(index=barcodes),
 proc3.obsm["spatial"] = coords
 proc3.write_h5ad("/ws/stmistyprog/processed.h5ad")
 dec.write_h5ad("/ws/stmistyprog/deconv.h5ad")
+# stmistytf：真实 CollecTRI 基因名，DDIT3 靶基因按 weight×tumor 梯度
+# 注入（探针 B 同款配方，corr=0.9901 实测可回收）；MLM 秩约束要求
+# 交集靶基因 > TF 协变量数——fill 取 4000 个真实靶基因兜底
+cnet = pd.read_csv("/opt/collectri/collectri_human.tsv", sep="\t")
+dd = cnet[cnet["source"] == "DDIT3"][["target", "weight"]].drop_duplicates(
+    "target")
+cothers = sorted(set(cnet["target"]) - set(dd["target"]))
+cfill = np.random.default_rng(11).choice(cothers, size=4000,
+                                         replace=False).tolist()
+genes3 = dd["target"].tolist() + cfill
+g3idx = pd.Index(genes3)
+X3 = np.random.default_rng(1).normal(0, 1, (n, len(genes3))).astype(
+    np.float32)
+cols3 = g3idx.get_indexer(dd["target"])
+X3[:, cols3] += (tumor_frac * 3).astype(np.float32)[:, None] * \
+    dd["weight"].to_numpy(dtype=np.float32)[None, :] * 0.5
+proc4 = ad.AnnData(X=X3, obs=pd.DataFrame(index=barcodes),
+                   var=pd.DataFrame(index=genes3))
+proc4.obsm["spatial"] = coords
+proc4.write_h5ad("/ws/stmistytf/processed.h5ad")
+dec.write_h5ad("/ws/stmistytf/deconv.h5ad")
 print("built", n)
 '''
 
@@ -95,6 +117,7 @@ def build_dataset() -> None:
     (WS / DS).mkdir(parents=True, exist_ok=True)
     (WS / DS_NODEC).mkdir(parents=True, exist_ok=True)
     (WS / DS_PROG).mkdir(parents=True, exist_ok=True)
+    (WS / DS_TF).mkdir(parents=True, exist_ok=True)
     out = subprocess.run(
         ["docker", "run", "--rm", "--network", "none",
          "-v", f"{str(WS).replace(chr(92), '/')}:/ws",
@@ -168,6 +191,26 @@ assert "EGFR" in ptop3, f"EGFR not in para top3 for Tumor: {ptop3}"
 no_ov = run_misty(DS, extra_mode="progeny")
 assert not no_ov["ok"] and no_ov["error_code"] == "INVALID_INPUT", no_ov
 
+# tf 主跑：extra=CollecTRI TF 活性，DDIT3 信号应回收；热图 top30 截断
+t = run_misty(DS_TF, extra_mode="tf", bandwidth=2.0)
+assert t["ok"], t
+assert t["extra_mode"] == "tf", t
+assert t["n_predictors_total"] > 500, t
+assert t["n_predictors_shown"] == 30, t
+with open(WS / DS_TF / "misty/misty_interactions.csv", newline="") as fh:
+    trows = list(_csv.DictReader(fh))
+tt = [r for r in trows
+      if r["view"] == "para" and r["target"] == "Tumor"]
+tt.sort(key=lambda r: float(r["importances"]), reverse=True)
+ttop30 = {r["predictor"] for r in tt[:30]}
+assert "DDIT3" in ttop30, \
+    f"DDIT3 not in para top30 for Tumor: {[r['predictor'] for r in tt[:5]]}"
+
+# tf 模式基因名零交集（g0..g59 非 symbol）→ INVALID_INPUT
+no_ov_tf = run_misty(DS, extra_mode="tf")
+assert not no_ov_tf["ok"] and no_ov_tf["error_code"] == "INVALID_INPUT", \
+    no_ov_tf
+
 # 非法 extra_mode → INVALID_INPUT
 bad_mode = run_misty(DS, extra_mode="bogus")
 assert not bad_mode["ok"] and bad_mode["error_code"] == "INVALID_INPUT", \
@@ -178,4 +221,6 @@ print("SMOKE OK | targets:", o["n_targets"],
       "| g0 recovered in Tumor para top3",
       "| EGFR recovered in progeny para top3 (n_predictors=%d)"
       % p["n_predictors"],
+      "| DDIT3 recovered in tf para top30 (total=%d)"
+      % t["n_predictors_total"],
       "| INVALID_INPUT/NO_DECONV/bad-mode/no-overlap rejected")

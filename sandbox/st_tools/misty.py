@@ -218,9 +218,9 @@ def main() -> None:
         fail("INVALID_INPUT", f"bandwidth={bandwidth} 不能为负")
         raise SystemExit(1)
     extra_mode = str(args.get("extra_mode", "hvg"))
-    if extra_mode not in ("hvg", "progeny"):
+    if extra_mode not in ("hvg", "progeny", "tf"):
         fail("INVALID_INPUT",
-             f"extra_mode={extra_mode!r} 非法（需 hvg|progeny）")
+             f"extra_mode={extra_mode!r} 非法（需 hvg|progeny|tf）")
         raise SystemExit(1)
 
     adata = load_adata({"dataset_id": args["dataset_id"],
@@ -282,8 +282,9 @@ def main() -> None:
     inter.to_csv(inter_csv, index=False)
     contrib_png = out_dir / "misty_contributions.png"
     _contributions_heatmap(tm, contrib_png)
+    top_n = 30 if extra_mode == "tf" else 0
     para_png = out_dir / "misty_interactions_para.png"
-    _para_interactions_heatmap(inter, para_png)
+    _para_interactions_heatmap(inter, para_png, top_n=top_n)
 
     # 每 target para 视图 top1 预测子（importance 最大）
     para = inter[inter["view"] == "para"]
