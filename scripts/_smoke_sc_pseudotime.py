@@ -121,8 +121,12 @@ rho_pal = float(spearmanr(pal_pt.loc[[str(i) for i in range(n)]],
 assert rho_pal > 0.9, f"palantir pt vs t rho={rho_pal}"
 for f in ("pseudotime/palantir_pt.csv",
           "pseudotime/terminal_states.csv",
-          "pseudotime/palantir_umap.png"):
+          "pseudotime/palantir_umap.png",
+          "pseudotime/palantir_branch_umap.png"):
     assert (ds_dir / f).exists(), f
+assert o5["branch_umap_png"].endswith("palantir_branch_umap.png"), o5
+assert (ds_dir / "pseudotime/palantir_branch_umap.png"
+        ).stat().st_size > 0
 
 # ⑥ palantir + root_cluster → cluster 模式定根
 o6 = run_pt(engine="palantir", root_cluster=modal_cluster)

@@ -10,7 +10,9 @@ engine="dpt"：scanpy diffmap + DPT（Haghverdi 2016 图扩散族，覆盖
 Monocle 拟时序的排序场景；分支推断/BEAM/CytoTRACE2 不在范围）。
 engine="palantir"：马尔可夫链扩散（Setty 2019），附终末态 + 分支
 概率宽表；产物 palantir_pt.csv（pt+ts_* 分支概率列）/
-terminal_states.csv / palantir_umap.png，dyn 产物加 palantir_ 前缀。
+terminal_states.csv / palantir_umap.png / palantir_branch_umap.png
+（分支概率分面图，每终末态一 panel 封顶 6，0-1 固定色阶），
+dyn 产物加 palantir_ 前缀。
 root 四模式：start_cell 显式条码 > root_cluster 簇内度最高 >
 root_marker raw 表达最高 > 皆空取第 0 个细胞（结果中说明）。
 
@@ -256,6 +258,41 @@ def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
     fig.savefig(umap_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
+    # 产物 4：分支概率 UMAP 分面图（每终末态一 panel，封顶 6；
+    # vmin/vmax=0/1 固定色阶保证跨 panel 可比）
+    show = terms
+    branch_note = ""
+    if len(terms) > 6:
+        peak = {t: float(np.asarray(pr.branch_probs[t]).max())
+                for t in terms}
+        show = sorted(terms, key=lambda t: -peak[t])[:6]
+        branch_note = (f"n_terminal={len(terms)} > 6; "
+                       "branch umap shows top-6 by max probability")
+    k = max(1, len(show))
+    fig, axes = plt.subplots(1, k, figsize=(4.6 * k, 4.0),
+                             squeeze=False)
+    show_idx = {t: int(np.flatnonzero(adata.obs_names == t)[0])
+                for t in show}
+    for ax, t in zip(axes.ravel(), show):
+        prob = np.asarray(pr.branch_probs[t], dtype=float)
+        s = ax.scatter(umap[:, 0], umap[:, 1], s=4, c=prob,
+                       cmap="viridis", vmin=0, vmax=1, linewidths=0)
+        j = show_idx[t]
+        ax.scatter(umap[j, 0], umap[j, 1], s=70, marker="x",
+                   c="black", linewidths=1.8)
+        ax.scatter(umap[iroot, 0], umap[iroot, 1], s=80,
+                   facecolors="none", edgecolors="red", linewidths=1.4)
+        ax.set_title(f"ts_{t[-8:]} (leiden {clusters.iloc[j]})",
+                     fontsize=9)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        fig.colorbar(s, ax=ax, fraction=0.046, label="branch prob")
+    fig.suptitle("Palantir branch probabilities", fontsize=10)
+    fig.tight_layout()
+    branch_png = ds_dir / "palantir_branch_umap.png"
+    fig.savefig(branch_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
     dyn: dict[str, Any] = {}
     if dyn_top_n > 0:
         dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir,
@@ -269,7 +306,10 @@ def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
         "pseudotime_csv": str(pt_csv),
         "umap_png": str(umap_png),
         "terminal_csv": str(term_csv),
+        "branch_umap_png": str(branch_png),
     }
+    if branch_note:
+        out["branch_note"] = branch_note
     return out, pt
 
 
