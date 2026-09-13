@@ -207,6 +207,11 @@ for g, lab in (("G_fateA", "A"), ("G_fateB", "B")):
 for f in ("palantir_branch_assign.csv", "palantir_branch_dyn.csv",
           "palantir_branch_de.csv", "palantir_branch_trend.png"):
     assert (br_dir / f).exists(), f
+# 分支归属写回 obs（st_trajectory 写回惯例）：重读 processed 验证
+ad2_back = sc.read_h5ad(ds2_dir / "processed.h5ad")
+assert "palantir_branch" in ad2_back.obs, ad2_back.obs.columns
+assert set(ad2_back.obs["palantir_branch"].cat.categories
+           ) >= {"unassigned"}, ad2_back.obs["palantir_branch"]
 
 # ⑪ dpt + branch_top_n>0 → INVALID_INPUT（dpt 不推断分支）
 bad11 = run_pt(DS2, branch_top_n=50)

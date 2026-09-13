@@ -253,6 +253,10 @@ def _branch_analysis(adata: Any, pt: np.ndarray, pr: Any,
                              index=adata.obs_names)
     assign_csv = ds_dir / "palantir_branch_assign.csv"
     assign_df.to_csv(assign_csv)
+    # 分支归属写回 obs（st_trajectory dpt 写回惯例），
+    # 供 sc_plot 等下游按分支着色；由 main 统一落盘 processed.h5ad
+    adata.obs["palantir_branch"] = pd.Categorical(
+        branch, categories=terms + ["unassigned"])
     counts = {t: int((branch == t).sum()) for t in terms}
     out: dict[str, Any] = {
         "branch_assign_csv": str(assign_csv),
@@ -610,6 +614,9 @@ def main() -> None:
             return
         out, pt = _run_palantir(adata, iroot, clusters, dyn_top_n,
                                 branch_top_n, ds_dir)
+        if branch_top_n > 0:  # 分支归属已写 obs → 统一落盘
+            adata.write_h5ad(WS_ROOT / args["dataset_id"]
+                             / "processed.h5ad")
         stats = _cluster_stats(clusters, pt)
         emit({
             "ok": True,
