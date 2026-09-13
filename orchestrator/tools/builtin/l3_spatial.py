@@ -482,12 +482,14 @@ def register_l3_spatial(
     registry.register(ToolSpec(
         name="st_stats",
         description=(
-            "空间统计分析三合一：autocorr（Moran's I/Geary's C 空间自相关，"
+            "空间统计分析四合一：autocorr（Moran's I/Geary's C 空间自相关，"
             "识别空间可变基因，输出逐基因统计表与 top4 空间分布图）、"
             "cooccurrence（簇间空间共现曲线）、nhood_enrichment（簇间邻域"
-            "富集 zscore 热图）。cluster_key 留空自动回退 spatial_domain→"
-            "banksy_domain→leiden→clusters。需先跑 st_process；"
-            "cooccurrence/nhood_enrichment 建议先跑 st_domains。"
+            "富集 zscore 热图）、centrality（图中心性 degree/clustering/"
+            "closeness + 簇间互作矩阵，识别组织枢纽簇）。cluster_key 留空"
+            "自动回退 spatial_domain→banksy_domain→leiden→clusters。"
+            "需先跑 st_process；cooccurrence/nhood_enrichment/centrality "
+            "建议先跑 st_domains。"
         ),
         parameters={
             "type": "object",
@@ -495,7 +497,7 @@ def register_l3_spatial(
                 "dataset_ref": {"type": "string"},
                 "analysis": {"type": "string",
                              "enum": ["autocorr", "cooccurrence",
-                                      "nhood_enrichment"]},
+                                      "nhood_enrichment", "centrality"]},
                 "mode": {"type": "string", "enum": ["moran", "geary"],
                          "default": "moran",
                          "description": "仅 autocorr"},
@@ -503,7 +505,7 @@ def register_l3_spatial(
                           "description": "仅 autocorr：显式基因列表"
                                          "（空=高变基因前 50）"},
                 "cluster_key": {"type": "string", "default": "",
-                                "description": "仅后两个分析：obs 列名"
+                                "description": "仅后三个分析：obs 列名"
                                                "（留空自动回退）"},
                 "n_perms": {"type": "integer", "default": 1000,
                             "description": "仅 nhood_enrichment：排列次数"},

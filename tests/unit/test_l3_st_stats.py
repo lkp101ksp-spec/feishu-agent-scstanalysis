@@ -34,7 +34,7 @@ def test_st_stats_registered(reg):
     assert spec.timeout_sec == 1800
     props = spec.parameters["properties"]
     assert props["analysis"]["enum"] == [
-        "autocorr", "cooccurrence", "nhood_enrichment"]
+        "autocorr", "cooccurrence", "nhood_enrichment", "centrality"]
     assert props["mode"]["enum"] == ["moran", "geary"]
 
 
@@ -85,3 +85,13 @@ def test_st_stats_error_passthrough(runner, reg):
                                       analysis="cooccurrence")
     assert out == {"error_code": "ST_CLUSTER_KEY_MISSING",
                    "error_message": "no cluster col"}
+
+
+def test_st_stats_centrality_forwards(runner, reg):
+    """centrality（Phase 46）：analysis + cluster_key 透传不变形。"""
+    reg.get("st_stats").handler(dataset_ref="abc123", analysis="centrality",
+                                cluster_key="niche")
+    args, _ = runner.run.call_args
+    assert args[0] == "stats"
+    assert args[1]["analysis"] == "centrality"
+    assert args[1]["cluster_key"] == "niche"

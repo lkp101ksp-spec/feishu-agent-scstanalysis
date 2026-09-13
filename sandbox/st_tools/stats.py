@@ -1,6 +1,7 @@
-"""st_stats 空间统计三分析（Phase 45）：autocorr / cooccurrence /
-nhood_enrichment。邻域图优先复用 st_process 已建 spatial_connectivities，
-缺失时按 coord_type/n_neighs 兜底补建（processed.h5ad 只读不写回）。
+"""st_stats 空间统计四分析（Phase 45/46）：autocorr / cooccurrence /
+nhood_enrichment / centrality。邻域图优先复用 st_process 已建
+spatial_connectivities，缺失时按 coord_type/n_neighs 兜底补建
+（processed.h5ad 只读不写回）。
 产物：csv 落 /ws/{ds}/stats_{analysis}/，图走 pngs 聚合键（宿主收图口径）。
 
 squidpy 1.8.3 容器探针已核实：
@@ -11,6 +12,14 @@ squidpy 1.8.3 容器探针已核实：
   与 interval（距离边界数组）
 - gr.nhood_enrichment(cluster_key, n_perms, show_progress_bar)
   → uns[f"{k}_nhood_enrichment"] 键 zscore/count（n×n 方阵）
+- gr.centrality_scores(cluster_key) → uns[f"{k}_centrality_scores"]
+  DataFrame（行=簇名）列 degree_centrality / average_clustering /
+  closeness_centrality（2026-09-13 探针：clustering 列名是
+  average_clustering 非 clustering_coefficient）
+- gr.interaction_matrix(cluster_key) → uns[f"{k}_interactions"]
+  ndarray (n, n) 互作计数（对角=同簇自互作）
+- pl.centrality_scores(cluster_key) 直接出 degree 图（无
+  {key}_colors 时 palette warning 无害）
 - pl.spatial_scatter 需 return_ax=True（st_domains T7 教训）
 """
 from __future__ import annotations
@@ -20,7 +29,7 @@ from typing import Any
 
 from common import emit, fail, run
 
-ANALYSES = ("autocorr", "cooccurrence", "nhood_enrichment")
+ANALYSES = ("autocorr", "cooccurrence", "nhood_enrichment", "centrality")
 CLUSTER_FALLBACK = ("spatial_domain", "banksy_domain", "leiden", "clusters")
 AUTOCORR_DEFAULT_N_GENES = 50
 
@@ -183,8 +192,50 @@ def _do_nhood(adata: Any, out_dir: Path, cluster_key: str,
           "pngs": [f"{out_dir}/nhood_enrichment.png"]})
 
 
+def _do_centrality(adata: Any, out_dir: Path, cluster_key: str) -> None:
+    """图中心性 + 簇间互作矩阵（Phase 46）：degree/closeness 找枢纽簇。"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    import squidpy as sq
+
+    sq.gr.centrality_scores(adata, cluster_key=cluster_key)
+    cs = adata.uns[f"{cluster_key}_centrality_scores"]
+    cs.to_csv(out_dir / "centrality_scores.csv")
+    sq.gr.interaction_matrix(adata, cluster_key=cluster_key)
+    im = np.asarray(adata.uns[f"{cluster_key}_interactions"], dtype=float)
+    cats = list(adata.obs[cluster_key].cat.categories)
+    pd.DataFrame(im, index=cats, columns=cats).to_csv(
+        out_dir / "interaction_matrix.csv")
+
+    sq.pl.centrality_scores(adata, cluster_key=cluster_key)
+    plt.gcf().savefig(out_dir / "centrality_degree.png", dpi=150,
+                      bbox_inches="tight")
+    plt.close("all")
+    fig, ax = plt.subplots(figsize=(7, 6))
+    im_obj = ax.imshow(im, cmap="viridis")
+    ax.set_xticks(range(len(cats)), cats, rotation=45, ha="right")
+    ax.set_yticks(range(len(cats)), cats)
+    fig.colorbar(im_obj, ax=ax, label="interactions")
+    fig.savefig(out_dir / "interaction_matrix.png", dpi=150,
+                bbox_inches="tight")
+    plt.close("all")
+
+    top_hub = str(cs["degree_centrality"].idxmax())
+    top_close = str(cs["closeness_centrality"].idxmax())
+    emit({"ok": True, "analysis": "centrality",
+          "cluster_key": cluster_key, "n_clusters": len(cats),
+          "top_hub": top_hub,
+          "top_hub_degree": float(cs.loc[top_hub, "degree_centrality"]),
+          "top_closeness": top_close,
+          "scores_csv": f"{out_dir}/centrality_scores.csv",
+          "interaction_csv": f"{out_dir}/interaction_matrix.csv",
+          "pngs": [f"{out_dir}/centrality_degree.png",
+                   f"{out_dir}/interaction_matrix.png"]})
+
+
 def main() -> None:
-    """st_stats 容器入口：三分析分发。"""
+    """st_stats 容器入口：四分析分发。"""
     from common import WS_ROOT, ensure_spatial, load_adata, read_args
 
     args = read_args()
@@ -220,9 +271,12 @@ def main() -> None:
     elif analysis == "cooccurrence":
         _do_cooccurrence(adata, out_dir, _resolve_cluster_key(
             adata, str(args.get("cluster_key", ""))))
-    else:
+    elif analysis == "nhood_enrichment":
         _do_nhood(adata, out_dir, _resolve_cluster_key(
             adata, str(args.get("cluster_key", ""))), n_perms)
+    else:
+        _do_centrality(adata, out_dir, _resolve_cluster_key(
+            adata, str(args.get("cluster_key", ""))))
 
 
 if __name__ == "__main__":

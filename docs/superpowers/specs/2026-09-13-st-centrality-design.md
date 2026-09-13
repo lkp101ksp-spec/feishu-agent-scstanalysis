@@ -63,10 +63,11 @@ processed.h5ad 只读不改写（沿用 Phase 45 决策）。
 
 1. **注册单测**：payload 透传 `analysis="centrality"` + cluster_key；
    schema enum 含四值断言。
-2. **集成测试**（tests/integration/test_bio_st_stats.py 追加，合成
-   网格数据）：造两个空间分离簇（左半大簇 + 右半两小块）→
-   断言 `top_hub`=大片簇（邻接面最广）、interaction 矩阵对角线计数
-   显著高于非对角（同簇自互作主导）。
+2. **宿主冒烟**（scripts/_smoke_st_stats.py 追加，st 工具验证惯例；
+   合成网格数据）：默认两簇（spatial_domain）跑 centrality →
+   interaction 矩阵对角线计数显著高于非对角（同簇自互作主导）；
+   新增不对称三簇键 tri（A=60 格连通大块接壤最广）→
+   断言 `top_hub`="A"（degree 鉴别力）。
 3. **真机验收**：真实 OSCC processed.h5ad 跑 centrality——预期
    肿瘤/SCC 域 degree 最高（致密巢区邻接广），与病理注释交叉对照。
 4. 镜像重建后断网容器迷你跑验证（stats.py 改动必须重建 st 镜像，
