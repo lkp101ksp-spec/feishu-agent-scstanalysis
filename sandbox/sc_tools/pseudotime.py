@@ -1,22 +1,180 @@
-"""sc_pseudotime：扩散伪时序（Phase 32，对齐 toolsv1 server_pseudotime 的 DPT 分支）。
+"""sc_pseudotime：扩散伪时序（Phase 32 基座 / Phase 53 动态基因+簇定根）。
 
-stdin: {"dataset_id": ..., "root_marker": "NKG7"}
+stdin: {"dataset_id": ..., "root_marker": "NKG7",
+        "root_cluster": "",   # Phase 53：leiden 簇定根，与 root_marker 互斥
+        "dyn_top_n": 50}      # Phase 53：动态基因 top N；0=跳过
 需 processed.h5ad（含 neighbors 图）。方法 scanpy diffmap + DPT
 （Haghverdi 2016 图扩散族，覆盖 Monocle 拟时序的排序场景；
 分支推断/BEAM/CytoTRACE2 不在本工具范围）。
-root 细胞 = root_marker 在 raw 中表达最高的细胞；
-root_marker 空或不在数据中则取第 0 个细胞（结果中说明）。
+root 三模式：root_marker raw 表达最高细胞 / root_cluster 簇内邻居
+图度最高细胞 / 皆空取第 0 个细胞（结果中说明）。
+
+容器探针（2026-09-13，bio 镜像断网实测）：
+- statsmodels.multipletests 随 scanpy 现成可用（BH 校正）；
+- spearmanr 零方差基因返回 rho=NaN（ConstantInputWarning），
+  须掩掉不进入排序；pt 非有限（不连通）细胞先掩再算；
+- 19149×2000 基因逐基因 Spearman 循环仅 3.4s（timeout 1200 宽裕）；
+- 移动平均平滑窗口 max(10, n//50)。
 """
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from common import WS_ROOT, emit, load_adata, read_args, run
+from common import WS_ROOT, emit, fail, load_adata, read_args, run
 
 
 def _rf(x: float) -> float | None:
     """round + 非有限值转 None（防 JSON 输出 NaN/Infinity）。"""
     return round(float(x), 4) if np.isfinite(x) else None
+
+
+def _neighbors_conn(adata: Any) -> Any:
+    """邻居图 connectivities：新版 scanpy 存 obsp（h5ad 往返后 uns
+    只剩 params），旧版 uns['neighbors'] 兜底。"""
+    obsp = getattr(adata, "obsp", None)
+    if obsp is not None and "connectivities" in obsp:
+        return obsp["connectivities"]
+    return adata.uns["neighbors"]["connectivities"]
+
+
+def _degree_root(adata: Any, clusters: pd.Series, cluster: str) -> int:
+    """簇内定根：邻居图 connectivities 子图度最高细胞（全局索引）。"""
+    idx = np.flatnonzero(clusters.to_numpy() == cluster)
+    sub = _neighbors_conn(adata)[idx][:, idx]
+    deg = np.asarray(sub.sum(axis=1)).ravel()
+    return int(idx[int(np.argmax(deg))])
+
+
+def _raw_expr(adata: Any, gene: str) -> np.ndarray:
+    """raw 中取单基因表达向量（稀疏/稠密兼容）。"""
+    x = adata.raw[:, gene].X
+    if hasattr(x, "todense"):
+        return np.asarray(x.todense()).ravel()
+    return np.asarray(x).ravel()
+
+
+def _smooth(y: np.ndarray, w: int) -> np.ndarray:
+    """移动平均平滑（窗口 w，same 模式保持长度）。"""
+    return np.convolve(y, np.ones(w) / w, mode="same")
+
+
+def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
+               ds_dir: Any) -> dict[str, Any]:
+    """动态基因趋势（Phase 53 "BEAM-lite"）。
+
+    HVG ∩ raw 候选池逐基因 Spearman(pt, raw 表达) + BH 校正
+    （零方差/NaN 掩掉）→ |rho| 降序取 qval<0.05 的 top N；
+    产物 dyn_genes.csv（全量）+ trend_heatmap.png（pt 排序×平滑
+    z-score）+ trend_curves.png（top6 散点+平滑曲线）。
+    """
+    import matplotlib.pyplot as plt
+    from scipy.stats import spearmanr
+    from statsmodels.stats.multitest import multipletests
+
+    # OOM 教训（19149 真机验收 probe_pt_rss.py 实证）：逐基因
+    # adata.raw[:, g] AnnData 切片每基因漏 ~13MB（500 基因 8.5GB 被杀）；
+    # 必须整矩阵一次取 csc + 列索引字典，循环内只做稀疏列切
+    raw_names = adata.raw.var_names
+    col_of = {g: j for j, g in enumerate(raw_names)}
+    Xc = adata.raw.X.tocsc()
+
+    def _col(gene: str) -> np.ndarray:
+        return np.asarray(Xc[:, col_of[gene]].todense()).ravel()
+
+    hvgs = [g for g in adata.var_names[adata.var["highly_variable"]]
+            if g in col_of]
+    m = np.isfinite(pt)
+    pt_m, order = pt[m], np.argsort(pt[m])
+    rows = []
+    for g in hvgs:
+        x = _col(g)[m]
+        if x.std() == 0:  # 零方差 → spearmanr 得 NaN，直接排外
+            rows.append((g, np.nan, np.nan))
+            continue
+        r = spearmanr(pt_m, x)
+        rows.append((g, r.statistic, r.pvalue))
+    df = pd.DataFrame(rows, columns=["gene", "rho", "pval"])
+    ok = np.isfinite(df["pval"].to_numpy())
+    df["qval"] = np.nan
+    df.loc[ok, "qval"] = multipletests(
+        df.loc[ok, "pval"], method="fdr_bh")[1]
+    df = (df.sort_values("rho", key=abs, ascending=False,
+                         na_position="last").reset_index(drop=True))
+    sig = df[df["qval"] < 0.05]
+    top = sig.head(top_n)
+    fallback_note = ""
+    if len(top) < 6:  # 显著太少 → 按 |rho| 兜底保证图可读
+        top = df.head(top_n)
+        fallback_note = (f"sig(q<0.05) only {int(len(sig))}; "
+                         "heatmap/curves fall back to top |rho|")
+    dyn_csv = ds_dir / "dyn_genes.csv"
+    df.to_csv(dyn_csv, index=False)
+
+    # 趋势热图：细胞按 pt 升序 × top 基因（平滑后 z-score）
+    genes = top["gene"].tolist()
+    w = max(10, int(m.sum()) // 50)
+    mat = np.empty((len(genes), int(m.sum())), dtype=float)
+    for i, g in enumerate(genes):
+        s = _smooth(_col(g)[m][order], w)
+        sd = s.std()
+        mat[i] = (s - s.mean()) / sd if sd > 0 else 0.0
+    fig = plt.figure(figsize=(6.5, max(3, 0.14 * len(genes) + 1.6)))
+    gs = fig.add_gridspec(2, 1, height_ratios=[1, max(4, len(genes) // 3)],
+                          hspace=0.05)
+    ax0 = fig.add_subplot(gs[0])
+    ax0.imshow(pt_m[order][None, :], aspect="auto", cmap="viridis")
+    ax0.set_xticks([])
+    ax0.set_yticks([])
+    ax0.set_ylabel("pt", fontsize=7, rotation=0, va="center")
+    ax = fig.add_subplot(gs[1])
+    im = ax.imshow(mat, aspect="auto", cmap="RdBu_r",
+                   vmin=-2, vmax=2)
+    ax.set_yticks(range(len(genes)), genes, fontsize=6)
+    ax.set_xticks([])
+    ax.set_xlabel("cells ordered by pseudotime →", fontsize=8)
+    ax.set_title(f"dynamic genes along pseudotime (top {len(genes)})",
+                 fontsize=9)
+    fig.colorbar(im, ax=ax, shrink=0.6, label="z-score (smoothed)")
+    heat_png = ds_dir / "trend_heatmap.png"
+    fig.savefig(heat_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    # top6 曲线：散点（下采样 500）+ 平滑线
+    show = genes[:6]
+    fig, axes = plt.subplots(2, 3, figsize=(9, 4.6), sharex=True)
+    rng = np.random.default_rng(0)
+    sub_idx = (rng.choice(int(m.sum()), size=min(500, int(m.sum())),
+                          replace=False))
+    for ax, g in zip(axes.ravel(), show):
+        x_full = _col(g)[m]
+        ax.scatter(pt_m[sub_idx], x_full[sub_idx], s=3, c="#bdbdbd",
+                   linewidths=0)
+        ax.plot(pt_m[order], _smooth(x_full[order], w), color="#d62728",
+                lw=1.6)
+        rho = float(top.loc[top["gene"] == g, "rho"].iloc[0])
+        ax.set_title(f"{g} (rho={rho:.2f})", fontsize=8)
+        ax.tick_params(labelsize=6)
+    for ax in axes.ravel()[len(show):]:
+        ax.axis("off")
+    fig.suptitle("top dynamic genes (smoothed trend)", fontsize=10)
+    fig.tight_layout()
+    curves_png = ds_dir / "trend_curves.png"
+    fig.savefig(curves_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    out: dict[str, Any] = {
+        "n_dyn": int(len(sig)),
+        "top_dyn": [{"gene": str(r["gene"]), "rho": _rf(r["rho"]),
+                     "qval": float(f"{r['qval']:.2e}")}
+                    for _, r in top.head(10).iterrows()],
+        "dyn_csv": str(dyn_csv),
+        "trend_heatmap_png": str(heat_png),
+        "trend_curves_png": str(curves_png)}
+    if fallback_note:
+        out["dyn_note"] = fallback_note
+    return out
 
 
 def main() -> None:
@@ -26,23 +184,43 @@ def main() -> None:
 
     args = read_args()
     root_marker = str(args.get("root_marker", "")).strip()
+    root_cluster = str(args.get("root_cluster", "")).strip()
+    dyn_top_n = int(args.get("dyn_top_n", 50))
+    if root_marker and root_cluster:
+        fail("INVALID_INPUT",
+             "root_marker and root_cluster are mutually exclusive; "
+             "provide exactly one")
+        return
 
     adata = load_adata({"dataset_id": args["dataset_id"],
                         "file": "processed"})
     if "leiden" not in adata.obs or "X_umap" not in adata.obsm:
-        raise ValueError("processed.h5ad lacks leiden/X_umap; "
-                         "run sc_process first")
+        fail("INVALID_INPUT", "processed.h5ad lacks leiden/X_umap; "
+                              "run sc_process first")
+        return
     if "neighbors" not in adata.uns:
-        raise ValueError("processed.h5ad lacks neighbors graph; "
-                         "run sc_process first")
+        fail("INVALID_INPUT", "processed.h5ad lacks neighbors graph; "
+                              "run sc_process first")
+        return
+    clusters = adata.obs["leiden"].astype(str)
 
-    # 定根：root_marker raw 表达最高的细胞（兼容稀疏/稠密 X）
-    root_note = ""
-    if root_marker and root_marker in adata.raw.var_names:
-        x = adata.raw[:, root_marker].X
-        expr = (np.asarray(x.todense()).ravel() if hasattr(x, "todense")
-                else np.asarray(x).ravel())
+    # 定根三模式：marker raw 表达最高 / cluster 簇内度最高 / cell#0
+    root_mode = "fallback"
+    if root_cluster:
+        avail = sorted(clusters.unique().tolist(),
+                       key=lambda c: (len(c), c))
+        if root_cluster not in set(clusters):
+            fail("INVALID_INPUT",
+                 f"root_cluster {root_cluster!r} not in leiden; "
+                 f"available: {avail}")
+            return
+        iroot = _degree_root(adata, clusters, root_cluster)
+        root_mode = "cluster"
+        root_note = f"cluster {root_cluster} degree-root cell #{iroot}"
+    elif root_marker and root_marker in adata.raw.var_names:
+        expr = _raw_expr(adata, root_marker)
         iroot = int(np.argmax(expr))
+        root_mode = "marker"
         root_note = f"{root_marker}-highest cell #{iroot}"
     else:
         iroot = 0
@@ -59,7 +237,6 @@ def main() -> None:
     n_inf = int(np.sum(~np.isfinite(pt)))
     pt = np.where(np.isfinite(pt), pt, np.nan)  # inf（不连通）→ nan
 
-    clusters = adata.obs["leiden"].astype(str)
     stats = (pd.DataFrame({"cluster": clusters.values, "pt": pt})
              .groupby("cluster")["pt"]
              .agg(["mean", "median", "size"]))
@@ -118,15 +295,27 @@ def main() -> None:
     fig.savefig(paga_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
+    dyn: dict[str, Any] = {}
+    if dyn_top_n > 0:
+        if "highly_variable" not in adata.var:
+            fail("INVALID_INPUT",
+                 "processed.h5ad lacks highly_variable column; "
+                 "run sc_process first (or set dyn_top_n=0)")
+            return
+        dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir)
+
     emit({
         "ok": True,
         "dataset_ref": args["dataset_id"],
         "method": "diffmap_dpt",
         "n_cells": int(adata.n_obs),
         "root_marker": root_marker,
+        "root_cluster": root_cluster,
+        "root_mode": root_mode,
         "root_cell_index": iroot,
         "root_note": root_note,
         "n_disconnected": n_inf,
+        **dyn,
         "per_cluster": [
             {"cluster": c, "mean": _rf(r["mean"]), "median": _rf(r["median"]),
              "n_cells": int(r["size"])}

@@ -172,11 +172,13 @@ def register_l3_singlecell(
         out.pop("ok", None)
         return out
 
-    def sc_pseudotime(*, dataset_ref: str, root_marker: str = "") -> dict[str, Any]:
-        """扩散伪时序（Phase 32）：diffmap+DPT → 伪时序/轨迹图。"""
+    def sc_pseudotime(*, dataset_ref: str, root_marker: str = "",
+                      root_cluster: str = "", dyn_top_n: int = 50) -> dict[str, Any]:
+        """扩散伪时序（Phase 32/53）：diffmap+DPT → 伪时序/轨迹图/动态基因。"""
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
+                "root_cluster": root_cluster, "dyn_top_n": dyn_top_n,
             }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
@@ -689,11 +691,14 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_pseudotime",
         description=(
-            "扩散伪时序（Phase 32，scanpy diffmap+DPT，对齐 Monocle 拟时序排序场景）："
-            "推断细胞分化/发育顺序。root_marker 指定根细胞标记基因"
-            "（取其表达最高的细胞为根，如干细胞/前体 marker；"
-            "空或不存在则取第 0 个细胞）。输出每簇伪时序均值表、"
-            "pseudotime.csv、UMAP 伪时序图（标注根细胞）与 PAGA 轨迹图。"
+            "扩散伪时序（Phase 32/53，scanpy diffmap+DPT，对齐 Monocle 拟时序排序场景）："
+            "推断细胞分化/发育顺序。定根二选一：root_marker 标记基因"
+            "（取其表达最高的细胞为根，如干细胞/前体 marker）或 "
+            "root_cluster 指定 leiden 簇（簇内邻居图度最高细胞为根）；"
+            "皆空取第 0 个细胞。输出每簇伪时序均值表、pseudotime.csv、"
+            "UMAP 伪时序图（标注根细胞）与 PAGA 轨迹图；Phase 53 起附"
+            "动态基因趋势（dyn_top_n>0：沿伪时序 Spearman+BH 筛 top "
+            "动态基因，dyn_genes.csv+趋势热图+top6 曲线）。"
             "注意：不推断分支（Monocle2 BEAM/CytoTRACE2 不在范围）。"
             "需先跑 sc_process。"
         ),
@@ -704,7 +709,15 @@ def register_l3_singlecell(
                                 "description": "sc_process 输出的 dataset_ref"},
                 "root_marker": {"type": "string", "default": "",
                                 "description": "根细胞定位标记基因"
-                                               "（如 NKG7/干细胞 marker）"},
+                                               "（如 NKG7/干细胞 marker）；"
+                                               "与 root_cluster 互斥"},
+                "root_cluster": {"type": "string", "default": "",
+                                 "description": "以指定 leiden 簇为根"
+                                                "（簇内度最高细胞）；"
+                                                "与 root_marker 互斥"},
+                "dyn_top_n": {"type": "integer", "default": 50,
+                              "description": "动态基因分析 top N；0=跳过"
+                                             "（纯 Phase 32 行为）"},
             },
             "required": ["dataset_ref"],
         },

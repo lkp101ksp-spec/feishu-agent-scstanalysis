@@ -294,6 +294,31 @@ def test_sc_pseudotime_error_passthrough(tmp_path):
     assert "neighbors" in out["error_message"]
 
 
+def test_sc_pseudotime_dyn_and_root_cluster(tmp_path):
+    """Phase 53：dyn_top_n/root_cluster 透传（动态基因+簇定根）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "diffmap_dpt",
+        "root_mode": "cluster", "n_dyn": 50}
+    reg.get("sc_pseudotime").handler(
+        dataset_ref="d", root_cluster="3", dyn_top_n=100)
+    args = runner.run.call_args.args
+    assert args[1]["root_cluster"] == "3"
+    assert args[1]["dyn_top_n"] == 100
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert "root_cluster" in props and "dyn_top_n" in props
+
+
+def test_sc_pseudotime_defaults_phase53(tmp_path):
+    """Phase 53 默认值：dyn_top_n=50、root_cluster=''（现状兼容）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True}
+    reg.get("sc_pseudotime").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[1]["dyn_top_n"] == 50
+    assert args[1]["root_cluster"] == ""
+
+
 # === Phase 33：常用分析第二批（组间差异/亚聚类/整合/组成） ===
 
 
