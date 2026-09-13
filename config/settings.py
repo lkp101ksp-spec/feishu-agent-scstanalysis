@@ -166,7 +166,9 @@ class Settings:
 
 
 def _load_yaml(path: str) -> dict[str, Any]:
-    with open(path) as f:
+    # 显式 UTF-8：缺省走 locale，explorer 自启环境（无 PYTHONUTF8）为 GBK，
+    # 含中文的 yaml 直接 UnicodeDecodeError（2026-09-13 ws_client 连崩两天事故）
+    with open(path, encoding="utf-8") as f:
         data: dict[str, Any] = yaml.safe_load(f)
     return data
 

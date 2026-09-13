@@ -106,13 +106,22 @@ def _ws_alive() -> bool:
 
 
 def _restart() -> None:
-    """拉起新 ws_client（Windows 隐藏窗口；单实例守卫由 ws_client 自理）。"""
+    """拉起新 ws_client（Windows 隐藏窗口；单实例守卫由 ws_client 自理）。
+
+    stderr/stdout 落盘 logs/ws_client_stderr.log——2026-09-13 事故：启动期
+    traceback 在 CREATE_NO_WINDOW pythonw 下全丢，连崩两天零线索；
+    PYTHONUTF8=1 注入防 locale GBK 隐式 open() 解码炸（纵深防御）。
+    """
     kwargs: dict[str, Any] = {}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    subprocess.Popen(  # noqa: S603
-        [sys.executable, "-m", "gateway.ws_client"],
-        cwd=str(_REPO_ROOT), **kwargs)
+    log_dir = _REPO_ROOT / "logs"
+    log_dir.mkdir(exist_ok=True)
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    with open(log_dir / "ws_client_stderr.log", "ab") as err:
+        subprocess.Popen(  # noqa: S603
+            [sys.executable, "-m", "gateway.ws_client"],
+            cwd=str(_REPO_ROOT), env=env, stdout=err, stderr=err, **kwargs)
 
 
 def main(interval_sec: int = 60) -> None:

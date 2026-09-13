@@ -91,3 +91,32 @@ def test_guardian_singleton_takes_over_stale(tmp_path, monkeypatch):
     monkeypatch.setattr(ws_guardian, "_pid_alive", lambda pid: False)
     ws_guardian.acquire_guardian_singleton()
     assert pidfile.read_text().strip() == str(os.getpid())
+
+
+def test_restart_captures_stderr_and_injects_utf8(tmp_path, monkeypatch):
+    """_restart：子进程 stderr/stdout 落盘 + PYTHONUTF8=1 注入。
+
+    2026-09-13 事故：CREATE_NO_WINDOW pythonw 下启动期 traceback 全丢，
+    连崩两天零线索；locale GBK 隐式 open() 解码炸需 PYTHONUTF8 纵深防御。
+    """
+    import sys
+    from typing import Any
+
+    from scripts import ws_guardian
+
+    calls: list[dict[str, Any]] = []
+
+    class _FakePopen:
+        def __init__(self, cmd: list[str], **kwargs: Any) -> None:
+            calls.append({"cmd": cmd, **kwargs})
+
+    monkeypatch.setattr(ws_guardian.subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(ws_guardian, "_REPO_ROOT", tmp_path)
+    ws_guardian._restart()
+    assert calls, "Popen not called"
+    kw = calls[0]
+    assert kw["cmd"] == [sys.executable, "-m", "gateway.ws_client"]
+    assert kw["cwd"] == str(tmp_path)
+    assert kw["stderr"] is kw["stdout"]  # 同一句柄合并落盘
+    assert (tmp_path / "logs" / "ws_client_stderr.log").exists()
+    assert kw["env"]["PYTHONUTF8"] == "1"
