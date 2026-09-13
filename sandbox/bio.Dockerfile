@@ -103,6 +103,32 @@ RUN pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple palantir==1.4.5 \
     && python -c "import palantir; print('palantir ok')"
 
+# Slingshot 拟时序引擎（sc_pseudotime 第四引擎，spec
+# 2026-09-13-sc-slingshot-engine-design.md）。探针四轮钉注（测试总结
+# 第三十五段）：R 4.5 配对 Bioc 3.21（清华/USTC 仅托管当前 3.23 分支，
+# 3.21 唯官方仓可达）；GenomeInfoDbData 在独立 data/annotation 仓；
+# 预装 igraph.so 需 libxml2/libglpk40 运行期库（常驻不 purge）；
+# g++/r-base-dev 仅编译期（74 包全源码，实测 3.4min/67MB）装完 purge。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       r-base-dev g++ libxml2 libglpk40 \
+    && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/', Bioc='https://bioconductor.org/packages/3.21/bioc', BiocAnn='https://bioconductor.org/packages/3.21/data/annotation'), timeout=600); install.packages('slingshot', Ncpus=4)" \
+    && Rscript -e "library(slingshot); cat('slingshot', as.character(packageVersion('slingshot')), 'ok\n')" \
+    && apt-get purge -y --no-install-recommends r-base-dev g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# slingshot 运行期增补：DelayedMatrixStats/sparseMatrixStats 为
+# Suggests 级依赖——library(slingshot) 自检不触发，slingshot() 实际
+# 计算路径 loadNamespace 必需（冒烟场景⑭断网首跑曝缺，补装后
+# SLING_DONE 2 双谱系绿，_eval/probe_sling_runtime.sh 留证）。
+# 独立层保上方 74 包装包缓存。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends r-base-dev g++ \
+    && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/', Bioc='https://bioconductor.org/packages/3.21/bioc'), timeout=600); install.packages(c('DelayedMatrixStats','sparseMatrixStats'), Ncpus=4)" \
+    && Rscript -e "library(DelayedMatrixStats); library(sparseMatrixStats); cat('sling runtime deps ok\n')" \
+    && apt-get purge -y --no-install-recommends r-base-dev g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

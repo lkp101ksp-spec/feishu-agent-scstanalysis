@@ -23,7 +23,10 @@ BioRunner 调用约定：docker run --rm --network none -v <workspace>:/ws
   仅各自命运后段升（替换式 amp=60 同纪律）→ palantir+branch_top_n
   =50：归属率>0.5 + 分支 DE top 含 G_fateA/G_fateB 且 higher_in
   方向正确（归属细胞≥70% 来自对应人工命运簇）+ 四产物落盘；
-⑪dpt+branch_top_n>0 → INVALID_INPUT。
+⑪dpt+branch_top_n>0 → INVALID_INPUT；
+⑭slingshot 引擎（同双分支库，root_cluster=trunk）：n_lineages≥2
+  + 主 pt vs 真值 t2 rho≥0.8 + 三产物 + obs 写回；
+⑮slingshot+branch_top_n>0 → INVALID_INPUT。
 """
 import json
 import subprocess
@@ -233,6 +236,28 @@ assert not bad13["ok"] and bad13["error_code"] == "INVALID_INPUT", bad13
 bad14 = run_pt(DS2, engine="palantir", dyn_top_n=0, dyn_modules_k=3)
 assert not bad14["ok"] and bad14["error_code"] == "INVALID_INPUT", bad14
 
+# ⑭ slingshot 引擎：DS2 双分叉库（其主场）root_cluster=trunk+dyn20
+# → n_lineages≥2 + 主 pt vs 真值 t2 rho≥0.8 + 三产物 + obs 写回
+o14 = run_pt(DS2, engine="slingshot", root_cluster="trunk", dyn_top_n=20)
+assert o14["ok"] and o14["method"] == "slingshot", o14
+assert o14["root_mode"] == "cluster" and o14["n_lineages"] >= 2, o14
+sl_pt = pd.read_csv(br_dir / "slingshot_pt.csv",
+                    index_col=0)["slingshot_pseudotime"]
+sl_pt.index = sl_pt.index.astype(str)
+sl_pt = sl_pt.loc[[str(i) for i in range(n2)]]
+mask = sl_pt.notna().to_numpy()
+rho_sl = float(spearmanr(sl_pt.to_numpy()[mask], t2[mask]).statistic)
+assert rho_sl >= 0.8, f"slingshot pt vs t2 rho={rho_sl}"
+for f in ("slingshot_pt.csv", "slingshot_curves.csv",
+          "slingshot_umap.png", "slingshot_dyn_genes.csv"):
+    assert (br_dir / f).exists(), f
+ad2_sl = sc.read_h5ad(ds2_dir / "processed.h5ad")
+assert "slingshot_pseudotime" in ad2_sl.obs, ad2_sl.obs.columns
+
+# ⑮ slingshot + branch_top_n>0 → INVALID_INPUT（分支推断 palantir 专属）
+bad15 = run_pt(DS2, engine="slingshot", branch_top_n=50)
+assert not bad15["ok"] and bad15["error_code"] == "INVALID_INPUT", bad15
+
 for f in ("pseudotime/pseudotime.csv",
           "pseudotime/pseudotime_umap.png",
           "pseudotime/paga_graph.png",
@@ -252,4 +277,6 @@ print("SMOKE OK",
       f"n_terminal={o10['n_terminal']} de_top={sorted(de_genes)[:4]}",
       "| dpt+branch_top_n rejected",
       f"| modules k={o12['n_modules']} sizes={o12['module_sizes']}",
-      "| bad enrich/dyn0 rejected")
+      "| bad enrich/dyn0 rejected",
+      f"| slingshot n_lineages={o14['n_lineages']} rho={rho_sl:.3f}",
+      "| slingshot+branch_top_n rejected")

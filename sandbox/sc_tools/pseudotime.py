@@ -1,10 +1,10 @@
-"""sc_pseudotime：拟时序双引擎（Phase 32/53 DPT + Palantir 相）。
+"""sc_pseudotime：拟时序三引擎（Phase 32/53 DPT + Palantir + Slingshot）。
 
 stdin: {"dataset_id": ..., "root_marker": "NKG7",
         "root_cluster": "",   # Phase 53：leiden 簇定根，与 root_marker 互斥
         "dyn_top_n": 50,      # Phase 53：动态基因 top N；0=跳过
-        "engine": "dpt",      # dpt（默认）/ palantir
-        "start_cell": "",     # palantir 专用显式根条码（优先级最高）
+        "engine": "dpt",      # dpt（默认）/ palantir / slingshot
+        "start_cell": "",     # palantir/slingshot 显式根条码（优先级最高）
         "branch_top_n": 0,    # palantir 专用：分支推断 top N；0=跳过
         "dyn_modules_k": 0,   # 动态基因趋势聚类模块数；0=跳过
         "modules_enrich": ""} # 模块富集 GS key（enrichment GS_KEYS）；空=跳过
@@ -19,6 +19,14 @@ dyn 产物加 palantir_ 前缀；branch_top_n>0 附分支推断产物
 palantir_branch_assign.csv / palantir_branch_dyn.csv /
 palantir_branch_de.csv / palantir_branch_trend.png（BEAM-lite：
 归属 + 分支内动态基因 + pt 匹配分支间命运决定基因）。
+engine="slingshot"：簇级 MST + 主曲线（Street 2018，分叉轨迹强项），
+X_umap+leiden CSV 桥接 Rscript /opt/r_tools/slingshot_bridge.R
+（knockout.py/knk.R 先例）；产物 slingshot_pt.csv（主 pt=所属谱系
+均值 + lineage1..k 宽表）/ slingshot_curves.csv（曲线折点）/
+slingshot_umap.png（主 pt 着色+曲线叠加+根红圈）；主 pt 写回
+obs["slingshot_pseudotime"] 统一落盘；dyn 产物加 slingshot_ 前缀；
+fallback 定根不传 start.clus（自由推根），其余三模式传根细胞
+所在簇标签。
 root 四模式：start_cell 显式条码 > root_cluster 簇内度最高 >
 root_marker raw 表达最高 > 皆空取第 0 个细胞（结果中说明）。
 
@@ -634,8 +642,112 @@ def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
     return out, pt
 
 
+def _run_slingshot(adata: Any, iroot: int, clusters: pd.Series,
+                   root_mode: str, dyn_top_n: int, ds_dir: Any,
+                   dyn_modules_k: int = 0,
+                   modules_enrich: str = "") -> tuple[dict[str, Any], Any]:
+    """Slingshot 引擎（spec 2026-09-13-sc-slingshot-engine-design.md）。
+
+    X_umap + leiden → CSV 桥接 → Rscript slingshot_bridge.R（簇级 MST
+    getLineages + 主曲线 getCurves）→ 读回 sling_pst 宽表，主 pt =
+    细胞所属谱系 pt 行均值（NA 忽略）；写 obs["slingshot_pseudotime"]
+    （main 统一落盘）；产物 slingshot_pt.csv / slingshot_curves.csv /
+    slingshot_umap.png（主 pt 着色 + 谱系曲线 tab10 叠加 + 根红圈）；
+    dyn 相复用 _dyn_genes（prefix="slingshot_"）。
+    """
+    import subprocess
+
+    import matplotlib.pyplot as plt
+
+    in_dir = ds_dir / "_sling_in"
+    in_dir.mkdir(parents=True, exist_ok=True)
+    umap = np.asarray(adata.obsm["X_umap"])
+    reduced = pd.DataFrame({"UMAP1": umap[:, 0], "UMAP2": umap[:, 1]},
+                           index=adata.obs_names)
+    reduced.index.name = "cell"
+    reduced_csv = in_dir / "reduced.csv"
+    reduced.to_csv(reduced_csv)
+    cl_df = pd.DataFrame({"leiden": clusters.values},
+                         index=adata.obs_names)
+    cl_df.index.name = "cell"
+    clusters_csv = in_dir / "clusters.csv"
+    cl_df.to_csv(clusters_csv)
+
+    # fallback 自由推根不传 start.clus；其余三模式传根细胞所在簇
+    start_clus = "" if root_mode == "fallback" \
+        else str(clusters.iloc[iroot])
+    r_cmd = ["Rscript", "/opt/r_tools/slingshot_bridge.R",
+             str(reduced_csv), str(clusters_csv), str(in_dir), start_clus]
+    proc = subprocess.run(r_cmd, capture_output=True, text=True,
+                          timeout=3300)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Rscript slingshot_bridge.R failed: {proc.stderr[-1500:]}")
+    pst_path = in_dir / "sling_pst.csv"
+    if not pst_path.exists():
+        raise RuntimeError(
+            "slingshot_bridge.R did not produce sling_pst.csv; "
+            f"stdout tail: {proc.stdout[-500:]}")
+
+    # 数字型条码经 csv 往返被 pandas 解析为 int64，与 obs_names（str）
+    # 错位 → reindex 前统一 astype(str)（冒烟场景⑤同款教训）
+    pst = pd.read_csv(pst_path, index_col=0)
+    pst.index = pst.index.astype(str)
+    pst = pst.reindex(adata.obs_names)
+    lin_cols = list(pst.columns)
+    pt = pst.mean(axis=1, skipna=True).to_numpy(dtype=float)
+
+    pt_df = pd.DataFrame({"leiden": clusters.values,
+                          "slingshot_pseudotime": pt},
+                         index=adata.obs_names)
+    for c in lin_cols:
+        pt_df[c] = pst[c].to_numpy(dtype=float)
+    pt_csv = ds_dir / "slingshot_pt.csv"
+    pt_df.to_csv(pt_csv)
+    curves = pd.read_csv(in_dir / "sling_curves.csv")
+    curves_csv = ds_dir / "slingshot_curves.csv"
+    curves.to_csv(curves_csv, index=False)
+
+    adata.obs["slingshot_pseudotime"] = pt
+
+    fig, ax = plt.subplots(figsize=(5.6, 4.4))
+    s = ax.scatter(umap[:, 0], umap[:, 1], s=4, c=pt, cmap="viridis",
+                   linewidths=0)
+    palette = plt.get_cmap("tab10")
+    for k, (lin, g) in enumerate(curves.groupby("lineage", sort=False)):
+        g = g.sort_values("ord")
+        ax.plot(g["UMAP1"].to_numpy(), g["UMAP2"].to_numpy(),
+                color=palette(k % 10), lw=2.0, alpha=0.9, label=lin,
+                zorder=3)
+    ax.scatter(umap[iroot, 0], umap[iroot, 1], s=90, facecolors="none",
+               edgecolors="red", linewidths=1.6, label="root", zorder=4)
+    ax.legend(loc="upper right", fontsize=7)
+    fig.colorbar(s, ax=ax, fraction=0.046, label="slingshot pseudotime")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(f"Slingshot ({len(lin_cols)} lineages)", fontsize=9)
+    fig.tight_layout()
+    umap_png = ds_dir / "slingshot_umap.png"
+    fig.savefig(umap_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    out: dict[str, Any] = {
+        "n_lineages": len(lin_cols),
+        "lineages": lin_cols,
+        "slingshot_pt_csv": str(pt_csv),
+        "slingshot_curves_csv": str(curves_csv),
+        "umap_png": str(umap_png),
+    }
+    if dyn_top_n > 0:
+        out.update(_dyn_genes(adata, pt, dyn_top_n, ds_dir,
+                              prefix="slingshot_",
+                              modules_k=dyn_modules_k,
+                              modules_enrich=modules_enrich))
+    return out, pt
+
+
 def main() -> None:
-    """主流程：定根四模式 → 按 engine 分路（DPT / Palantir）。"""
+    """主流程：定根四模式 → 按 engine 分路（DPT / Palantir / Slingshot）。"""
     import matplotlib.pyplot as plt
     import scanpy as sc
 
@@ -648,13 +760,13 @@ def main() -> None:
     modules_enrich = str(args.get("modules_enrich", "")).strip()
     engine = str(args.get("engine", "dpt")).strip().lower()
     start_cell = str(args.get("start_cell", "")).strip()
-    if engine not in ("dpt", "palantir"):
+    if engine not in ("dpt", "palantir", "slingshot"):
         fail("INVALID_INPUT",
-             f"engine {engine!r} not in ['dpt', 'palantir']")
+             f"engine {engine!r} not in ['dpt', 'palantir', 'slingshot']")
         return
-    if start_cell and engine != "palantir":
+    if start_cell and engine not in ("palantir", "slingshot"):
         fail("INVALID_INPUT",
-             "start_cell only valid with engine='palantir'")
+             "start_cell only valid with engine='palantir'/'slingshot'")
         return
     if branch_top_n > 0 and engine != "palantir":
         fail("INVALID_INPUT",
@@ -733,6 +845,33 @@ def main() -> None:
         fail("INVALID_INPUT",
              "processed.h5ad lacks highly_variable column; "
              "run sc_process first (or set dyn_top_n=branch_top_n=0)")
+        return
+
+    if engine == "slingshot":
+        out, pt = _run_slingshot(adata, iroot, clusters, root_mode,
+                                 dyn_top_n, ds_dir,
+                                 dyn_modules_k=dyn_modules_k,
+                                 modules_enrich=modules_enrich)
+        adata.write_h5ad(WS_ROOT / args["dataset_id"]
+                         / "processed.h5ad")
+        stats = _cluster_stats(clusters, pt)
+        emit({
+            "ok": True,
+            "dataset_ref": args["dataset_id"],
+            "method": "slingshot",
+            "engine": engine,
+            "n_cells": int(adata.n_obs),
+            "root_marker": root_marker,
+            "root_cluster": root_cluster,
+            "root_mode": root_mode,
+            "root_cell_index": iroot,
+            "root_note": root_note,
+            **out,
+            "per_cluster": [
+                {"cluster": c, "mean": _rf(r["mean"]),
+                 "median": _rf(r["median"]), "n_cells": int(r["size"])}
+                for c, r in stats.iterrows()],
+        })
         return
 
     if engine == "palantir":

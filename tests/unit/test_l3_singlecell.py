@@ -396,6 +396,29 @@ def test_sc_pseudotime_defaults_modules_phase(tmp_path):
     assert args[1]["modules_enrich"] == ""
 
 
+def test_sc_pseudotime_slingshot_engine(tmp_path):
+    """Slingshot 引擎：engine='slingshot' 透传 + schema 描述含三引擎。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "slingshot",
+        "n_lineages": 2}
+    out = reg.get("sc_pseudotime").handler(
+        dataset_ref="d", engine="slingshot", root_cluster="0")
+    args = runner.run.call_args.args
+    assert args[1]["engine"] == "slingshot"
+    assert args[1]["root_cluster"] == "0"
+    assert out["n_lineages"] == 2
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert "slingshot" in props["engine"]["description"]
+
+
+def test_sc_pseudotime_slingshot_start_cell_schema(tmp_path):
+    """start_cell 校验放宽：描述从 palantir 专属 → 双引擎合法。"""
+    reg, _ = _registry(tmp_path)
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert "slingshot" in props["start_cell"]["description"].lower()
+
+
 # === Phase 33：常用分析第二批（组间差异/亚聚类/整合/组成） ===
 
 

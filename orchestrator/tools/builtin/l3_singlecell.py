@@ -177,7 +177,7 @@ def register_l3_singlecell(
                       engine: str = "dpt", start_cell: str = "",
                       branch_top_n: int = 0, dyn_modules_k: int = 0,
                       modules_enrich: str = "") -> dict[str, Any]:
-        """拟时序（Phase 32/53/Palantir/分支推断/趋势聚类相）。"""
+        """拟时序（Phase 32/53/Palantir/分支推断/趋势聚类/Slingshot）。"""
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
@@ -698,12 +698,14 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_pseudotime",
         description=(
-            "拟时序双引擎（Phase 32/53 DPT + Palantir）：推断细胞分化/"
-            "发育顺序。engine='dpt'（默认）：scanpy diffmap+DPT，对齐 "
-            "Monocle 拟时序排序场景；engine='palantir'：马尔可夫链扩散"
-            "（Setty 2019），额外给出终末态与分支概率（部分覆盖分支"
-            "推断需求）。定根：engine='dpt' 时 root_marker/root_cluster "
-            "二选一（皆空取第 0 个细胞）；engine='palantir' 时可另给 "
+            "拟时序三引擎（Phase 32/53 DPT + Palantir + Slingshot）："
+            "推断细胞分化/发育顺序。engine='dpt'（默认）：scanpy "
+            "diffmap+DPT，对齐 Monocle 拟时序排序场景；engine='palantir'"
+            "：马尔可夫链扩散（Setty 2019），额外给出终末态与分支概率"
+            "（部分覆盖分支推断需求）；engine='slingshot'：簇级 MST+"
+            "主曲线（Street 2018），给出显式谱系数与曲线几何，分叉"
+            "轨迹强项。定根：root_marker/root_cluster 二选一（皆空取"
+            "第 0 个细胞）；engine='palantir'/'slingshot' 时可另给 "
             "start_cell 显式根细胞条码（优先级最高）。输出每簇伪时序"
             "均值表、pseudotime csv、UMAP 伪时序图；DPT 附 PAGA 轨迹"
             "图，Palantir 附终末态表与分支概率列；dyn_top_n>0 附动态"
@@ -733,11 +735,14 @@ def register_l3_singlecell(
                 "engine": {"type": "string", "default": "dpt",
                            "description": "拟时序引擎：dpt（默认，纯排序）/"
                                           "palantir（马尔可夫链扩散，附"
-                                          "终末态+分支概率）"},
+                                          "终末态+分支概率）/slingshot"
+                                          "（簇级 MST+主曲线，附谱系数与"
+                                          "曲线几何）"},
                 "start_cell": {"type": "string", "default": "",
-                               "description": "Palantir 引擎专用：显式根"
-                                              "细胞条码，优先级高于 "
-                                              "root_marker/root_cluster"},
+                               "description": "palantir/slingshot 引擎专用"
+                                              "：显式根细胞条码，优先级"
+                                              "高于 root_marker/"
+                                              "root_cluster"},
                 "branch_top_n": {"type": "integer", "default": 0,
                                  "description": "Palantir 引擎专用：分支"
                                                 "推断（BEAM-lite）top N；"
