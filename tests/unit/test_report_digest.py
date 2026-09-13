@@ -1,5 +1,6 @@
 """Phase D：section_digest 产物收集与 csv 摘要单测（SimpleNamespace 假 plan/scheduler）。"""
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 from orchestrator.report.section_digest import (
@@ -16,6 +17,12 @@ from shared.executor_types import ExecutionState, TaskHandle
 
 def _node(node_id: str, tool: str) -> SimpleNamespace:
     return SimpleNamespace(node_id=node_id, kind="tool", tool_name=tool)
+
+
+def _host_path(tmp_path: Path, rel: str) -> str:
+    """按 container_to_host 同款拼法构造主机路径（只 resolve 存在的根目录，
+    避免对不存在文件 resolve 触发 Windows \\\\?\\ 前缀分支抖动误判）。"""
+    return str(tmp_path.resolve() / rel)
 
 
 def _handle(state: ExecutionState, outputs: dict | None) -> TaskHandle:
@@ -62,12 +69,11 @@ def test_collect_artifact_classification(tmp_path):
     sections = collect_sections(plan, sch, str(tmp_path))
     proc, cnv = sections
     assert proc.title == "数据质控与预处理"
-    assert proc.images == [str((tmp_path / "ds1" / "umap.png").resolve())]
+    assert proc.images == [_host_path(tmp_path, "ds1/umap.png")]
     assert proc.numbers == {"n_cells": 8000, "n_genes": 20000}
     assert cnv.title == "CNV 恶性判定与亚克隆"
-    assert cnv.images == [str((tmp_path / "ds1" / "cnv" / "heatmap.png").resolve())]
-    assert cnv.csvs == [str(
-        (tmp_path / "ds1" / "cnv" / "cnv_celltype_summary.csv").resolve())]
+    assert cnv.images == [_host_path(tmp_path, "ds1/cnv/heatmap.png")]
+    assert cnv.csvs == [_host_path(tmp_path, "ds1/cnv/cnv_celltype_summary.csv")]
     assert cnv.numbers["n_malignant"] == 150
     assert cnv.numbers["method"] == "infercnvpy"
     assert cnv.numbers["matched_references"] == ["T cells", "B cells"]

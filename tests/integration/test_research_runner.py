@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -582,6 +583,17 @@ def _wait_image_sent(im, count: int = 1, timeout: float = 5.0) -> bool:
     return False
 
 
+def _host_path(tmp_path: Path, rel: str) -> str:
+    """按实现同款拼法构造主机图路径。
+
+    实现侧 _container_to_host_path 为 str(Path(ws_root).resolve()/rel)，
+    只对已存在的 ws_root 目录 resolve；断言侧若对不存在的完整文件路径
+    调 resolve()，Windows 句柄解析走另一分支，偶发返回 \\\\?\\ 扩展
+    前缀路径导致误判（.flake_full_fail_5.log），故保持同式。
+    """
+    return str(tmp_path.resolve() / rel)
+
+
 def test_sc_plan_sends_umap_image_to_im(db, tmp_path):
     """sc_* 节点成功：umap.png 上传 + 图片消息发送（/ws 路径映射回主机）。"""
     orch = _orch(db)
@@ -598,7 +610,7 @@ def test_sc_plan_sends_umap_image_to_im(db, tmp_path):
 
     assert _wait_reply_count(orch.im, 2)
     assert _wait_image_sent(orch.im)
-    host = str((tmp_path / "ds" / "umap.png").resolve())
+    host = _host_path(tmp_path, "ds/umap.png")
     orch.im.upload_image.assert_called_once_with(host)
     orch.im.send_image.assert_called_once_with("oc_r", "img_v2_001")
 
@@ -845,7 +857,7 @@ def test_sc_images_appended_to_writeback_blocks(db, tmp_path):
     runner.handle(_incoming("/research 单细胞分析"))
 
     assert _wait_reply_count(orch.im, 2)
-    host = str((tmp_path / "ds" / "umap.png").resolve())
+    host = _host_path(tmp_path, "ds/umap.png")
     written = orch.doc_adapter.render_blocks.call_args.args[1]
     img = written[-1]
     assert img.type == "image" and img.path == host
@@ -906,8 +918,8 @@ def test_st_image_fields_collected_and_sent(tmp_path):
 
     hosts = runner._sc_image_host_paths(plan, sch, str(tmp_path))
     assert hosts == [
-        str((tmp_path / "ds" / "spatial_domains.png").resolve()),
-        str((tmp_path / "ds" / "G1_spatial.png").resolve()),
+        _host_path(tmp_path, "ds/spatial_domains.png"),
+        _host_path(tmp_path, "ds/G1_spatial.png"),
     ]
 
     assert runner._send_sc_images(_incoming(), plan, sch) == 2
