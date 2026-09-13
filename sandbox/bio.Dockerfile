@@ -93,6 +93,16 @@ RUN pip install --no-cache-dir \
 COPY fetch_gene_pos.py /tmp/fetch_gene_pos.py
 RUN python /tmp/fetch_gene_pos.py && rm /tmp/fetch_gene_pos.py
 
+# Palantir 拟时序引擎（sc_pseudotime 第三引擎，spec
+# 2026-09-13-sc-palantir-engine-design.md）。探针钉注：py3.12 +
+# numpy 2.5.2 下 palantir 1.4.5 零 pin 冲突（mellon 1.7.1 已修
+# numpy 2 兼容）；闭包 jax/jaxlib 0.11.1+jaxopt 0.8.5+ml_dtypes
+# 0.6.0+igraph 1.0.0 约 500MB，全 manylinux 轮零编译、零运行时
+# 下载（断网实跑 300 细胞全工作流 rho=0.9917，palantir_trial.py）。
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple palantir==1.4.5 \
+    && python -c "import palantir; print('palantir ok')"
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
