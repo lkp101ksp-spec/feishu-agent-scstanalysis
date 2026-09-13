@@ -144,9 +144,13 @@ def register_l3_spatial(
                       n_cells_per_location: float = 8.0,
                       detection_alpha: float = 20.0,
                       ref_label_col: str = "",
+                      ref_epochs: int = 250,
+                      num_samples: int = 1000,
+                      ref_max_cells_per_type: int = 0,
                       deconv_timeout: int = st_deconvolve_timeout) -> dict[str, Any]:
         """cell2location 反卷积：sc_ref 为 sc 产物 dataset_ref（12hex）或
-        白名单内参考 h5ad 路径。"""
+        白名单内参考 h5ad 路径。CPU 口径：max_epochs 默认 30000 仅 GPU
+        可行，CPU 实用 2000；大参考配 ref_max_cells_per_type 分层限帽。"""
         import re as _re
         try:
             if _re.fullmatch(r"[0-9a-f]{12}", sc_ref):
@@ -154,6 +158,9 @@ def register_l3_spatial(
                         "sc_ref_dataset": sc_ref,
                         "ref_label_col": ref_label_col,
                         "max_epochs": max_epochs,
+                        "ref_epochs": ref_epochs,
+                        "num_samples": num_samples,
+                        "ref_max_cells_per_type": ref_max_cells_per_type,
                         "n_cells_per_location": n_cells_per_location,
                         "detection_alpha": detection_alpha}
                 mounts = None
@@ -163,6 +170,9 @@ def register_l3_spatial(
                         "sc_ref_path": rel,
                         "ref_label_col": ref_label_col,
                         "max_epochs": max_epochs,
+                        "ref_epochs": ref_epochs,
+                        "num_samples": num_samples,
+                        "ref_max_cells_per_type": ref_max_cells_per_type,
                         "n_cells_per_location": n_cells_per_location,
                         "detection_alpha": detection_alpha}
                 mounts = [(mount_root, "/data")]
@@ -446,12 +456,22 @@ def register_l3_spatial(
                 "sc_ref": {"type": "string",
                            "description": "sc 参考数据集 id（12 位 hex，"
                                           "sc_process 输出）或白名单内 h5ad 路径"},
-                "max_epochs": {"type": "integer", "default": 30000},
+                "max_epochs": {"type": "integer", "default": 30000,
+                               "description": "空间模型训练轮数；CPU 实用"
+                                              " 2000（默认 30000 仅 GPU 可行）"},
                 "n_cells_per_location": {"type": "number", "default": 8},
                 "detection_alpha": {"type": "number", "default": 20},
                 "ref_label_col": {"type": "string", "default": "",
                                   "description": "参考 h5ad 的细胞类型注释列"
                                                  "（留空自动探测）"},
+                "ref_epochs": {"type": "integer", "default": 250,
+                               "description": "参考签名模型训练轮数"},
+                "num_samples": {"type": "integer", "default": 1000,
+                                "description": "后验采样数（export_posterior）"},
+                "ref_max_cells_per_type": {
+                    "type": "integer", "default": 0,
+                    "description": "参考每细胞类型限帽（0=不抽样）；大参考"
+                                   "（万级细胞）CPU 必须限帽（如 150）"},
             },
             "required": ["dataset_ref", "sc_ref"],
         },

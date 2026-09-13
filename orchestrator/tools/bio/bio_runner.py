@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any, cast
 
@@ -166,7 +167,12 @@ class BioRunner:
         """
         # Phase 23：GC 打点（best-effort，读引用也算"最近使用"）
         touch_last_access(self.workspace_root, args.get("dataset_id"))
-        cmd = ["docker", "run", "--rm"]
+        # 容器命名：subprocess.run(timeout) 超时只杀 docker CLI 客户端，
+        # 容器会继续运行成僵尸抢 CPU（2026-09-12 真实 Visium 验收实证，
+        # deconvolve 三次超时两具僵尸手动 docker kill）——命名后超时
+        # 兜底 docker kill，--rm 随退出自动清尸。
+        cname = f"bio-{uuid.uuid4().hex[:12]}"
+        cmd = ["docker", "run", "--rm", "--name", cname]
         if gpus:
             cmd += ["--gpus", "all"]
         cmd += ["-i", "--network", "none",
@@ -182,6 +188,13 @@ class BioRunner:
                 cmd, input=json.dumps(args), capture_output=True,
                 text=True, timeout=timeout, encoding="utf-8")
         except subprocess.TimeoutExpired:
+            try:
+                subprocess.run(["docker", "kill", cname],
+                               capture_output=True, timeout=30)
+            except Exception:
+                logger.warning(
+                    "docker kill %s failed after timeout (script=%s)",
+                    cname, script, exc_info=True)
             raise BioRunError(
                 "SC_TIMEOUT", f"bio script {script} exceeded {timeout}s"
             ) from None

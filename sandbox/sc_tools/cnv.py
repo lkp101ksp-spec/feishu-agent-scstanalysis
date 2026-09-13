@@ -190,6 +190,11 @@ def _run_cnvturbo(cnv_ad: Any, celltype_col: str,
         leiden_resolution="auto",
         cluster_by_groups=True,
         min_segment_length=5,
+        # 口径评估（2026-09-12，bio_workspace/_eval）：humantest 19149
+        # 细胞上 ms=1/2/3 判定完全一致（肿瘤区段普遍 ≥3，旋钮不敏感），
+        # 与 infercnvpy 基线 Jaccard 0.589、覆盖基线 96.8%、分型边界
+        # 干净零误报——双后端分歧源于细胞级 HMM vs 簇级投票的判定
+        # 逻辑差异，非本参数；维持 1（R inferCNV 默认语义）。
         min_segments_for_tumor=1,
         key_added="cnv_call",
         n_jobs=2,

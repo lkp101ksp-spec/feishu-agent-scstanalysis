@@ -2,7 +2,14 @@
 
 stdin: {"dataset_id": "<st 数据集>", "sc_ref_dataset": "<sc 12hex>" 或
         "sc_ref_path": "/data/相对路径.h5ad", "ref_label_col": "",
-        "max_epochs": 30000, "n_cells_per_location": 8, "detection_alpha": 20}
+        "max_epochs": 30000, "n_cells_per_location": 8, "detection_alpha": 20,
+        "ref_epochs": 250, "num_samples": 1000,
+        "ref_max_cells_per_type": 0}
+CPU 可行性（2026-09-12 真实 Visium 验收实测）：max_epochs 默认 30000
+在 4 CPU 不可行（1749 spots 下 2000 epochs≈2h，30000≈30h），实用取值
+2000；大参考必须配 ref_max_cells_per_type（每类型限帽，0=不抽样）——
+19149 细胞参考 35.4s/it（250 epochs≈2.5h），限帽 150→1844 细胞
+≈15min，生物结论不变（病理金标准交叉验证通过）。
 双参考来源（spec §2.4）：workspace 内 sc 产物（filtered counts + processed
 leiden 按 barcode 对齐）或 /data 挂载的独立 h5ad（注释列可指定/自动探测）。
 参考与空间均用原始 counts；官方建议剔除 MT 基因 + 宽松基因过滤。
@@ -119,7 +126,15 @@ def main() -> None:
     from common import WS_ROOT, ensure_spatial, fail, read_args
 
     args = read_args()
+    # CPU 可行性口径（2026-09-12 真实 Visium 验收实测）：默认
+    # max_epochs=30000 在 4 CPU 不可行（1749 spots×2000 epochs≈2h，
+    # 30000 约 30h）；参考侧 19149 细胞时 ref 模型 35.4s/it——
+    # ref_max_cells_per_type 分层限帽（如 150）可把参考压到千级细胞，
+    # ref 训练从 ~2.5h 降到 ~15min，生物结论不变（验收已交叉验证）。
     max_epochs = int(args.get("max_epochs", 30000))
+    ref_epochs = int(args.get("ref_epochs", 250))
+    num_samples = int(args.get("num_samples", 1000))
+    ref_cap = int(args.get("ref_max_cells_per_type", 0))
     n_cells = float(args.get("n_cells_per_location", 8))
     d_alpha = float(args.get("detection_alpha", 20))
 
@@ -138,6 +153,13 @@ def main() -> None:
         fail("ST_REF_INVALID",
              f"ref label column has {n_types} types (expect 2~30)")
         raise SystemExit(1)
+
+    # 参考分层限帽：每类型保留前 ref_cap 细胞（类型全保留，确定性），
+    # 大参考（万级细胞）CPU 训练参考模型的唯一可行路径（验收实测）。
+    if ref_cap > 0:
+        keep_idx = ref.obs.groupby(
+            "c2l_label", observed=True).head(ref_cap).index
+        ref = ref[keep_idx].copy()
 
     # 基因交集 + 剔 MT（官方建议）+ 宽松基因过滤
     sp = sp[:, sp.var_names.isin(ref.var_names)].copy()
@@ -160,9 +182,9 @@ def main() -> None:
     RegressionModel.setup_anndata(
         adata=ref, batch_key=None, labels_key="c2l_label")
     mod_r = RegressionModel(ref)
-    mod_r.train(max_epochs=250, batch_size=2500, accelerator="cpu")
+    mod_r.train(max_epochs=ref_epochs, batch_size=2500, accelerator="cpu")
     ref = mod_r.export_posterior(
-        ref, sample_kwargs={"num_samples": 1000, "batch_size": 2500,
+        ref, sample_kwargs={"num_samples": num_samples, "batch_size": 2500,
                             "accelerator": "cpu"})
     # 0.1.5 实测：签名矩阵在 varm（n_vars × n_factors，index 即 var_names）
     # 而非旧教程的 var["means_est_inf_*"] 列；换列名为因子名后直接作
@@ -177,7 +199,8 @@ def main() -> None:
         N_cells_per_location=n_cells, detection_alpha=d_alpha)
     mod_s.train(max_epochs=max_epochs, batch_size=None, accelerator="cpu")
     sp = mod_s.export_posterior(
-        sp, sample_kwargs={"num_samples": 1000, "batch_size": sp.n_obs,
+        sp, sample_kwargs={"num_samples": num_samples,
+                            "batch_size": sp.n_obs,
                            "accelerator": "cpu"})
 
     # 0.1.5 实测：丰度 obsm 列名带 "q05cell_abundance_w_sf_" 前缀，rename
@@ -204,6 +227,7 @@ def main() -> None:
         "ok": True,
         "dataset_ref": args["dataset_id"],
         "ref_source": label_src,
+        "n_ref_cells": int(ref.n_obs),
         "n_cell_types": int(n_types),
         "cell_types": cell_types,
         "mean_abundance": {ct: round(float(abund[ct].mean()), 3)

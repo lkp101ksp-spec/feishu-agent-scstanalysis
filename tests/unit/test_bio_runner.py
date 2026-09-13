@@ -173,6 +173,42 @@ def test_run_timeout(monkeypatch, roots, tmp_path):
     assert ei.value.error_code == "SC_TIMEOUT"
 
 
+def test_run_timeout_kills_named_container(monkeypatch, roots, tmp_path):
+    """超时兜底 docker kill 同一命名容器（僵尸容器修复，2026-09-12
+    真实 Visium 验收发现：subprocess timeout 只杀 CLI 客户端）。"""
+    calls: list[list[str]] = []
+
+    def _raise(cmd, **k):
+        calls.append(cmd)
+        raise subprocess.TimeoutExpired(cmd="docker", timeout=5)
+
+    monkeypatch.setattr(
+        "orchestrator.tools.bio.bio_runner.subprocess.run", _raise)
+    r = _runner(roots, tmp_path)
+    with pytest.raises(BioRunError) as ei:
+        r.run("load", {})
+    assert ei.value.error_code == "SC_TIMEOUT"
+    run_cmd, kill_cmd = calls[0], calls[1]
+    cname = run_cmd[run_cmd.index("--name") + 1]
+    assert cname.startswith("bio-")
+    assert kill_cmd == ["docker", "kill", cname]
+
+
+def test_run_timeout_kill_failure_still_raises(monkeypatch, roots, tmp_path):
+    """docker kill 自身失败（容器已退/守护进程异常）不掩盖 SC_TIMEOUT。"""
+    def _mixed(cmd, **k):
+        if cmd[1] == "kill":
+            raise OSError("daemon unreachable")
+        raise subprocess.TimeoutExpired(cmd="docker", timeout=5)
+
+    monkeypatch.setattr(
+        "orchestrator.tools.bio.bio_runner.subprocess.run", _mixed)
+    r = _runner(roots, tmp_path)
+    with pytest.raises(BioRunError) as ei:
+        r.run("load", {})
+    assert ei.value.error_code == "SC_TIMEOUT"
+
+
 def test_run_non_json_output(monkeypatch, roots, tmp_path):
     _fake_proc(monkeypatch, stdout="not json")
     r = _runner(roots, tmp_path)
@@ -322,11 +358,11 @@ def test_run_touches_last_access(tmp_path, monkeypatch):
 # === Phase 25：--gpus 透传 ===
 
 def test_run_gpus_adds_flag(runner, fake_docker_ok):
-    """gpus=True → docker cmd 的 --rm 后紧跟 --gpus all。"""
+    """gpus=True → docker cmd 含 --gpus all（--name 占位后按值定位）。"""
     runner.run("process", {"dataset_id": "abcdef123456"}, gpus=True)
     cmd = fake_docker_ok.cmd
-    rm_idx = cmd.index("--rm")
-    assert cmd[rm_idx + 1: rm_idx + 3] == ["--gpus", "all"]
+    gpus_idx = cmd.index("--gpus")
+    assert cmd[gpus_idx + 1] == "all"
 
 
 def test_run_default_no_gpus(runner, fake_docker_ok):

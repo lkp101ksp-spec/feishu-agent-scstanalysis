@@ -184,3 +184,19 @@ def test_st_deconvolve_sc_ref_dataset_vs_path(runner, reg):
     args, kw = runner.run.call_args
     assert args[1]["sc_ref_path"] == "ref.h5ad"
     assert kw["mounts"] == [("I:/bio_test_data", "/data")]
+
+
+def test_st_deconvolve_cpu_tuning_passthrough(runner, reg):
+    """CPU 可行性参数透传（真实 Visium 验收挂账）：ref_epochs/
+    num_samples/ref_max_cells_per_type 双分支都进容器 args。"""
+    runner.resolve_data_path = lambda p: ("I:/bio_test_data", "ref.h5ad", "x")
+    for sc_ref in ("deadbeefdead", "I:/bio_test_data/ref.h5ad"):
+        reg.get("st_deconvolve").handler(
+            dataset_ref="abc123456789", sc_ref=sc_ref,
+            max_epochs=2000, ref_epochs=100, num_samples=200,
+            ref_max_cells_per_type=150)
+        args, _ = runner.run.call_args
+        assert args[1]["ref_epochs"] == 100
+        assert args[1]["num_samples"] == 200
+        assert args[1]["ref_max_cells_per_type"] == 150
+        assert args[1]["max_epochs"] == 2000
