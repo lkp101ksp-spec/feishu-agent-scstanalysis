@@ -135,6 +135,18 @@ def test_sc_cnv_detects_synthetic_malignant(bio_ws: Path,
     assert b"obs-ok" in check.stdout, check.stderr.decode()[-2000:]
 
 
+def test_sc_cnv_cnvturbo_cluster_smooth(bio_ws: Path) -> None:
+    """cluster_smooth=True → cnvturbo HMM 判定后追加簇级多数投票平滑。"""
+    res = _run_cnv(bio_ws, {"dataset_id": "itest", "method": "cnvturbo",
+                            "celltype_col": "celltype",
+                            "cluster_smooth": True})
+    assert res["ok"] is True
+    assert "簇级多数投票平滑" in res["note"]
+    epi_mal = res["malignant_by_celltype"].get("Epithelial tumor", 0)
+    assert epi_mal > 0
+    assert epi_mal / res["n_malignant"] >= 0.8  # 平滑不破坏恶性群集中度
+
+
 def test_sc_cnv_ref_groups_miss(bio_ws: Path) -> None:
     """ref_groups 值不存在 → 明确报错列可用值（planner 自纠）。"""
     res = _run_cnv(bio_ws, {"dataset_id": "itest",

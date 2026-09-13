@@ -861,13 +861,14 @@ def test_sc_cnv_forwards_params(tmp_path):
     out = reg.get("sc_cnv").handler(
         dataset_ref="d", method="cnvturbo",
         celltype_col="celltypist_label",
-        ref_groups=["T cells"], resolution=0.8)
+        ref_groups=["T cells"], resolution=0.8, cluster_smooth=True)
 
     script, payload = runner.run.call_args[0]
     assert script == "cnv"
     assert payload == {"dataset_id": "d", "method": "cnvturbo",
                        "celltype_col": "celltypist_label",
-                       "ref_groups": ["T cells"], "resolution": 0.8}
+                       "ref_groups": ["T cells"], "resolution": 0.8,
+                       "cluster_smooth": True}
     assert runner.run.call_args[1]["timeout_sec"] == 3600
     assert "ok" not in out
     assert out["n_malignant"] == 5
@@ -883,4 +884,4 @@ def test_sc_cnv_default_params(tmp_path):
     _, payload = runner.run.call_args[0]
     assert payload == {"dataset_id": "d", "method": "infercnvpy",
                        "celltype_col": "leiden", "ref_groups": None,
-                       "resolution": 1.0}
+                       "resolution": 1.0, "cluster_smooth": False}

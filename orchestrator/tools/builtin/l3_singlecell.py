@@ -450,13 +450,16 @@ def register_l3_singlecell(
     def sc_cnv(*, dataset_ref: str, method: str = "infercnvpy",
                celltype_col: str = "leiden",
                ref_groups: list[str] | None = None,
-               resolution: float = 1.0) -> dict[str, Any]:
-        """CNV 推断与恶性判定（B1）：双后端 → 亚克隆。"""
+               resolution: float = 1.0,
+               cluster_smooth: bool = False) -> dict[str, Any]:
+        """CNV 推断与恶性判定（B1）：双后端 → 亚克隆。cluster_smooth
+        仅作用于 cnvturbo：HMM 细胞级判定后加簇级多数投票平滑。"""
         try:
             out = runner.run("cnv", {
                 "dataset_id": dataset_ref, "method": method,
                 "celltype_col": celltype_col, "ref_groups": ref_groups,
                 "resolution": resolution,
+                "cluster_smooth": cluster_smooth,
             }, timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
@@ -1195,6 +1198,11 @@ def register_l3_singlecell(
                     "description": "显式参考细胞类型列表（覆盖默认清单）"},
                 "resolution": {"type": "number", "default": 1.0,
                                "description": "恶性亚克隆 leiden 分辨率"},
+                "cluster_smooth": {
+                    "type": "boolean", "default": False,
+                    "description": "仅 cnvturbo：HMM 细胞级判定后加 CNV 簇"
+                                   "级多数投票平滑（与 infercnvpy 后处理"
+                                   "对齐；口径评估 2026-09-12）"},
             },
             "required": ["dataset_ref"],
         },

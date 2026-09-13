@@ -178,7 +178,15 @@ def main() -> None:
                 " obs（st_plot 可组织图叠加）；inf=不连通 spot",
     }
 
-    # vicinity 耦合（条件产物）：分层 boxplot + Spearman ρ
+    # vicinity 耦合（条件产物）：分层 boxplot + Spearman ρ。
+    # ρ 解读指南（2026-09-12 真实 OSCC 验收诊断，_eval/diag_traj_vicinity）：
+    # dpt 在表达图上推断，主轴常为组织组成梯度（该样本 dpt vs PC1
+    # ρ=-0.9、vs Epithelial 丰度 ρ=-0.66、恶性 vs 其余无差异 p=0.34），
+    # 而 vicinity 是 CNV 恶性种子的空间 BFS 距离场（层结构本身有效：
+    # cnv_score 随层 ρ=-0.31 p=4e-39）——两者语义正交，|ρ| 低多为
+    # 层内表达异质性 >> 层间梯度（该样本层内 std 0.12-0.15 vs 层间
+    # 均值差 0.02），属合法生物学结果而非工具失效；判读时应对照
+    # dpt 与 cnv_score/组成的相关性区分"弱梯度"与"失效"。
     if "vicinity" in adata.obs:
         from scipy.stats import spearmanr
         vic = adata.obs["vicinity"]

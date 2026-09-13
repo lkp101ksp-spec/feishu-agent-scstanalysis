@@ -3,7 +3,9 @@
 stdin: {"dataset_id": ..., "method": "infercnvpy"|"cnvturbo",
         "celltype_col": "leiden",          # 参考细胞来源列（注释列亦可）
         "ref_groups": ["T cells", ...],    # 显式参考；缺省内置清单匹配
-        "resolution": 1.0}                 # 亚克隆 leiden 分辨率
+        "resolution": 1.0,                 # 亚克隆 leiden 分辨率
+        "cluster_smooth": false}           # 仅 cnvturbo：HMM 判定后加
+        # 簇级多数投票平滑（对齐 infercnvpy 后处理口径，2026-09-12 评估）
 数据流（doublet.py 先例）：counts 走 filtered/raw 回退链（全基因矩阵），
 标签/UMAP 走 processed.h5ad 按 obs_names 交集对齐；两后端同源起步
 （infercnvpy 侧自 normalize+log1p，cnvturbo 侧吃原始 counts）保证交叉
@@ -329,6 +331,7 @@ def main() -> None:
     celltype_col = str(args.get("celltype_col", "leiden")).strip()
     ref_groups = args.get("ref_groups") or None
     resolution = float(args.get("resolution", 1.0))
+    cluster_smooth = bool(args.get("cluster_smooth", False))
 
     counts_ad = load_adata({"dataset_id": args["dataset_id"], "file": "any"})
     adata = load_adata({"dataset_id": args["dataset_id"],
@@ -425,6 +428,21 @@ def main() -> None:
     if turbo_calls is not None:
         is_mal = turbo_calls
         note = "cnvturbo HMM i6 细胞级判定"
+        if cluster_smooth:
+            # 簇级多数投票平滑（infercnvpy 路同款后处理）：双后端分歧
+            # 源于细胞级 HMM vs 簇级投票（2026-09-12 口径评估结论），
+            # 本开关把 cnvturbo 判定也对齐到簇级口径。
+            # 真实 OSCC 效果评估（2026-09-13，_eval/eval_cnv_smooth.py）：
+            # 12 簇翻转 379/19149=2.0% 细胞，Jaccard vs infercnvpy
+            # 0.589→0.601、基线覆盖 96.8%→98.4%——温和修正、方向正确；
+            # 收益边际（raw HMM 已与簇结构高度一致），故默认关、按需开。
+            clusters_t = _leiden_on_cnv(x_cnv, 0.5)
+            smoothed = np.zeros(len(is_mal), dtype=bool)
+            for c in set(clusters_t):
+                m = clusters_t == c
+                smoothed[m] = bool(is_mal[m].mean() > 0.5)
+            is_mal = smoothed
+            note += " + 簇级多数投票平滑（cluster_smooth）"
     else:
         # infercnvpy：细胞级阈值 → CNV 簇多数投票平滑（簇级判定更稳）
         clusters = _leiden_on_cnv(x_cnv, 0.5)
