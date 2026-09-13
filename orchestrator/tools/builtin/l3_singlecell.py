@@ -246,14 +246,18 @@ def register_l3_singlecell(
     def sc_cellchat(*, dataset_ref: str, celltype_col: str = "leiden",
                     species: str = "human", expr_prop: float = 0.1,
                     min_cells: int = 10, top_n: int = 30,
-                    max_cells_per_group: int = 0) -> dict[str, Any]:
-        """细胞通讯（Phase 34）：liana cellchat → LR 表+dotplot+热图。"""
+                    max_cells_per_group: int = 0,
+                    method: str = "cellchat",
+                    group_col: str = "") -> dict[str, Any]:
+        """细胞通讯（Phase 34/47）：liana → LR 表+dotplot+热图；
+        method=rank_aggregate 五方法共识；group_col 两组差异通讯。"""
         try:
             out = runner.run("cellchat", {
                 "dataset_id": dataset_ref, "celltype_col": celltype_col,
                 "species": species, "expr_prop": expr_prop,
                 "min_cells": min_cells, "top_n": top_n,
                 "max_cells_per_group": max_cells_per_group,
+                "method": method, "group_col": group_col,
             }, timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
@@ -831,12 +835,14 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_cellchat",
         description=(
-            "细胞通讯分析（Phase 34，对齐 server_cellchat 单组推断）："
-            "推断细胞类型间的配体-受体互作（liana cellchat 方法 + 内置"
-            "consensus 资源库）。输出显著 LR 对 top 表、全量 csv、top LR "
-            "dotplot 与细胞类型间互作计数热图。回答\"哪类细胞在给谁发"
-            "信号\"类问题。需先跑 sc_process。列名错误时错误消息会列出"
-            "可用列。"
+            "细胞通讯分析（Phase 34/47）：推断细胞类型间的配体-受体互作"
+            "（liana + 内置 consensus 资源库）。method=cellchat 单方法"
+            "（默认）或 rank_aggregate 五方法共识排序（假阳性更低）；"
+            "group_col 指定恰两取值的分组列时做两组差异通讯（各组独立"
+            "推断 + 差分 LR 表与红蓝差分热图）。输出显著 LR 对 top 表、"
+            "全量 csv、top LR dotplot 与细胞类型间互作计数热图。回答"
+            "\"哪类细胞在给谁发信号\"类问题。需先跑 sc_process。列名"
+            "错误时错误消息会列出可用列。"
         ),
         parameters={
             "type": "object",
@@ -857,6 +863,14 @@ def register_l3_singlecell(
                     "description": "每组（细胞类型）抽样上限，0=全量。"
                                    "大数据集可设 100 显著加速，"
                                    "结果为抽样估计"},
+                "method": {"type": "string", "default": "cellchat",
+                           "enum": ["cellchat", "rank_aggregate"],
+                           "description": "cellchat 单方法（默认）或 "
+                                          "rank_aggregate 五方法共识"},
+                "group_col": {"type": "string", "default": "",
+                              "description": "分组列（如 group）：非空且"
+                                             "恰两取值时做两组差异通讯；"
+                                             "留空=单组"},
             },
             "required": ["dataset_ref"],
         },

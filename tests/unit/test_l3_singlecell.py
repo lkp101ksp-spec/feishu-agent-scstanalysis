@@ -427,6 +427,31 @@ def test_sc_cellchat_error_lists_columns(tmp_path):
     assert "available" in out["error_message"]
 
 
+def test_sc_cellchat_method_and_group_col(tmp_path):
+    """Phase 47：method=rank_aggregate + group_col 差异通讯透传。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True, "dataset_ref": "d",
+                               "method": "rank_aggregate", "n_sig": 5}
+    reg.get("sc_cellchat").handler(
+        dataset_ref="d", celltype_col="celltypist_label",
+        method="rank_aggregate", group_col="group")
+    args = runner.run.call_args.args
+    assert args[1]["method"] == "rank_aggregate"
+    assert args[1]["group_col"] == "group"
+    props = reg.get("sc_cellchat").parameters["properties"]
+    assert props["method"]["enum"] == ["cellchat", "rank_aggregate"]
+
+
+def test_sc_cellchat_defaults_method_group(tmp_path):
+    """Phase 47 默认值：method=cellchat、group_col=''（单组现状不变）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True}
+    reg.get("sc_cellchat").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[1]["method"] == "cellchat"
+    assert args[1]["group_col"] == ""
+
+
 def test_sc_milo_forwards_params(tmp_path):
     """handler 转发 milo 参数（样本列+分组列+定向对比）。"""
     reg, runner = _registry(tmp_path)
