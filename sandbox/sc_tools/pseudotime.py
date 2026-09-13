@@ -5,7 +5,9 @@ stdin: {"dataset_id": ..., "root_marker": "NKG7",
         "dyn_top_n": 50,      # Phase 53：动态基因 top N；0=跳过
         "engine": "dpt",      # dpt（默认）/ palantir
         "start_cell": "",     # palantir 专用显式根条码（优先级最高）
-        "branch_top_n": 0}    # palantir 专用：分支推断 top N；0=跳过
+        "branch_top_n": 0,    # palantir 专用：分支推断 top N；0=跳过
+        "dyn_modules_k": 0,   # 动态基因趋势聚类模块数；0=跳过
+        "modules_enrich": ""} # 模块富集 GS key（enrichment GS_KEYS）；空=跳过
 需 processed.h5ad（含 neighbors 图）。
 engine="dpt"：scanpy diffmap + DPT（Haghverdi 2016 图扩散族，覆盖
 Monocle 拟时序的排序场景；分支推断/BEAM/CytoTRACE2 不在范围）。
@@ -116,7 +118,8 @@ def _dyn_stats(Xc: Any, col_of: dict[str, int], hvgs: list[str],
 
 
 def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
-               ds_dir: Any, prefix: str = "") -> dict[str, Any]:
+               ds_dir: Any, prefix: str = "", modules_k: int = 0,
+               modules_enrich: str = "") -> dict[str, Any]:
     """动态基因趋势（Phase 53 "BEAM-lite"）。
 
     HVG ∩ raw 候选池逐基因 Spearman(pt, raw 表达) + BH 校正
@@ -215,6 +218,115 @@ def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
         "trend_curves_png": str(curves_png)}
     if fallback_note:
         out["dyn_note"] = fallback_note
+    if modules_k > 0:
+        if len(sig) >= modules_k:
+            out.update(_dyn_modules(sig, _col, m, order, pt_m, w,
+                                    modules_k, modules_enrich,
+                                    ds_dir, prefix))
+        else:
+            out["modules_note"] = (
+                f"sig(q<0.05) {int(len(sig))} < k={modules_k}; "
+                "modules skipped")
+    return out
+
+
+def _dyn_modules(sig: pd.DataFrame, col_fn: Any, m: np.ndarray,
+                 order: np.ndarray, pt_m: np.ndarray, w: int,
+                 k: int, enrich_key: str, ds_dir: Any,
+                 prefix: str = "") -> dict[str, Any]:
+    """动态基因趋势聚类：显著基因全量 → 早→晚表达程序模块。
+
+    sig(q<0.05) 基因沿 pt 平滑 z-score 矩阵 → KMeans(k, seed=0)
+    → 模块按 "z>1 高表达细胞加权平均 pt" 排序重命名 M1..Mk；
+    产物 <prefix>dyn_modules.csv（gene,rho,qval,module）+
+    <prefix>dyn_modules.png（k 条模块均值趋势曲线）；enrich_key
+    非空时逐模块 gp.enrich 离线 ORA（enrichment.py GS_KEYS/
+    _load_lib 先例，鼠源库符号 .upper() 对齐）。
+    """
+    import matplotlib.pyplot as plt
+    from sklearn.cluster import KMeans
+
+    genes = sig["gene"].tolist()
+    mat = np.empty((len(genes), int(m.sum())), dtype=float)
+    for i, g in enumerate(genes):
+        s = _smooth(col_fn(g)[m][order], w)
+        sd = s.std()
+        mat[i] = (s - s.mean()) / sd if sd > 0 else 0.0
+    lab = KMeans(n_clusters=k, n_init=10,
+                 random_state=0).fit_predict(mat)
+    # 模块早晚排序：z>1 超出部分作权重，加权平均 pt 越早模块号越小
+    pts = pt_m[order]
+    peak_pt = []
+    for c in range(k):
+        sub = mat[lab == c]
+        wgt = np.clip(sub - 1.0, 0.0, None)
+        tot = float(wgt.sum())
+        peak_pt.append(float((wgt * pts[None, :]).sum() / tot)
+                       if tot > 0 else float("inf"))
+    order_c = np.argsort(peak_pt)
+    name_of = {c: f"M{r + 1}" for r, c in enumerate(order_c)}
+    mod_df = sig[["gene", "rho", "qval"]].copy()
+    mod_df["module"] = [name_of[c] for c in lab]
+    mod_csv = ds_dir / f"{prefix}dyn_modules.csv"
+    mod_df.to_csv(mod_csv, index=False)
+
+    # 模块均值趋势曲线（单面板 k 条线，M 号=早晚序）
+    fig, ax = plt.subplots(figsize=(6.5, 4.0))
+    cmap = plt.get_cmap("tab10")
+    for r, c in enumerate(order_c):
+        sub = mat[lab == c]
+        ax.plot(pts, sub.mean(axis=0), color=cmap(r % 10), lw=1.6,
+                label=f"M{r + 1} (n={sub.shape[0]})")
+    ax.axhline(0, color="#bdbdbd", lw=0.6)
+    ax.set_xlabel("pseudotime", fontsize=9)
+    ax.set_ylabel("module mean z-score", fontsize=9)
+    ax.set_title(f"dynamic gene modules along pseudotime (k={k})",
+                 fontsize=10)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    mod_png = ds_dir / f"{prefix}dyn_modules.png"
+    fig.savefig(mod_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    out: dict[str, Any] = {
+        "n_modules": k,
+        "module_sizes": {f"M{r + 1}": int((lab == c).sum())
+                         for r, c in enumerate(order_c)},
+        "dyn_modules_csv": str(mod_csv),
+        "dyn_modules_png": str(mod_png)}
+    notes: list[str] = []
+
+    if enrich_key:
+        import gseapy as gp
+        from enrichment import _load_lib
+        lib = _load_lib(enrich_key)
+        is_mouse = enrich_key.endswith("_mouse")
+        rows = []
+        for r, c in enumerate(order_c):
+            mn = f"M{r + 1}"
+            gs = mod_df.loc[mod_df["module"] == mn, "gene"].tolist()
+            if len(gs) < 5:
+                notes.append(f"{mn} < 5 genes; enrich skipped")
+                continue
+            ora_in = [g.upper() for g in gs] if is_mouse else gs
+            er = gp.enrich(gene_list=ora_in, gene_sets=lib,
+                           outdir=None, verbose=False).results
+            edf = pd.DataFrame(er)
+            if edf.empty:
+                continue
+            edf = edf.sort_values("Adjusted P-value").head(10)
+            for _, e in edf.iterrows():
+                rows.append((mn, e["Term"], str(e["Overlap"]),
+                             e["P-value"], e["Adjusted P-value"]))
+        en_csv = ds_dir / f"{prefix}dyn_modules_enrich.csv"
+        pd.DataFrame(rows, columns=["module", "term", "overlap",
+                                    "pval", "qval"]).to_csv(
+            en_csv, index=False)
+        out["dyn_modules_enrich_csv"] = str(en_csv)
+        if not rows:
+            notes.append("enrich returned no terms for any module")
+    if notes:
+        out["modules_note"] = "; ".join(notes)
     return out
 
 
@@ -399,8 +511,10 @@ def _branch_analysis(adata: Any, pt: np.ndarray, pr: Any,
 
 
 def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
-                  dyn_top_n: int, branch_top_n: int,
-                  ds_dir: Any) -> tuple[dict[str, Any], np.ndarray]:
+                  dyn_top_n: int, branch_top_n: int, ds_dir: Any,
+                  dyn_modules_k: int = 0,
+                  modules_enrich: str = ""
+                  ) -> tuple[dict[str, Any], np.ndarray]:
     """Palantir 引擎（Setty 2019）：马尔可夫链扩散伪时序 + 终末态。
 
     产物：palantir_pt.csv（pt + ts_<barcode> 分支概率宽表列）、
@@ -496,7 +610,8 @@ def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
     dyn: dict[str, Any] = {}
     if dyn_top_n > 0:
         dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir,
-                         prefix="palantir_")
+                         prefix="palantir_", modules_k=dyn_modules_k,
+                         modules_enrich=modules_enrich)
 
     branch: dict[str, Any] = {}
     if branch_top_n > 0:
@@ -529,6 +644,8 @@ def main() -> None:
     root_cluster = str(args.get("root_cluster", "")).strip()
     dyn_top_n = int(args.get("dyn_top_n", 50))
     branch_top_n = int(args.get("branch_top_n", 0))
+    dyn_modules_k = int(args.get("dyn_modules_k", 0))
+    modules_enrich = str(args.get("modules_enrich", "")).strip()
     engine = str(args.get("engine", "dpt")).strip().lower()
     start_cell = str(args.get("start_cell", "")).strip()
     if engine not in ("dpt", "palantir"):
@@ -543,6 +660,17 @@ def main() -> None:
         fail("INVALID_INPUT",
              "branch_top_n only valid with engine='palantir'")
         return
+    if dyn_modules_k > 0 and dyn_top_n <= 0:
+        fail("INVALID_INPUT",
+             "dyn_modules_k>0 requires dyn_top_n>0")
+        return
+    if modules_enrich:
+        from enrichment import GS_KEYS
+        if modules_enrich not in GS_KEYS:
+            fail("INVALID_INPUT",
+                 f"modules_enrich {modules_enrich!r} not in "
+                 f"{sorted(GS_KEYS)}")
+            return
     if root_marker and root_cluster:
         fail("INVALID_INPUT",
              "root_marker and root_cluster are mutually exclusive; "
@@ -613,7 +741,9 @@ def main() -> None:
                  "processed.h5ad lacks X_pca; run sc_process first")
             return
         out, pt = _run_palantir(adata, iroot, clusters, dyn_top_n,
-                                branch_top_n, ds_dir)
+                                branch_top_n, ds_dir,
+                                dyn_modules_k=dyn_modules_k,
+                                modules_enrich=modules_enrich)
         if branch_top_n > 0:  # 分支归属已写 obs → 统一落盘
             adata.write_h5ad(WS_ROOT / args["dataset_id"]
                              / "processed.h5ad")
@@ -697,7 +827,9 @@ def main() -> None:
 
     dyn: dict[str, Any] = {}
     if dyn_top_n > 0:
-        dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir)
+        dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir,
+                         modules_k=dyn_modules_k,
+                         modules_enrich=modules_enrich)
 
     emit({
         "ok": True,

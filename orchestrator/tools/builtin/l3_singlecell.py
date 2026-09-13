@@ -175,14 +175,17 @@ def register_l3_singlecell(
     def sc_pseudotime(*, dataset_ref: str, root_marker: str = "",
                       root_cluster: str = "", dyn_top_n: int = 50,
                       engine: str = "dpt", start_cell: str = "",
-                      branch_top_n: int = 0) -> dict[str, Any]:
-        """拟时序（Phase 32/53/Palantir/分支推断相）：DPT 或 Palantir。"""
+                      branch_top_n: int = 0, dyn_modules_k: int = 0,
+                      modules_enrich: str = "") -> dict[str, Any]:
+        """拟时序（Phase 32/53/Palantir/分支推断/趋势聚类相）。"""
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
                 "root_cluster": root_cluster, "dyn_top_n": dyn_top_n,
                 "engine": engine, "start_cell": start_cell,
                 "branch_top_n": branch_top_n,
+                "dyn_modules_k": dyn_modules_k,
+                "modules_enrich": modules_enrich,
             }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
@@ -706,7 +709,8 @@ def register_l3_singlecell(
             "图，Palantir 附终末态表与分支概率列；dyn_top_n>0 附动态"
             "基因趋势（dyn_genes.csv+趋势热图+top6 曲线）；"
             "branch_top_n>0 附分支推断（分支归属+分支间命运决定基因，"
-            "对齐 Monocle2 BEAM 场景）。"
+            "对齐 Monocle2 BEAM 场景）；dyn_modules_k>0 附动态基因趋势"
+            "聚类（早→晚表达程序模块，可附模块 GO/通路富集）。"
             "注意：DPT 不推断分支（CytoTRACE2 不在范围）。"
             "需先跑 sc_process。"
         ),
@@ -740,6 +744,18 @@ def register_l3_singlecell(
                                                 "0=跳过。分支归属+分支内"
                                                 "动态基因+pt 匹配分支间"
                                                 "差异（命运决定基因）"},
+                "dyn_modules_k": {"type": "integer", "default": 0,
+                                  "description": "动态基因趋势聚类模块数；"
+                                                 "0=跳过。显著动态基因全量"
+                                                 "按平滑趋势 kmeans 聚类为"
+                                                 "早→晚表达程序模块"},
+                "modules_enrich": {"type": "string", "default": "",
+                                   "description": "模块富集 GS key（go_bp/"
+                                                  "hallmark/kegg/"
+                                                  "kegg_mouse/"
+                                                  "wikipathways_mouse）；"
+                                                  "空=跳过。鼠源数据注意"
+                                                  "go_bp 为人源库"},
             },
             "required": ["dataset_ref"],
         },

@@ -217,6 +217,22 @@ assert set(ad2_back.obs["palantir_branch"].cat.categories
 bad11 = run_pt(DS2, branch_top_n=50)
 assert not bad11["ok"] and bad11["error_code"] == "INVALID_INPUT", bad11
 
+# ⑫ 趋势聚类：palantir dyn50+modules_k=3 → 模块产物+全归属+恰 3 模块
+o12 = run_pt(DS2, engine="palantir", dyn_top_n=50, dyn_modules_k=3)
+assert o12["ok"] and o12["n_modules"] == 3, o12.keys()
+mod_df = pd.read_csv(br_dir / "palantir_dyn_modules.csv")
+assert set(mod_df["module"].unique()) == {"M1", "M2", "M3"}
+assert len(mod_df) == o12["n_dyn"]
+assert sum(o12["module_sizes"].values()) == len(mod_df)
+assert (br_dir / "palantir_dyn_modules.png").exists()
+
+# ⑬ 校验：非法 enrich key / modules_k>0 但 dyn_top_n=0 → INVALID_INPUT
+bad13 = run_pt(DS2, engine="palantir", dyn_top_n=50,
+               dyn_modules_k=3, modules_enrich="nope")
+assert not bad13["ok"] and bad13["error_code"] == "INVALID_INPUT", bad13
+bad14 = run_pt(DS2, engine="palantir", dyn_top_n=0, dyn_modules_k=3)
+assert not bad14["ok"] and bad14["error_code"] == "INVALID_INPUT", bad14
+
 for f in ("pseudotime/pseudotime.csv",
           "pseudotime/pseudotime_umap.png",
           "pseudotime/paga_graph.png",
@@ -234,4 +250,6 @@ print("SMOKE OK",
       "| cluster/explicit root ok | bad start_cell/engine rejected",
       f"| branch assign_rate={assign_rate:.2f} "
       f"n_terminal={o10['n_terminal']} de_top={sorted(de_genes)[:4]}",
-      "| dpt+branch_top_n rejected")
+      "| dpt+branch_top_n rejected",
+      f"| modules k={o12['n_modules']} sizes={o12['module_sizes']}",
+      "| bad enrich/dyn0 rejected")

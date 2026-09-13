@@ -369,6 +369,33 @@ def test_sc_pseudotime_defaults_branch_phase(tmp_path):
     assert args[1]["branch_top_n"] == 0
 
 
+def test_sc_pseudotime_dyn_modules(tmp_path):
+    """趋势聚类：dyn_modules_k/modules_enrich 透传 + schema 含参数。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "palantir",
+        "n_modules": 6, "module_sizes": {"M1": 30}}
+    out = reg.get("sc_pseudotime").handler(
+        dataset_ref="d", engine="palantir", dyn_modules_k=6,
+        modules_enrich="go_bp")
+    args = runner.run.call_args.args
+    assert args[1]["dyn_modules_k"] == 6
+    assert args[1]["modules_enrich"] == "go_bp"
+    assert out["n_modules"] == 6
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert "dyn_modules_k" in props and "modules_enrich" in props
+
+
+def test_sc_pseudotime_defaults_modules_phase(tmp_path):
+    """趋势聚类相默认值：dyn_modules_k=0、modules_enrich=''（跳过）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True}
+    reg.get("sc_pseudotime").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[1]["dyn_modules_k"] == 0
+    assert args[1]["modules_enrich"] == ""
+
+
 # === Phase 33：常用分析第二批（组间差异/亚聚类/整合/组成） ===
 
 

@@ -5,6 +5,11 @@ stdin: {"dataset_id": ..., "by": "sample", "group": "condition",
 需 processed.h5ad。按 by 列（样本/受试者）统计各簇细胞比例 →
 比例表 csv + 堆叠柱状图 png；group 列给出时每簇做卡方检验
 （该簇 vs 其余 × 各 group，按样本合并计数；返回原始 chi2/p，未做多重校正）。
+group 值域恰 2 时附加（2026-09-13 命运偏向增强）：
+每簇 Fisher 精确检验（odds_ratio + BH fisher_q）+ Ro/e 组织分布
+偏好指数（observed/expected，>1 偏好）+ Ro/e 热图 + fate_bias
+摘要；celltype_col 传 palantir_branch 即分支命运偏向分析。
+group >2 值时仅卡方 + note 降级。
 """
 from __future__ import annotations
 
@@ -13,7 +18,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
-from scipy.stats import chi2_contingency
+from scipy.stats import chi2_contingency, fisher_exact
+from statsmodels.stats.multitest import multipletests
 
 
 def _cat_cols(adata: Any) -> str:
@@ -87,23 +93,90 @@ def main() -> None:
 
     # 每簇卡方检验（group 列给出时：该簇 vs 其余 × group）
     tests: list[dict[str, Any]] = []
+    roe_df: pd.DataFrame | None = None
+    roe_png: Any = None
+    group_note: str | None = None
     if group:
         g_s = adata.obs[group].astype(str)
+        g_levels = sorted(g_s.unique())
+        two_g = len(g_levels) == 2
+        roe_rows: dict[str, dict[str, float]] = {}
         for c in order:
             in_c = (ct_s == c)
             table = pd.crosstab(g_s, in_c).reindex(columns=[True, False],
                                                    fill_value=0)
             if table.shape[0] < 2:
                 continue
-            chi2, p, _, _ = chi2_contingency(table.to_numpy())
-            tests.append({
+            obs = table.to_numpy()
+            chi2, p, _, exp = chi2_contingency(obs)
+            entry: dict[str, Any] = {
                 "cluster": c,
                 "n_cells": int(in_c.sum()),
                 "overall_pct": round(float(overall_pct[c]), 4),
                 "chi2": round(float(chi2), 2),
                 "p": float(f"{p:.3e}"),
-            })
+            }
+            if two_g:
+                # 命运偏向增强：Fisher 精确检验 + Ro/e（observed/expected）
+                oratio, fp = fisher_exact(obs)
+                entry["odds_ratio"] = (round(float(oratio), 3)
+                                       if np.isfinite(oratio) else None)
+                entry["fisher_p"] = float(f"{fp:.3e}")
+                roe_rows[c] = {g: float(obs[i, 0] / exp[i, 0])
+                               if exp[i, 0] > 0 else float("nan")
+                               for i, g in enumerate(g_levels)}
+            tests.append(entry)
         tests.sort(key=lambda t: t["p"])
+        if two_g and roe_rows:
+            # Fisher p 做 BH 多重校正；Ro/e 矩阵落列 + 热图
+            qvals = multipletests([t["fisher_p"] for t in tests],
+                                  method="fdr_bh")[1]
+            g1, g2 = g_levels
+            for t, q in zip(tests, qvals):
+                t["fisher_q"] = float(f"{q:.3e}")
+                r = roe_rows[t["cluster"]]
+                t[f"roe_{g1}"], t[f"roe_{g2}"] = (
+                    round(r[g1], 3), round(r[g2], 3))
+            roe_df = pd.DataFrame(roe_rows).T[g_levels]
+            roe_csv = ds_dir / f"roe_by_{group}.csv"
+            roe_df.to_csv(roe_csv)
+            lg = np.log2(roe_df.to_numpy())
+            v = float(np.nanmax(np.abs(lg))) if np.isfinite(lg).any() else 1.0
+            fig, ax = plt.subplots(figsize=(3.2, max(2.5, 0.45 * len(roe_df))),
+                                   dpi=150)
+            im = ax.imshow(lg, aspect="auto", cmap="RdBu_r",
+                           vmin=-v, vmax=v)
+            ax.set_xticks(range(2))
+            ax.set_xticklabels(g_levels, fontsize=9)
+            ax.set_yticks(range(len(roe_df)))
+            ax.set_yticklabels(roe_df.index, fontsize=8)
+            for i in range(lg.shape[0]):
+                for j in range(2):
+                    ax.text(j, i, f"{roe_df.iloc[i, j]:.2f}",
+                            ha="center", va="center", fontsize=7)
+            fig.colorbar(im, ax=ax, label="log2(Ro/e)", shrink=0.8)
+            ax.set_title(f"Tissue preference Ro/e by {group}", fontsize=9)
+            fig.tight_layout()
+            roe_png = ds_dir / "cellfreq_roe.png"
+            fig.savefig(roe_png, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+        elif group and not two_g:
+            group_note = (f"group has {len(g_levels)} levels; "
+                          "chi-square only (Fisher/Ro-e need exactly 2)")
+
+    # 命运偏向摘要：Fisher 显著簇按 q 升序 top5（Ro/e>1 的组为 higher_in）
+    fate_bias: list[dict[str, Any]] = []
+    if roe_df is not None:
+        g_levels2 = list(roe_df.columns)
+        sig = [t for t in tests if t.get("fisher_q", 1.0) < 0.05]
+        sig.sort(key=lambda t: t["fisher_q"])
+        for t in sig[:5]:
+            r1 = t[f"roe_{g_levels2[0]}"]
+            fate_bias.append({
+                "cluster": t["cluster"],
+                "odds_ratio": t["odds_ratio"],
+                "fisher_q": t["fisher_q"],
+                "higher_in": g_levels2[0] if r1 > 1 else g_levels2[1]})
 
     emit({
         "ok": True,
@@ -118,6 +191,11 @@ def main() -> None:
         "chi2_note": ("per-cluster chi-square (this cluster vs rest x "
                       "group); raw p, no multiple-testing correction"
                       ) if tests else None,
+        "fate_bias": fate_bias or None,
+        "roe_csv": str(ds_dir / f"roe_by_{group}.csv"
+                       ) if roe_df is not None else None,
+        "roe_png": str(roe_png) if roe_png else None,
+        "group_note": group_note,
         "csv": str(csv_path),
         "bar_png": str(bar_png),
     })
