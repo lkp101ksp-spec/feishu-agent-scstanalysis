@@ -4,7 +4,8 @@ stdin: {"dataset_id": ..., "root_marker": "NKG7",
         "root_cluster": "",   # Phase 53：leiden 簇定根，与 root_marker 互斥
         "dyn_top_n": 50,      # Phase 53：动态基因 top N；0=跳过
         "engine": "dpt",      # dpt（默认）/ palantir
-        "start_cell": ""}     # palantir 专用显式根条码（优先级最高）
+        "start_cell": "",     # palantir 专用显式根条码（优先级最高）
+        "branch_top_n": 0}    # palantir 专用：分支推断 top N；0=跳过
 需 processed.h5ad（含 neighbors 图）。
 engine="dpt"：scanpy diffmap + DPT（Haghverdi 2016 图扩散族，覆盖
 Monocle 拟时序的排序场景；分支推断/BEAM/CytoTRACE2 不在范围）。
@@ -12,7 +13,10 @@ engine="palantir"：马尔可夫链扩散（Setty 2019），附终末态 + 分�
 概率宽表；产物 palantir_pt.csv（pt+ts_* 分支概率列）/
 terminal_states.csv / palantir_umap.png / palantir_branch_umap.png
 （分支概率分面图，每终末态一 panel 封顶 6，0-1 固定色阶），
-dyn 产物加 palantir_ 前缀。
+dyn 产物加 palantir_ 前缀；branch_top_n>0 附分支推断产物
+palantir_branch_assign.csv / palantir_branch_dyn.csv /
+palantir_branch_de.csv / palantir_branch_trend.png（BEAM-lite：
+归属 + 分支内动态基因 + pt 匹配分支间命运决定基因）。
 root 四模式：start_cell 显式条码 > root_cluster 簇内度最高 >
 root_marker raw 表达最高 > 皆空取第 0 个细胞（结果中说明）。
 
@@ -82,19 +86,47 @@ def _cluster_stats(clusters: pd.Series, pt: np.ndarray) -> pd.DataFrame:
     return stats.loc[sorted(stats.index, key=lambda c: (len(c), c))]
 
 
+def _dyn_stats(Xc: Any, col_of: dict[str, int], hvgs: list[str],
+               pt: np.ndarray, m: np.ndarray) -> pd.DataFrame:
+    """HVG ∩ raw 候选池逐基因 Spearman(pt, raw 表达) + BH 校正。
+
+    供 _dyn_genes（全图谱）与 _branch_analysis（分支内）共用；
+    m 为细胞掩码（如 np.isfinite(pt) 或分支归属 ∩ 有限 pt）；
+    返回 |rho| 降序 DataFrame(gene, rho, pval, qval)。
+    """
+    from scipy.stats import spearmanr
+    from statsmodels.stats.multitest import multipletests
+
+    pt_m = pt[m]
+    rows = []
+    for g in hvgs:
+        x = np.asarray(Xc[:, col_of[g]].todense()).ravel()[m]
+        if x.std() == 0:  # 零方差 → spearmanr 得 NaN，直接排外
+            rows.append((g, np.nan, np.nan))
+            continue
+        r = spearmanr(pt_m, x)
+        rows.append((g, r.statistic, r.pvalue))
+    df = pd.DataFrame(rows, columns=["gene", "rho", "pval"])
+    ok = np.isfinite(df["pval"].to_numpy())
+    df["qval"] = np.nan
+    df.loc[ok, "qval"] = multipletests(
+        df.loc[ok, "pval"], method="fdr_bh")[1]
+    return (df.sort_values("rho", key=abs, ascending=False,
+                           na_position="last").reset_index(drop=True))
+
+
 def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
                ds_dir: Any, prefix: str = "") -> dict[str, Any]:
     """动态基因趋势（Phase 53 "BEAM-lite"）。
 
     HVG ∩ raw 候选池逐基因 Spearman(pt, raw 表达) + BH 校正
-    （零方差/NaN 掩掉）→ |rho| 降序取 qval<0.05 的 top N；
-    产物 <prefix>dyn_genes.csv（全量）+ <prefix>trend_heatmap.png
-    （pt 排序×平滑 z-score）+ <prefix>trend_curves.png（top6 散点
-    +平滑曲线）；prefix 用于 palantir 引擎产物与 DPT 区分。
+    （零方差/NaN 掩掉，统计部分复用 _dyn_stats）→ |rho| 降序取
+    qval<0.05 的 top N；产物 <prefix>dyn_genes.csv（全量）+
+    <prefix>trend_heatmap.png（pt 排序×平滑 z-score）+
+    <prefix>trend_curves.png（top6 散点+平滑曲线）；prefix 用于
+    palantir 引擎产物与 DPT 区分。
     """
     import matplotlib.pyplot as plt
-    from scipy.stats import spearmanr
-    from statsmodels.stats.multitest import multipletests
 
     # OOM 教训（19149 真机验收 probe_pt_rss.py 实证）：逐基因
     # adata.raw[:, g] AnnData 切片每基因漏 ~13MB（500 基因 8.5GB 被杀）；
@@ -110,21 +142,7 @@ def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
             if g in col_of]
     m = np.isfinite(pt)
     pt_m, order = pt[m], np.argsort(pt[m])
-    rows = []
-    for g in hvgs:
-        x = _col(g)[m]
-        if x.std() == 0:  # 零方差 → spearmanr 得 NaN，直接排外
-            rows.append((g, np.nan, np.nan))
-            continue
-        r = spearmanr(pt_m, x)
-        rows.append((g, r.statistic, r.pvalue))
-    df = pd.DataFrame(rows, columns=["gene", "rho", "pval"])
-    ok = np.isfinite(df["pval"].to_numpy())
-    df["qval"] = np.nan
-    df.loc[ok, "qval"] = multipletests(
-        df.loc[ok, "pval"], method="fdr_bh")[1]
-    df = (df.sort_values("rho", key=abs, ascending=False,
-                         na_position="last").reset_index(drop=True))
+    df = _dyn_stats(Xc, col_of, hvgs, pt, m)
     sig = df[df["qval"] < 0.05]
     top = sig.head(top_n)
     fallback_note = ""
@@ -200,15 +218,192 @@ def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
     return out
 
 
+def _branch_analysis(adata: Any, pt: np.ndarray, pr: Any,
+                     terms: list[str], clusters: pd.Series,
+                     top_n: int, ds_dir: Any) -> dict[str, Any]:
+    """分支推断（BEAM-lite，对齐 Monocle2 BEAM 场景）。
+
+    三步：①argmax(branch_probs) 归属（max_prob<0.6 → unassigned，
+    低置信过渡态不强行站队）；②分支内（归属 ≥30 细胞）沿 pt 复用
+    _dyn_stats 取 top N；③两两分支 pt 排序 20 等量桶、同序号桶
+    中位数差 score=median(|Δ|)、配对 wilcoxon(n=20)+BH → 命运
+    决定基因。产物 palantir_branch_assign.csv /
+    palantir_branch_dyn.csv / palantir_branch_de.csv /
+    palantir_branch_trend.png（显著基因最多那对、top≤20 双面板
+    共享 ±2 色阶）。
+    """
+    import itertools
+
+    import matplotlib.pyplot as plt
+    from scipy.stats import wilcoxon
+    from statsmodels.stats.multitest import multipletests
+
+    THR = 0.6      # 归属置信阈值
+    MIN_CELLS = 30  # 分支参与 dyn/DE 的最少归属细胞数
+    N_BIN = 20     # pt 匹配等量桶数（= wilcoxon 样本量）
+
+    # 步骤 1：分支归属
+    prob_mat = np.asarray(pr.branch_probs[terms], dtype=float)
+    amax = prob_mat.argmax(axis=1)
+    maxp = prob_mat.max(axis=1)
+    branch = np.array([terms[i] for i in amax], dtype=object)
+    branch[maxp < THR] = "unassigned"
+    assign_df = pd.DataFrame({"leiden": clusters.values, "pt": pt,
+                              "branch": branch, "max_prob": maxp},
+                             index=adata.obs_names)
+    assign_csv = ds_dir / "palantir_branch_assign.csv"
+    assign_df.to_csv(assign_csv)
+    counts = {t: int((branch == t).sum()) for t in terms}
+    out: dict[str, Any] = {
+        "branch_assign_csv": str(assign_csv),
+        "branch_counts": counts,
+        "n_unassigned": int((branch == "unassigned").sum())}
+    notes: list[str] = []
+    if len(terms) < 2:
+        out["branch_note"] = (f"n_terminal={len(terms)} < 2; "
+                              "assignment only, dyn/DE skipped")
+        return out
+
+    # 内存纪律（同 _dyn_genes）：整矩阵一次 csc + 列索引字典
+    raw_names = adata.raw.var_names
+    col_of = {g: j for j, g in enumerate(raw_names)}
+    Xc = adata.raw.X.tocsc()
+
+    def _col(gene: str) -> np.ndarray:
+        return np.asarray(Xc[:, col_of[gene]].todense()).ravel()
+
+    hvgs = [g for g in adata.var_names[adata.var["highly_variable"]]
+            if g in col_of]
+    valid = [t for t in terms if counts[t] >= MIN_CELLS]
+    skipped = [t for t in terms if counts[t] < MIN_CELLS]
+    if skipped:
+        notes.append(f"branches < {MIN_CELLS} cells skipped: "
+                     f"{[t[-8:] for t in skipped]}")
+
+    # 步骤 2：分支内动态基因
+    dyn_rows = []
+    for t in valid:
+        m = (branch == t) & np.isfinite(pt)
+        df = _dyn_stats(Xc, col_of, hvgs, pt, m)
+        sig = df[df["qval"] < 0.05]
+        top = sig.head(top_n)
+        if len(top) < 6:  # 显著太少 → 按 |rho| 兜底
+            top = df.head(top_n)
+        for _, r in top.iterrows():
+            dyn_rows.append((t, r["gene"], r["rho"], r["qval"]))
+    dyn_csv = ds_dir / "palantir_branch_dyn.csv"
+    pd.DataFrame(dyn_rows,
+                 columns=["branch", "gene", "rho", "qval"]
+                 ).to_csv(dyn_csv, index=False)
+    out["branch_dyn_csv"] = str(dyn_csv)
+
+    # 步骤 3：两两分支 pt 匹配差异（命运决定基因）
+    de_rows = []
+    n_pairs = 0
+    for a, b in itertools.combinations(valid, 2):
+        sa = (branch == a) & np.isfinite(pt)
+        sb = (branch == b) & np.isfinite(pt)
+        if sa.sum() < MIN_CELLS or sb.sum() < MIN_CELLS:
+            continue
+        n_pairs += 1
+        ia = np.flatnonzero(sa)[np.argsort(pt[sa])]
+        ib = np.flatnonzero(sb)[np.argsort(pt[sb])]
+        bins_a = np.array_split(ia, N_BIN)
+        bins_b = np.array_split(ib, N_BIN)
+        pair = f"{a}_vs_{b}"
+        for g in hvgs:
+            x = _col(g)
+            ma = np.array([np.median(x[idx]) for idx in bins_a])
+            mb = np.array([np.median(x[idx]) for idx in bins_b])
+            d = ma - mb
+            if np.all(d == 0):  # 全零差 → wilcoxon 无解
+                continue
+            p = wilcoxon(d).pvalue
+            de_rows.append((pair, g, float(np.median(np.abs(d))),
+                            a if np.median(d) > 0 else b, p))
+    if n_pairs == 0:
+        notes.append("all branch pairs skipped (< "
+                     f"{MIN_CELLS} cells); assignment/dyn only")
+    if de_rows:
+        de_df = pd.DataFrame(de_rows,
+                             columns=["pair", "gene", "score",
+                                      "higher_in", "pval"])
+        de_df["qval"] = np.nan
+        for pair, sub in de_df.groupby("pair"):
+            de_df.loc[sub.index, "qval"] = multipletests(
+                sub["pval"], method="fdr_bh")[1]
+        de_df = de_df.sort_values(["pair", "score"],
+                                  ascending=[True, False])
+        de_csv = ds_dir / "palantir_branch_de.csv"
+        de_df.to_csv(de_csv, index=False)
+        out["branch_de_csv"] = str(de_csv)
+
+        # 对照热图：显著基因最多那对（top≤20，双面板共享 ±2）
+        sig_df = de_df[de_df["qval"] < 0.05]
+        if not sig_df.empty:
+            best = sig_df["pair"].value_counts().index[0]
+            genes = (sig_df[sig_df["pair"] == best]
+                     .head(min(20, top_n))["gene"].tolist())
+            ta, tb = best.split("_vs_")
+            panels = []
+            for t in (ta, tb):
+                sel = (branch == t) & np.isfinite(pt)
+                idx = np.flatnonzero(sel)[np.argsort(pt[sel])]
+                panels.append((t, idx))
+            w = max(10, min(len(p[1]) for p in panels) // 50)
+            fig = plt.figure(figsize=(
+                11, max(3, 0.16 * len(genes) + 1.8)))
+            gs = fig.add_gridspec(
+                2, 2, height_ratios=[1, max(4, len(genes) // 3)],
+                hspace=0.05, wspace=0.28)
+            im: Any = None  # 循环两次必赋值；Any 平 mypy arg-type
+            for j, (t, idx) in enumerate(panels):
+                mat = np.empty((len(genes), len(idx)))
+                for i, g in enumerate(genes):
+                    s = _smooth(_col(g)[idx], w)
+                    sd = s.std()
+                    mat[i] = (s - s.mean()) / sd if sd > 0 else 0.0
+                ax0 = fig.add_subplot(gs[0, j])
+                ax0.imshow(pt[idx][None, :], aspect="auto",
+                           cmap="viridis")
+                ax0.set_xticks([])
+                ax0.set_yticks([])
+                ax0.set_ylabel("pt", fontsize=7, rotation=0,
+                               va="center")
+                ax = fig.add_subplot(gs[1, j])
+                im = ax.imshow(mat, aspect="auto", cmap="RdBu_r",
+                               vmin=-2, vmax=2)
+                ax.set_yticks(range(len(genes)), genes, fontsize=6)
+                ax.set_xticks([])
+                ax.set_xlabel("cells ordered by pseudotime →",
+                              fontsize=8)
+                ax.set_title(f"branch {t[-8:]} (n={len(idx)})",
+                             fontsize=9)
+            fig.colorbar(im, ax=fig.axes, shrink=0.5,
+                         label="z-score (smoothed)")
+            trend_png = ds_dir / "palantir_branch_trend.png"
+            fig.savefig(trend_png, dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            out["branch_trend_png"] = str(trend_png)
+            if n_pairs > 1:
+                notes.append(
+                    f"{n_pairs} pairs; trend heatmap shows most-"
+                    f"significant pair only, rest in branch_de csv")
+    if notes:
+        out["branch_note"] = "; ".join(notes)
+    return out
+
+
 def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
-                  dyn_top_n: int,
+                  dyn_top_n: int, branch_top_n: int,
                   ds_dir: Any) -> tuple[dict[str, Any], np.ndarray]:
     """Palantir 引擎（Setty 2019）：马尔可夫链扩散伪时序 + 终末态。
 
     产物：palantir_pt.csv（pt + ts_<barcode> 分支概率宽表列）、
     terminal_states.csv（终末态条码/簇/pt）、palantir_umap.png
     （pt 着色 + 根红圈 + 终末态黑叉）；dyn_top_n>0 时动态基因复用
-    _dyn_genes（产物加 palantir_ 前缀）。
+    _dyn_genes（产物加 palantir_ 前缀）；branch_top_n>0 时分支
+    推断复用 _branch_analysis（BEAM-lite 三步）。
     """
     import matplotlib.pyplot as plt
     import palantir
@@ -261,13 +456,14 @@ def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
     # 产物 4：分支概率 UMAP 分面图（每终末态一 panel，封顶 6；
     # vmin/vmax=0/1 固定色阶保证跨 panel 可比）
     show = terms
-    branch_note = ""
+    branch_viz_note = ""
     if len(terms) > 6:
         peak = {t: float(np.asarray(pr.branch_probs[t]).max())
                 for t in terms}
         show = sorted(terms, key=lambda t: -peak[t])[:6]
-        branch_note = (f"n_terminal={len(terms)} > 6; "
-                       "branch umap shows top-6 by max probability")
+        branch_viz_note = (
+            f"n_terminal={len(terms)} > 6; "
+            "branch umap shows top-6 by max probability")
     k = max(1, len(show))
     fig, axes = plt.subplots(1, k, figsize=(4.6 * k, 4.0),
                              squeeze=False)
@@ -298,18 +494,24 @@ def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
         dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir,
                          prefix="palantir_")
 
+    branch: dict[str, Any] = {}
+    if branch_top_n > 0:
+        branch = _branch_analysis(adata, pt, pr, terms, clusters,
+                                  branch_top_n, ds_dir)
+
     out = {
         "start_cell": start,
         "n_terminal": len(terms),
         "terminal_states": term_df.head(5).to_dict("records"),
         **dyn,
+        **branch,
         "pseudotime_csv": str(pt_csv),
         "umap_png": str(umap_png),
         "terminal_csv": str(term_csv),
         "branch_umap_png": str(branch_png),
     }
-    if branch_note:
-        out["branch_note"] = branch_note
+    if branch_viz_note:
+        out["branch_viz_note"] = branch_viz_note
     return out, pt
 
 
@@ -322,6 +524,7 @@ def main() -> None:
     root_marker = str(args.get("root_marker", "")).strip()
     root_cluster = str(args.get("root_cluster", "")).strip()
     dyn_top_n = int(args.get("dyn_top_n", 50))
+    branch_top_n = int(args.get("branch_top_n", 0))
     engine = str(args.get("engine", "dpt")).strip().lower()
     start_cell = str(args.get("start_cell", "")).strip()
     if engine not in ("dpt", "palantir"):
@@ -331,6 +534,10 @@ def main() -> None:
     if start_cell and engine != "palantir":
         fail("INVALID_INPUT",
              "start_cell only valid with engine='palantir'")
+        return
+    if branch_top_n > 0 and engine != "palantir":
+        fail("INVALID_INPUT",
+             "branch_top_n only valid with engine='palantir'")
         return
     if root_marker and root_cluster:
         fail("INVALID_INPUT",
@@ -389,10 +596,11 @@ def main() -> None:
     ds_dir = WS_ROOT / args["dataset_id"] / "pseudotime"
     ds_dir.mkdir(parents=True, exist_ok=True)
 
-    if dyn_top_n > 0 and "highly_variable" not in adata.var:
+    if (dyn_top_n > 0 or branch_top_n > 0) \
+            and "highly_variable" not in adata.var:
         fail("INVALID_INPUT",
              "processed.h5ad lacks highly_variable column; "
-             "run sc_process first (or set dyn_top_n=0)")
+             "run sc_process first (or set dyn_top_n=branch_top_n=0)")
         return
 
     if engine == "palantir":
@@ -401,7 +609,7 @@ def main() -> None:
                  "processed.h5ad lacks X_pca; run sc_process first")
             return
         out, pt = _run_palantir(adata, iroot, clusters, dyn_top_n,
-                                ds_dir)
+                                branch_top_n, ds_dir)
         stats = _cluster_stats(clusters, pt)
         emit({
             "ok": True,

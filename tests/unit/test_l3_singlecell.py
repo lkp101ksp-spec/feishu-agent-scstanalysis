@@ -345,6 +345,30 @@ def test_sc_pseudotime_defaults_palantir_phase(tmp_path):
     assert args[1]["start_cell"] == ""
 
 
+def test_sc_pseudotime_branch_top_n(tmp_path):
+    """分支推断：branch_top_n 透传 + schema 含参数。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "palantir",
+        "n_unassigned": 3, "branch_counts": {"AAAC-1": 120}}
+    out = reg.get("sc_pseudotime").handler(
+        dataset_ref="d", engine="palantir", branch_top_n=50)
+    args = runner.run.call_args.args
+    assert args[1]["branch_top_n"] == 50
+    assert out["n_unassigned"] == 3
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert "branch_top_n" in props
+
+
+def test_sc_pseudotime_defaults_branch_phase(tmp_path):
+    """分支推断相默认值：branch_top_n=0（跳过，回归零变化）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True}
+    reg.get("sc_pseudotime").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[1]["branch_top_n"] == 0
+
+
 # === Phase 33：常用分析第二批（组间差异/亚聚类/整合/组成） ===
 
 

@@ -17,7 +17,13 @@ BioRunner 调用约定：docker run --rm --network none -v <workspace>:/ws
   方向必正）+ n_terminal≥1 + palantir 三产物落盘；
 ⑥engine=palantir + root_cluster → root_mode=cluster；
 ⑦engine=palantir + start_cell 显式条码 → root_mode=explicit；
-⑧start_cell 非法条码 / ⑨engine 非法值 → INVALID_INPUT。
+⑧start_cell 非法条码 / ⑨engine 非法值 → INVALID_INPUT；
+⑩分支推断（BEAM-lite，独立双分支库）：trunk 100 细胞 t∈[0,0.5]
+  后分命运 A/B 各 100 延伸 t→1，G_trunk_up 全程升、G_fateA/G_fateB
+  仅各自命运后段升（替换式 amp=60 同纪律）→ palantir+branch_top_n
+  =50：归属率>0.5 + 分支 DE top 含 G_fateA/G_fateB 且 higher_in
+  方向正确（归属细胞≥70% 来自对应人工命运簇）+ 四产物落盘；
+⑪dpt+branch_top_n>0 → INVALID_INPUT。
 """
 import json
 import subprocess
@@ -64,9 +70,9 @@ adata.write_h5ad(ds_dir / "processed.h5ad")
 modal_cluster = adata.obs["leiden"].value_counts().index[0]
 
 
-def run_pt(**kw):
+def run_pt(ds: str = DS, **kw):
     """容器内跑 pseudotime.py（stdin JSON），返回 emit 的结果 dict。"""
-    payload = json.dumps({"dataset_id": DS, **kw})
+    payload = json.dumps({"dataset_id": ds, **kw})
     r = subprocess.run(BASE + ["python", "/opt/sc_tools/pseudotime.py"],
                        input=payload, capture_output=True, text=True,
                        timeout=1200)
@@ -146,6 +152,66 @@ assert not bad8["ok"] and bad8["error_code"] == "INVALID_INPUT", bad8
 bad9 = run_pt(engine="monocle")
 assert not bad9["ok"] and bad9["error_code"] == "INVALID_INPUT", bad9
 
+# ⑩ 分支推断（BEAM-lite）：独立双分支合成库——trunk t∈[0,0.5]
+# 后随机分命运 A/B 延伸 t→1；替换式注入 amp=60 同 Phase 53 纪律
+DS2 = "scpseudotimebrsmoke"
+n_tr, n_f = 100, 100
+t2 = np.concatenate([np.linspace(0, 0.5, n_tr),
+                     np.linspace(0.5, 1, n_f),
+                     np.linspace(0.5, 1, n_f)])
+n2 = len(t2)
+fate = np.array(["trunk"] * n_tr + ["A"] * n_f + ["B"] * n_f)
+X2 = rng.poisson(2, (n2, 50)).astype(np.float32)
+X2[:, 0] = rng.poisson(t2 * 60 + 0.1, n2).astype(np.float32)
+sig_a = np.where(fate == "A", (t2 - 0.5) * 2, 0.0)
+sig_b = np.where(fate == "B", (t2 - 0.5) * 2, 0.0)
+X2[:, 1] = rng.poisson(sig_a * 60 + 0.1, n2).astype(np.float32)
+X2[:, 2] = rng.poisson(sig_b * 60 + 0.1, n2).astype(np.float32)
+ad2 = sc.AnnData(csr_matrix(X2))
+ad2.var_names = ["G_trunk_up", "G_fateA", "G_fateB"] + \
+    [f"B{i}" for i in range(3, 50)]
+sc.pp.normalize_total(ad2)
+sc.pp.log1p(ad2)
+ad2.raw = ad2
+ad2.var["highly_variable"] = True  # 全 50 基因入候选池（确定性）
+sc.pp.pca(ad2)
+sc.pp.neighbors(ad2)
+ad2.obs["leiden"] = pd.Categorical(fate)  # trunk/A/B 人工分簇
+ad2.obsm["X_umap"] = ad2.obsm["X_pca"][:, :2]
+ds2_dir = WS / DS2
+ds2_dir.mkdir(parents=True, exist_ok=True)
+ad2.write_h5ad(ds2_dir / "processed.h5ad")
+
+o10 = run_pt(DS2, engine="palantir", dyn_top_n=0, branch_top_n=50)
+assert o10["ok"] and o10["method"] == "palantir", o10
+assert o10["n_terminal"] >= 2, o10
+assign_rate = 1 - o10["n_unassigned"] / n2
+assert assign_rate > 0.5, f"归属率 {assign_rate:.2f} <= 0.5"
+assert sum(o10["branch_counts"].values()) + o10["n_unassigned"] == n2
+
+br_dir = ds2_dir / "pseudotime"
+de = pd.read_csv(br_dir / "palantir_branch_de.csv")
+assign = pd.read_csv(br_dir / "palantir_branch_assign.csv",
+                     index_col=0)
+assign["branch"] = assign["branch"].astype(str)
+top_de = (de[de["qval"] < 0.05]
+          .sort_values("score", ascending=False).head(20))
+de_genes = set(top_de["gene"])
+assert {"G_fateA", "G_fateB"} <= de_genes, (
+    f"分支 DE top 缺命运基因: {sorted(de_genes)[:10]}")
+for g, lab in (("G_fateA", "A"), ("G_fateB", "B")):
+    h = str(top_de.loc[top_de["gene"] == g, "higher_in"].iloc[0])
+    frac = float((assign.loc[assign["branch"] == h, "leiden"]
+                  == lab).mean())
+    assert frac > 0.7, f"{g} higher_in 分支 {lab} 纯度仅 {frac:.2f}"
+for f in ("palantir_branch_assign.csv", "palantir_branch_dyn.csv",
+          "palantir_branch_de.csv", "palantir_branch_trend.png"):
+    assert (br_dir / f).exists(), f
+
+# ⑪ dpt + branch_top_n>0 → INVALID_INPUT（dpt 不推断分支）
+bad11 = run_pt(DS2, branch_top_n=50)
+assert not bad11["ok"] and bad11["error_code"] == "INVALID_INPUT", bad11
+
 for f in ("pseudotime/pseudotime.csv",
           "pseudotime/pseudotime_umap.png",
           "pseudotime/paga_graph.png",
@@ -160,4 +226,7 @@ print("SMOKE OK",
       "| cluster root:", o2["root_note"],
       "| mutex rejected | dyn_top_n=0 compat",
       f"| palantir rho={rho_pal:.3f} n_terminal={o5['n_terminal']}",
-      "| cluster/explicit root ok | bad start_cell/engine rejected")
+      "| cluster/explicit root ok | bad start_cell/engine rejected",
+      f"| branch assign_rate={assign_rate:.2f} "
+      f"n_terminal={o10['n_terminal']} de_top={sorted(de_genes)[:4]}",
+      "| dpt+branch_top_n rejected")

@@ -174,14 +174,15 @@ def register_l3_singlecell(
 
     def sc_pseudotime(*, dataset_ref: str, root_marker: str = "",
                       root_cluster: str = "", dyn_top_n: int = 50,
-                      engine: str = "dpt",
-                      start_cell: str = "") -> dict[str, Any]:
-        """拟时序（Phase 32/53/Palantir 相）：DPT 或 Palantir 引擎。"""
+                      engine: str = "dpt", start_cell: str = "",
+                      branch_top_n: int = 0) -> dict[str, Any]:
+        """拟时序（Phase 32/53/Palantir/分支推断相）：DPT 或 Palantir。"""
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
                 "root_cluster": root_cluster, "dyn_top_n": dyn_top_n,
                 "engine": engine, "start_cell": start_cell,
+                "branch_top_n": branch_top_n,
             }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
@@ -703,8 +704,10 @@ def register_l3_singlecell(
             "start_cell 显式根细胞条码（优先级最高）。输出每簇伪时序"
             "均值表、pseudotime csv、UMAP 伪时序图；DPT 附 PAGA 轨迹"
             "图，Palantir 附终末态表与分支概率列；dyn_top_n>0 附动态"
-            "基因趋势（dyn_genes.csv+趋势热图+top6 曲线）。"
-            "注意：DPT 不推断分支（Monocle2 BEAM/CytoTRACE2 不在范围）。"
+            "基因趋势（dyn_genes.csv+趋势热图+top6 曲线）；"
+            "branch_top_n>0 附分支推断（分支归属+分支间命运决定基因，"
+            "对齐 Monocle2 BEAM 场景）。"
+            "注意：DPT 不推断分支（CytoTRACE2 不在范围）。"
             "需先跑 sc_process。"
         ),
         parameters={
@@ -731,6 +734,12 @@ def register_l3_singlecell(
                                "description": "Palantir 引擎专用：显式根"
                                               "细胞条码，优先级高于 "
                                               "root_marker/root_cluster"},
+                "branch_top_n": {"type": "integer", "default": 0,
+                                 "description": "Palantir 引擎专用：分支"
+                                                "推断（BEAM-lite）top N；"
+                                                "0=跳过。分支归属+分支内"
+                                                "动态基因+pt 匹配分支间"
+                                                "差异（命运决定基因）"},
             },
             "required": ["dataset_ref"],
         },
