@@ -1,20 +1,32 @@
-"""sc_pseudotime：扩散伪时序（Phase 32 基座 / Phase 53 动态基因+簇定根）。
+"""sc_pseudotime：拟时序双引擎（Phase 32/53 DPT + Palantir 相）。
 
 stdin: {"dataset_id": ..., "root_marker": "NKG7",
         "root_cluster": "",   # Phase 53：leiden 簇定根，与 root_marker 互斥
-        "dyn_top_n": 50}      # Phase 53：动态基因 top N；0=跳过
-需 processed.h5ad（含 neighbors 图）。方法 scanpy diffmap + DPT
-（Haghverdi 2016 图扩散族，覆盖 Monocle 拟时序的排序场景；
-分支推断/BEAM/CytoTRACE2 不在本工具范围）。
-root 三模式：root_marker raw 表达最高细胞 / root_cluster 簇内邻居
-图度最高细胞 / 皆空取第 0 个细胞（结果中说明）。
+        "dyn_top_n": 50,      # Phase 53：动态基因 top N；0=跳过
+        "engine": "dpt",      # dpt（默认）/ palantir
+        "start_cell": ""}     # palantir 专用显式根条码（优先级最高）
+需 processed.h5ad（含 neighbors 图）。
+engine="dpt"：scanpy diffmap + DPT（Haghverdi 2016 图扩散族，覆盖
+Monocle 拟时序的排序场景；分支推断/BEAM/CytoTRACE2 不在范围）。
+engine="palantir"：马尔可夫链扩散（Setty 2019），附终末态 + 分支
+概率宽表；产物 palantir_pt.csv（pt+ts_* 分支概率列）/
+terminal_states.csv / palantir_umap.png，dyn 产物加 palantir_ 前缀。
+root 四模式：start_cell 显式条码 > root_cluster 簇内度最高 >
+root_marker raw 表达最高 > 皆空取第 0 个细胞（结果中说明）。
 
 容器探针（2026-09-13，bio 镜像断网实测）：
 - statsmodels.multipletests 随 scanpy 现成可用（BH 校正）；
 - spearmanr 零方差基因返回 rho=NaN（ConstantInputWarning），
   须掩掉不进入排序；pt 非有限（不连通）细胞先掩再算；
 - 19149×2000 基因逐基因 Spearman 循环仅 3.4s（timeout 1200 宽裕）；
-- 移动平均平滑窗口 max(10, n//50)。
+- 移动平均平滑窗口 max(10, n//50)；
+- palantir 1.4.5 与镜像 numpy 2.5.2 零 pin 冲突（mellon 1.7.1 已修
+  numpy 2 兼容），300 细胞合成梯度全工作流 rho=0.9917
+  （palantir_trial.py 留证）；
+- 19149 真机（root_cluster=2+dyn50，16g 容器）palantir 全程 75.6s
+  （vs DPT 34s，jax 编译开销在内，timeout 1200 宽裕）；与 DPT 的
+  pt Spearman 0.654、dyn top10 重叠 6/10（均 T 身份基因）、根簇
+  pt 均值全图谱第 2 小、终末态 2 个落于高 pt 远端簇。
 """
 from __future__ import annotations
 
@@ -60,14 +72,23 @@ def _smooth(y: np.ndarray, w: int) -> np.ndarray:
     return np.convolve(y, np.ones(w) / w, mode="same")
 
 
+def _cluster_stats(clusters: pd.Series, pt: np.ndarray) -> pd.DataFrame:
+    """每簇 pt 均值/中位数/细胞数表（簇名自然序）。"""
+    stats = (pd.DataFrame({"cluster": clusters.values, "pt": pt})
+             .groupby("cluster")["pt"]
+             .agg(["mean", "median", "size"]))
+    return stats.loc[sorted(stats.index, key=lambda c: (len(c), c))]
+
+
 def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
-               ds_dir: Any) -> dict[str, Any]:
+               ds_dir: Any, prefix: str = "") -> dict[str, Any]:
     """动态基因趋势（Phase 53 "BEAM-lite"）。
 
     HVG ∩ raw 候选池逐基因 Spearman(pt, raw 表达) + BH 校正
     （零方差/NaN 掩掉）→ |rho| 降序取 qval<0.05 的 top N；
-    产物 dyn_genes.csv（全量）+ trend_heatmap.png（pt 排序×平滑
-    z-score）+ trend_curves.png（top6 散点+平滑曲线）。
+    产物 <prefix>dyn_genes.csv（全量）+ <prefix>trend_heatmap.png
+    （pt 排序×平滑 z-score）+ <prefix>trend_curves.png（top6 散点
+    +平滑曲线）；prefix 用于 palantir 引擎产物与 DPT 区分。
     """
     import matplotlib.pyplot as plt
     from scipy.stats import spearmanr
@@ -109,7 +130,7 @@ def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
         top = df.head(top_n)
         fallback_note = (f"sig(q<0.05) only {int(len(sig))}; "
                          "heatmap/curves fall back to top |rho|")
-    dyn_csv = ds_dir / "dyn_genes.csv"
+    dyn_csv = ds_dir / f"{prefix}dyn_genes.csv"
     df.to_csv(dyn_csv, index=False)
 
     # 趋势热图：细胞按 pt 升序 × top 基因（平滑后 z-score）
@@ -137,7 +158,7 @@ def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
     ax.set_title(f"dynamic genes along pseudotime (top {len(genes)})",
                  fontsize=9)
     fig.colorbar(im, ax=ax, shrink=0.6, label="z-score (smoothed)")
-    heat_png = ds_dir / "trend_heatmap.png"
+    heat_png = ds_dir / f"{prefix}trend_heatmap.png"
     fig.savefig(heat_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -160,7 +181,7 @@ def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
         ax.axis("off")
     fig.suptitle("top dynamic genes (smoothed trend)", fontsize=10)
     fig.tight_layout()
-    curves_png = ds_dir / "trend_curves.png"
+    curves_png = ds_dir / f"{prefix}trend_curves.png"
     fig.savefig(curves_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -177,8 +198,83 @@ def _dyn_genes(adata: Any, pt: np.ndarray, top_n: int,
     return out
 
 
+def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
+                  dyn_top_n: int,
+                  ds_dir: Any) -> tuple[dict[str, Any], np.ndarray]:
+    """Palantir 引擎（Setty 2019）：马尔可夫链扩散伪时序 + 终末态。
+
+    产物：palantir_pt.csv（pt + ts_<barcode> 分支概率宽表列）、
+    terminal_states.csv（终末态条码/簇/pt）、palantir_umap.png
+    （pt 着色 + 根红圈 + 终末态黑叉）；dyn_top_n>0 时动态基因复用
+    _dyn_genes（产物加 palantir_ 前缀）。
+    """
+    import matplotlib.pyplot as plt
+    import palantir
+
+    palantir.utils.run_diffusion_maps(adata, n_components=5)
+    palantir.utils.determine_multiscale_space(adata)
+    start = str(adata.obs_names[iroot])
+    pr = palantir.core.run_palantir(adata, start, num_waypoints=1200)
+    pt = np.asarray(pr.pseudotime, dtype=float)
+    terms = [str(t) for t in pr.branch_probs.columns]
+
+    # 产物 1：pt + 分支概率宽表（一文件齐）
+    pt_df = pd.DataFrame({"leiden": clusters.values,
+                          "palantir_pseudotime": pt},
+                         index=adata.obs_names)
+    for t in terms:
+        pt_df[f"ts_{t}"] = np.asarray(pr.branch_probs[t], dtype=float)
+    pt_csv = ds_dir / "palantir_pt.csv"
+    pt_df.to_csv(pt_csv)
+
+    # 产物 2：终末态表
+    tidx = [int(np.flatnonzero(adata.obs_names == t)[0]) for t in terms]
+    term_df = pd.DataFrame({
+        "cell": terms,
+        "leiden": [str(clusters.iloc[j]) for j in tidx],
+        "pseudotime": [_rf(pt[j]) for j in tidx]})
+    term_csv = ds_dir / "terminal_states.csv"
+    term_df.to_csv(term_csv, index=False)
+
+    # 产物 3：UMAP（pt viridis + 根红圈 + 终末态黑叉）
+    umap = np.asarray(adata.obsm["X_umap"])
+    fig, ax = plt.subplots(figsize=(5.2, 4.2))
+    s = ax.scatter(umap[:, 0], umap[:, 1], s=4, c=pt, cmap="viridis",
+                   linewidths=0)
+    ax.scatter(umap[iroot, 0], umap[iroot, 1], s=90, facecolors="none",
+               edgecolors="red", linewidths=1.6, label="root")
+    if tidx:
+        ax.scatter(umap[tidx, 0], umap[tidx, 1], s=70, marker="x",
+                   c="black", linewidths=1.8, label="terminal")
+    ax.legend(loc="upper right", fontsize=8)
+    fig.colorbar(s, ax=ax, fraction=0.046, label="Palantir pseudotime")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(f"Palantir pseudotime (root: {start})", fontsize=9)
+    fig.tight_layout()
+    umap_png = ds_dir / "palantir_umap.png"
+    fig.savefig(umap_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    dyn: dict[str, Any] = {}
+    if dyn_top_n > 0:
+        dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir,
+                         prefix="palantir_")
+
+    out = {
+        "start_cell": start,
+        "n_terminal": len(terms),
+        "terminal_states": term_df.head(5).to_dict("records"),
+        **dyn,
+        "pseudotime_csv": str(pt_csv),
+        "umap_png": str(umap_png),
+        "terminal_csv": str(term_csv),
+    }
+    return out, pt
+
+
 def main() -> None:
-    """主流程：diffmap → 定根 → DPT → UMAP/PAGA 图 + 每簇均值表。"""
+    """主流程：定根四模式 → 按 engine 分路（DPT / Palantir）。"""
     import matplotlib.pyplot as plt
     import scanpy as sc
 
@@ -186,6 +282,16 @@ def main() -> None:
     root_marker = str(args.get("root_marker", "")).strip()
     root_cluster = str(args.get("root_cluster", "")).strip()
     dyn_top_n = int(args.get("dyn_top_n", 50))
+    engine = str(args.get("engine", "dpt")).strip().lower()
+    start_cell = str(args.get("start_cell", "")).strip()
+    if engine not in ("dpt", "palantir"):
+        fail("INVALID_INPUT",
+             f"engine {engine!r} not in ['dpt', 'palantir']")
+        return
+    if start_cell and engine != "palantir":
+        fail("INVALID_INPUT",
+             "start_cell only valid with engine='palantir'")
+        return
     if root_marker and root_cluster:
         fail("INVALID_INPUT",
              "root_marker and root_cluster are mutually exclusive; "
@@ -204,9 +310,18 @@ def main() -> None:
         return
     clusters = adata.obs["leiden"].astype(str)
 
-    # 定根三模式：marker raw 表达最高 / cluster 簇内度最高 / cell#0
+    # 定根四模式：start_cell 显式 > cluster 度根 > marker 最高 > cell#0
     root_mode = "fallback"
-    if root_cluster:
+    if start_cell:
+        hits = np.flatnonzero(adata.obs_names == start_cell)
+        if len(hits) == 0:
+            fail("INVALID_INPUT",
+                 f"start_cell {start_cell!r} not in obs_names")
+            return
+        iroot = int(hits[0])
+        root_mode = "explicit"
+        root_note = f"explicit start_cell {start_cell} (#{iroot})"
+    elif root_cluster:
         avail = sorted(clusters.unique().tolist(),
                        key=lambda c: (len(c), c))
         if root_cluster not in set(clusters):
@@ -231,19 +346,49 @@ def main() -> None:
             root_note = "root_marker empty; using cell #0"
     adata.uns["iroot"] = iroot
 
+    ds_dir = WS_ROOT / args["dataset_id"] / "pseudotime"
+    ds_dir.mkdir(parents=True, exist_ok=True)
+
+    if dyn_top_n > 0 and "highly_variable" not in adata.var:
+        fail("INVALID_INPUT",
+             "processed.h5ad lacks highly_variable column; "
+             "run sc_process first (or set dyn_top_n=0)")
+        return
+
+    if engine == "palantir":
+        if "X_pca" not in adata.obsm:
+            fail("INVALID_INPUT",
+                 "processed.h5ad lacks X_pca; run sc_process first")
+            return
+        out, pt = _run_palantir(adata, iroot, clusters, dyn_top_n,
+                                ds_dir)
+        stats = _cluster_stats(clusters, pt)
+        emit({
+            "ok": True,
+            "dataset_ref": args["dataset_id"],
+            "method": "palantir",
+            "engine": engine,
+            "n_cells": int(adata.n_obs),
+            "root_marker": root_marker,
+            "root_cluster": root_cluster,
+            "root_mode": root_mode,
+            "root_cell_index": iroot,
+            "root_note": root_note,
+            **out,
+            "per_cluster": [
+                {"cluster": c, "mean": _rf(r["mean"]),
+                 "median": _rf(r["median"]), "n_cells": int(r["size"])}
+                for c, r in stats.iterrows()],
+        })
+        return
+
     sc.tl.diffmap(adata)
     sc.tl.dpt(adata)
     pt = adata.obs["dpt_pseudotime"].to_numpy(dtype=float)
     n_inf = int(np.sum(~np.isfinite(pt)))
     pt = np.where(np.isfinite(pt), pt, np.nan)  # inf（不连通）→ nan
 
-    stats = (pd.DataFrame({"cluster": clusters.values, "pt": pt})
-             .groupby("cluster")["pt"]
-             .agg(["mean", "median", "size"]))
-    stats = stats.loc[sorted(stats.index, key=lambda c: (len(c), c))]
-
-    ds_dir = WS_ROOT / args["dataset_id"] / "pseudotime"
-    ds_dir.mkdir(parents=True, exist_ok=True)
+    stats = _cluster_stats(clusters, pt)
 
     pt_df = pd.DataFrame({"leiden": clusters.values, "dpt_pseudotime": pt},
                          index=adata.obs_names)
@@ -297,17 +442,13 @@ def main() -> None:
 
     dyn: dict[str, Any] = {}
     if dyn_top_n > 0:
-        if "highly_variable" not in adata.var:
-            fail("INVALID_INPUT",
-                 "processed.h5ad lacks highly_variable column; "
-                 "run sc_process first (or set dyn_top_n=0)")
-            return
         dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir)
 
     emit({
         "ok": True,
         "dataset_ref": args["dataset_id"],
         "method": "diffmap_dpt",
+        "engine": engine,
         "n_cells": int(adata.n_obs),
         "root_marker": root_marker,
         "root_cluster": root_cluster,

@@ -12,7 +12,12 @@ BioRunner 调用约定：docker run --rm --network none -v <workspace>:/ws
 断言：①默认调用 G_up/G_down 进 top_dyn 且三产物落盘；
 ②root_cluster=众数簇 → root_mode=cluster 且 root 属该簇；
 ③root_marker+root_cluster 同给 → INVALID_INPUT；
-④dyn_top_n=0 → ok 且无 dyn 键（Phase 32 现状兼容）。
+④dyn_top_n=0 → ok 且无 dyn 键（Phase 32 现状兼容）；
+⑤engine=palantir：pt vs 真值 t 的 rho>0.9（根 cell#0=t≈0 端
+  方向必正）+ n_terminal≥1 + palantir 三产物落盘；
+⑥engine=palantir + root_cluster → root_mode=cluster；
+⑦engine=palantir + start_cell 显式条码 → root_mode=explicit；
+⑧start_cell 非法条码 / ⑨engine 非法值 → INVALID_INPUT。
 """
 import json
 import subprocess
@@ -22,6 +27,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from scipy.sparse import csr_matrix
+from scipy.stats import spearmanr
 
 WS = Path("I:/飞书agent/bio_workspace")
 DS = "scpseudotimesmoke"
@@ -102,6 +108,40 @@ o4 = run_pt(dyn_top_n=0, root_marker="G_up")
 assert o4["ok"] and o4["root_mode"] == "marker", o4
 assert "top_dyn" not in o4 and "dyn_csv" not in o4, o4.keys()
 
+# ⑤ engine=palantir 默认：pt vs 真值 t 强正相关 + 终末态 + 三产物
+o5 = run_pt(engine="palantir")
+assert o5["ok"] and o5["method"] == "palantir", o5
+assert o5["root_mode"] == "fallback" and o5["root_cell_index"] == 0, o5
+assert o5["n_terminal"] >= 1, o5
+pal_pt = pd.read_csv(ds_dir / "pseudotime/palantir_pt.csv",
+                     index_col=0)["palantir_pseudotime"]
+pal_pt.index = pal_pt.index.astype(str)
+rho_pal = float(spearmanr(pal_pt.loc[[str(i) for i in range(n)]],
+                          t).statistic)
+assert rho_pal > 0.9, f"palantir pt vs t rho={rho_pal}"
+for f in ("pseudotime/palantir_pt.csv",
+          "pseudotime/terminal_states.csv",
+          "pseudotime/palantir_umap.png"):
+    assert (ds_dir / f).exists(), f
+
+# ⑥ palantir + root_cluster → cluster 模式定根
+o6 = run_pt(engine="palantir", root_cluster=modal_cluster)
+assert o6["ok"] and o6["root_mode"] == "cluster", o6
+assert f"cluster {modal_cluster}" in o6["root_note"], o6["root_note"]
+
+# ⑦ palantir + start_cell 显式条码 → explicit 模式（条码 "0"=t≈0 端）
+o7 = run_pt(engine="palantir", start_cell="0")
+assert o7["ok"] and o7["root_mode"] == "explicit", o7
+assert o7["start_cell"] == "0" and o7["root_cell_index"] == 0, o7
+
+# ⑧ start_cell 非法条码 → INVALID_INPUT（显式参数严格不兜底）
+bad8 = run_pt(engine="palantir", start_cell="NO_SUCH_CELL")
+assert not bad8["ok"] and bad8["error_code"] == "INVALID_INPUT", bad8
+
+# ⑨ engine 非法值 → INVALID_INPUT
+bad9 = run_pt(engine="monocle")
+assert not bad9["ok"] and bad9["error_code"] == "INVALID_INPUT", bad9
+
 for f in ("pseudotime/pseudotime.csv",
           "pseudotime/pseudotime_umap.png",
           "pseudotime/paga_graph.png",
@@ -114,4 +154,6 @@ print("SMOKE OK",
       f"G_up rho={rhos['G_up']:.3f} G_down rho={rhos['G_down']:.3f}",
       f"n_dyn={o1['n_dyn']}",
       "| cluster root:", o2["root_note"],
-      "| mutex rejected | dyn_top_n=0 compat")
+      "| mutex rejected | dyn_top_n=0 compat",
+      f"| palantir rho={rho_pal:.3f} n_terminal={o5['n_terminal']}",
+      "| cluster/explicit root ok | bad start_cell/engine rejected")

@@ -173,12 +173,15 @@ def register_l3_singlecell(
         return out
 
     def sc_pseudotime(*, dataset_ref: str, root_marker: str = "",
-                      root_cluster: str = "", dyn_top_n: int = 50) -> dict[str, Any]:
-        """扩散伪时序（Phase 32/53）：diffmap+DPT → 伪时序/轨迹图/动态基因。"""
+                      root_cluster: str = "", dyn_top_n: int = 50,
+                      engine: str = "dpt",
+                      start_cell: str = "") -> dict[str, Any]:
+        """拟时序（Phase 32/53/Palantir 相）：DPT 或 Palantir 引擎。"""
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
                 "root_cluster": root_cluster, "dyn_top_n": dyn_top_n,
+                "engine": engine, "start_cell": start_cell,
             }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
@@ -691,15 +694,17 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_pseudotime",
         description=(
-            "扩散伪时序（Phase 32/53，scanpy diffmap+DPT，对齐 Monocle 拟时序排序场景）："
-            "推断细胞分化/发育顺序。定根二选一：root_marker 标记基因"
-            "（取其表达最高的细胞为根，如干细胞/前体 marker）或 "
-            "root_cluster 指定 leiden 簇（簇内邻居图度最高细胞为根）；"
-            "皆空取第 0 个细胞。输出每簇伪时序均值表、pseudotime.csv、"
-            "UMAP 伪时序图（标注根细胞）与 PAGA 轨迹图；Phase 53 起附"
-            "动态基因趋势（dyn_top_n>0：沿伪时序 Spearman+BH 筛 top "
-            "动态基因，dyn_genes.csv+趋势热图+top6 曲线）。"
-            "注意：不推断分支（Monocle2 BEAM/CytoTRACE2 不在范围）。"
+            "拟时序双引擎（Phase 32/53 DPT + Palantir）：推断细胞分化/"
+            "发育顺序。engine='dpt'（默认）：scanpy diffmap+DPT，对齐 "
+            "Monocle 拟时序排序场景；engine='palantir'：马尔可夫链扩散"
+            "（Setty 2019），额外给出终末态与分支概率（部分覆盖分支"
+            "推断需求）。定根：engine='dpt' 时 root_marker/root_cluster "
+            "二选一（皆空取第 0 个细胞）；engine='palantir' 时可另给 "
+            "start_cell 显式根细胞条码（优先级最高）。输出每簇伪时序"
+            "均值表、pseudotime csv、UMAP 伪时序图；DPT 附 PAGA 轨迹"
+            "图，Palantir 附终末态表与分支概率列；dyn_top_n>0 附动态"
+            "基因趋势（dyn_genes.csv+趋势热图+top6 曲线）。"
+            "注意：DPT 不推断分支（Monocle2 BEAM/CytoTRACE2 不在范围）。"
             "需先跑 sc_process。"
         ),
         parameters={
@@ -718,6 +723,14 @@ def register_l3_singlecell(
                 "dyn_top_n": {"type": "integer", "default": 50,
                               "description": "动态基因分析 top N；0=跳过"
                                              "（纯 Phase 32 行为）"},
+                "engine": {"type": "string", "default": "dpt",
+                           "description": "拟时序引擎：dpt（默认，纯排序）/"
+                                          "palantir（马尔可夫链扩散，附"
+                                          "终末态+分支概率）"},
+                "start_cell": {"type": "string", "default": "",
+                               "description": "Palantir 引擎专用：显式根"
+                                              "细胞条码，优先级高于 "
+                                              "root_marker/root_cluster"},
             },
             "required": ["dataset_ref"],
         },

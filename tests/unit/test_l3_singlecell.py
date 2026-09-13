@@ -319,6 +319,32 @@ def test_sc_pseudotime_defaults_phase53(tmp_path):
     assert args[1]["root_cluster"] == ""
 
 
+def test_sc_pseudotime_palantir_engine(tmp_path):
+    """Palantir 引擎：engine/start_cell 透传 + schema 含两参数。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "palantir",
+        "root_mode": "explicit", "n_terminal": 2}
+    out = reg.get("sc_pseudotime").handler(
+        dataset_ref="d", engine="palantir", start_cell="AAAC-1")
+    args = runner.run.call_args.args
+    assert args[1]["engine"] == "palantir"
+    assert args[1]["start_cell"] == "AAAC-1"
+    assert out["method"] == "palantir"
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert "engine" in props and "start_cell" in props
+
+
+def test_sc_pseudotime_defaults_palantir_phase(tmp_path):
+    """Palantir 相默认值：engine='dpt'、start_cell=''（回归零变化）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True}
+    reg.get("sc_pseudotime").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[1]["engine"] == "dpt"
+    assert args[1]["start_cell"] == ""
+
+
 # === Phase 33：常用分析第二批（组间差异/亚聚类/整合/组成） ===
 
 
