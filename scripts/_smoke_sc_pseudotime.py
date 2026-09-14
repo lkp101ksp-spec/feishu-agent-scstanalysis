@@ -25,8 +25,13 @@ BioRunner 调用约定：docker run --rm --network none -v <workspace>:/ws
   方向正确（归属细胞≥70% 来自对应人工命运簇）+ 四产物落盘；
 ⑪dpt+branch_top_n>0 → INVALID_INPUT；
 ⑭slingshot 引擎（同双分支库，root_cluster=trunk）：n_lineages≥2
-  + 主 pt vs 真值 t2 rho≥0.8 + 三产物 + obs 写回；
-⑮slingshot+branch_top_n>0 → INVALID_INPUT。
+  + 主 pt vs 真值 t2 rho≥0.8 + 三产物 + obs 写回 + 谱系×分支交叉
+  自动触发（⑩已写 palantir_branch，Fisher 三列+sig≥1）；
+⑮slingshot+branch_top_n>0 → INVALID_INPUT；
+⑰dpt+paga=1：n_paga_edges≥1 + paga_graph.csv/paga_umap.png；
+⑱palantir+branch50+paga+paga_pt 组合：交叉反向触发（triggered_by=
+  palantir）+paga 双产物+obs paga_dpt_pseudotime 齐备；paga_pt 无
+  paga → INVALID_INPUT。
 """
 import json
 import subprocess
@@ -253,10 +258,40 @@ for f in ("slingshot_pt.csv", "slingshot_curves.csv",
     assert (br_dir / f).exists(), f
 ad2_sl = sc.read_h5ad(ds2_dir / "processed.h5ad")
 assert "slingshot_pseudotime" in ad2_sl.obs, ad2_sl.obs.columns
+# ⑭b 交叉自动触发（场景⑩已写 palantir_branch）：双产物+主导映射+
+# Fisher 三列+n_cross_sig≥1
+assert o14["cross_triggered_by"] == "slingshot", o14
+assert len(o14["lineage_branch_map"]) == o14["n_lineages"] >= 2, o14
+assert o14["n_cross_sig"] >= 1, o14
+cross_df = pd.read_csv(br_dir / "slingshot_branch_cross.csv")
+for c in ("fisher_p", "fisher_q", "roe", "dominant_branch"):
+    assert c in cross_df.columns, cross_df.columns
+assert (br_dir / "slingshot_branch_cross.png").exists()
 
 # ⑮ slingshot + branch_top_n>0 → INVALID_INPUT（分支推断 palantir 专属）
 bad15 = run_pt(DS2, engine="slingshot", branch_top_n=50)
 assert not bad15["ok"] and bad15["error_code"] == "INVALID_INPUT", bad15
+
+# ⑰ PAGA 分析相：dpt+paga → n_paga_edges≥1 + csv/png 双产物
+o17 = run_pt(DS2, root_marker="G_trunk_up", paga=True)
+assert o17["ok"] and o17["n_paga_edges"] >= 1, o17
+for f in ("paga_graph.csv", "paga_umap.png"):
+    assert (br_dir / f).exists(), f
+pg = pd.read_csv(br_dir / "paga_graph.csv")
+assert {"cluster_a", "cluster_b", "weight"} <= set(pg.columns), pg.columns
+
+# ⑱ 反向触发+组合：palantir+branch50+paga+paga_pt → 分支四产物+
+# 交叉（triggered_by=palantir）+paga 双产物+obs paga_dpt 列齐备；
+# paga_pt=1&paga=0 → INVALID_INPUT
+o18 = run_pt(DS2, engine="palantir", branch_top_n=50,
+             paga=True, paga_pt=True)
+assert o18["ok"] and o18["cross_triggered_by"] == "palantir", o18
+assert o18["n_paga_edges"] >= 1 and o18["paga_root_cluster"], o18
+assert o18["n_cross_sig"] >= 1, o18
+ad2_p = sc.read_h5ad(ds2_dir / "processed.h5ad")
+assert "paga_dpt_pseudotime" in ad2_p.obs, ad2_p.obs.columns
+bad18 = run_pt(DS2, paga_pt=True)
+assert not bad18["ok"] and bad18["error_code"] == "INVALID_INPUT", bad18
 
 for f in ("pseudotime/pseudotime.csv",
           "pseudotime/pseudotime_umap.png",
@@ -279,4 +314,8 @@ print("SMOKE OK",
       f"| modules k={o12['n_modules']} sizes={o12['module_sizes']}",
       "| bad enrich/dyn0 rejected",
       f"| slingshot n_lineages={o14['n_lineages']} rho={rho_sl:.3f}",
-      "| slingshot+branch_top_n rejected")
+      "| slingshot+branch_top_n rejected",
+      f"| cross sig={o14['n_cross_sig']}/{o14['n_lineages']}",
+      f"| paga edges={o17['n_paga_edges']}",
+      f"| palantir+paga_pt cross={o18['cross_triggered_by']}",
+      "| paga_pt w/o paga rejected")

@@ -419,6 +419,42 @@ def test_sc_pseudotime_slingshot_start_cell_schema(tmp_path):
     assert "slingshot" in props["start_cell"]["description"].lower()
 
 
+def test_sc_pseudotime_paga_phase(tmp_path):
+    """PAGA 分析相：paga/paga_pt 透传 + schema 描述含前置约束。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "method": "dpt",
+        "n_paga_edges": 5, "paga_root_cluster": "0"}
+    out = reg.get("sc_pseudotime").handler(
+        dataset_ref="d", root_marker="NKG7", paga=True, paga_pt=True)
+    args = runner.run.call_args.args
+    assert args[1]["paga"] is True
+    assert args[1]["paga_pt"] is True
+    assert out["n_paga_edges"] == 5
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert "paga" in props["paga_pt"]["description"].lower()
+
+
+def test_sc_pseudotime_paga_defaults(tmp_path):
+    """PAGA 相默认值：paga=False、paga_pt=False（跳过，零行为变化）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True}
+    reg.get("sc_pseudotime").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[1]["paga"] is False
+    assert args[1]["paga_pt"] is False
+
+
+def test_sc_pseudotime_paga_schema_defaults(tmp_path):
+    """schema 层默认：paga/paga_pt 两 property 存在且 default 均 false。"""
+    reg, _ = _registry(tmp_path)
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert props["paga"]["type"] == "boolean"
+    assert props["paga"]["default"] is False
+    assert props["paga_pt"]["type"] == "boolean"
+    assert props["paga_pt"]["default"] is False
+
+
 # === Phase 33：常用分析第二批（组间差异/亚聚类/整合/组成） ===
 
 

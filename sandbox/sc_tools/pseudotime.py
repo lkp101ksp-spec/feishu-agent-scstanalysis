@@ -746,8 +746,214 @@ def _run_slingshot(adata: Any, iroot: int, clusters: pd.Series,
     return out, pt
 
 
+def _load_pst_wide(ds_dir: Any, adata: Any) -> pd.DataFrame | None:
+    """读 slingshot_pt.csv 谱系宽表（lineage* 列）对齐 obs_names。
+
+    数字条码 csv 往返被 pandas 解析为 int64（场景⑤/⑭同款教训）→
+    astype(str) 再 reindex；无文件或无 lineage 列返回 None。
+    """
+    p = ds_dir / "slingshot_pt.csv"
+    if not p.exists():
+        return None
+    df = pd.read_csv(p, index_col=0)
+    df.index = df.index.astype(str)
+    lin = [c for c in df.columns if c.startswith("lineage")]
+    if not lin:
+        return None
+    return df[lin].reindex(adata.obs_names)
+
+
+def _branch_lineage_cross(ds_dir: Any, adata: Any, pst: pd.DataFrame,
+                          triggered_by: str) -> dict[str, Any]:
+    """谱系×palantir 分支交叉聚合（spec §1，双向触发共享函数）。
+
+    谱系归属 = 每细胞 lineage1..k argmax（全 NA 剔除）；分支 =
+    obs["palantir_branch"]（unassigned 剔除）。列联+行比例+主导分支
+    （frac≥0.5 否则 mixed）+ 每谱系×主导支 2×2 Fisher + BH + roe
+    （cellfreq.py 已验模式）。产物 slingshot_branch_cross.csv
+    （一行一谱系全指标）/ .png（行比例热图）。
+    """
+    import matplotlib.pyplot as plt
+    from scipy.stats import fisher_exact
+    from statsmodels.stats.multitest import multipletests
+
+    branch = adata.obs["palantir_branch"].astype(str)
+    assign = pd.Series("unassigned", index=pst.index, dtype=object)
+    valid = pst.notna().any(axis=1)
+    if valid.any():
+        assign.loc[valid] = pst.loc[valid].idxmax(axis=1)
+    keep = (assign != "unassigned") & (branch != "unassigned")
+    a, b = assign[keep], branch[keep]
+    ct = pd.crosstab(a, b)
+    frac = ct.div(ct.sum(axis=1), axis=0)
+    branches = list(ct.columns)
+
+    rows: list[dict[str, Any]] = []
+    pvals: list[float] = []
+    for lin in ct.index:
+        top_branch = str(frac.loc[lin].idxmax())
+        top_frac = float(frac.loc[lin, top_branch])
+        dom = top_branch if top_frac >= 0.5 else "mixed"
+        in_lin = (a == lin).to_numpy()
+        in_br = (b == top_branch).to_numpy()
+        tab = np.array([
+            [int((in_lin & in_br).sum()), int((in_lin & ~in_br).sum())],
+            [int((~in_lin & in_br).sum()), int((~in_lin & ~in_br).sum())]])
+        _, p = fisher_exact(tab)
+        pvals.append(float(p))
+        exp = float(tab[0].sum() * tab[:, 0].sum() / tab.sum())
+        row: dict[str, Any] = {
+            "lineage": lin, "n_cells": int(ct.loc[lin].sum()),
+            "dominant_branch": dom, "dominant_frac": _rf(top_frac),
+            "fisher_branch": top_branch,
+            "fisher_p": float(p),
+            "roe": _rf(tab[0, 0] / exp) if exp > 0 else float("nan")}
+        for br in branches:
+            row[f"n_{br}"] = int(ct.loc[lin, br])
+            row[f"frac_{br}"] = _rf(float(frac.loc[lin, br]))
+        rows.append(row)
+    qvals = multipletests(pvals, method="fdr_bh")[1] if pvals else []
+    for r, qq in zip(rows, qvals):
+        r["fisher_q"] = float(qq)
+    cross_csv = ds_dir / "slingshot_branch_cross.csv"
+    pd.DataFrame(rows).to_csv(cross_csv, index=False)
+
+    fig, ax = plt.subplots(
+        figsize=(max(3.6, 1.2 * len(branches) + 2.2),
+                 max(2.4, 0.5 * len(ct.index) + 1.2)))
+    im = ax.imshow(frac.to_numpy(), cmap="viridis", vmin=0, vmax=1,
+                   aspect="auto")
+    ax.set_xticks(range(len(branches)))
+    ax.set_xticklabels(branches, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(range(len(ct.index)))
+    ax.set_yticklabels(ct.index, fontsize=8)
+    for i in range(len(ct.index)):
+        for j in range(len(branches)):
+            v = float(frac.iloc[i, j])
+            ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                    fontsize=7, color="white" if v < 0.6 else "black")
+    fig.colorbar(im, ax=ax, fraction=0.046, label="row fraction")
+    ax.set_title(f"lineage x palantir branch (trigger: {triggered_by})",
+                 fontsize=9)
+    fig.tight_layout()
+    cross_png = ds_dir / "slingshot_branch_cross.png"
+    fig.savefig(cross_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return {
+        "branch_cross_csv": str(cross_csv),
+        "branch_cross_png": str(cross_png),
+        "lineage_branch_map": {
+            r["lineage"]: {"branch": r["dominant_branch"],
+                           "frac": r["dominant_frac"]} for r in rows},
+        "n_cross_sig": int(sum(1 for r in rows
+                               if r.get("fisher_q", 1.0) < 0.05)),
+        "cross_triggered_by": triggered_by,
+    }
+
+
+def _run_paga(adata: Any, pt: Any, clusters: pd.Series, ds_dir: Any,
+              paga_pt: bool, root_cluster: str) -> dict[str, Any]:
+    """PAGA 簇级分析相（spec §2）：tl.paga 连接图 + 可选 PAGA-init DPT。
+
+    产物 paga_graph.csv（cluster_a/cluster_b/weight 全边）/
+    paga_umap.png（灰底细胞+簇质心节点按簇 pt 均值 viridis 着色+
+    weight≥0.1 边粗细∝weight）。paga_pt=True 时：PAGA 图度=1 端点簇
+    中取 pt 均值最小者定根（显式 root_cluster 优先；无端点退化全局
+    最小 pt 簇）→ 度中心 iroot → diffmap+DPT →
+    obs["paga_dpt_pseudotime"]（main 统一落盘），节点改按 paga_dpt
+    簇均值着色。scanpy 无 paga_paths，此为官方 tutorial 配方。
+    """
+    import matplotlib.pyplot as plt
+    import scanpy as sc
+
+    sc.tl.paga(adata, groups="leiden")
+    cats = [str(c) for c in adata.obs["leiden"].cat.categories]
+    conn = adata.uns["paga"]["connectivities"].toarray()
+    edges = [(cats[i], cats[j], float(conn[i, j]))
+             for i in range(len(cats)) for j in range(i + 1, len(cats))
+             if conn[i, j] > 0]
+    graph_csv = ds_dir / "paga_graph.csv"
+    pd.DataFrame(edges, columns=["cluster_a", "cluster_b", "weight"]
+                 ).to_csv(graph_csv, index=False)
+    out: dict[str, Any] = {
+        "n_paga_edges": int(sum(1 for e in edges if e[2] >= 0.1)),
+        "paga_graph_csv": str(graph_csv),
+    }
+
+    node_pt = np.asarray(pt, dtype=float)
+    pt_label = "cluster mean pt"
+    if paga_pt:
+        cl_pt = pd.Series(node_pt, index=adata.obs_names).groupby(
+            clusters.to_numpy()).mean()
+        deg = (conn > 0).sum(axis=0)
+        endpoints = [cats[k] for k in range(len(cats))
+                     if deg[k] == 1 and not np.isnan(
+                         cl_pt.get(cats[k], np.nan))]
+        if root_cluster and root_cluster in cats:
+            root_cl = root_cluster
+            root_note = f"explicit root_cluster {root_cl}"
+        elif endpoints:
+            root_cl = min(endpoints,
+                          key=lambda c: float(cl_pt.get(c, np.inf)))
+            root_note = (f"paga endpoints {endpoints}; "
+                         f"min-pt root {root_cl}")
+        else:
+            root_cl = str(cl_pt.idxmin())
+            root_note = (f"no degree-1 endpoint; "
+                         f"global min-pt cluster {root_cl}")
+        iroot2 = _degree_root(adata, clusters, root_cl)
+        adata.uns["iroot"] = iroot2
+        sc.tl.diffmap(adata)
+        sc.tl.dpt(adata)
+        node_pt = adata.obs["dpt_pseudotime"].to_numpy(dtype=float)
+        node_pt = np.where(np.isfinite(node_pt), node_pt, np.nan)
+        adata.obs["paga_dpt_pseudotime"] = node_pt
+        pt_label = "cluster mean paga_dpt"
+        out.update({
+            "paga_root_cluster": root_cl,
+            "paga_root_note": root_note,
+            "paga_pt_obs": "paga_dpt_pseudotime",
+        })
+
+    umap = np.asarray(adata.obsm["X_umap"])
+    cent = pd.DataFrame({"x": umap[:, 0], "y": umap[:, 1],
+                         "c": clusters.to_numpy()},
+                        index=adata.obs_names).groupby("c").mean()
+    cl_node = pd.Series(node_pt, index=adata.obs_names).groupby(
+        clusters.to_numpy()).mean()
+    fig, ax = plt.subplots(figsize=(5.6, 4.6))
+    ax.scatter(umap[:, 0], umap[:, 1], s=3, c="lightgrey", linewidths=0)
+    maxw = max((e[2] for e in edges), default=1.0)
+    for ca, cb, w in edges:
+        if w < 0.1 or ca not in cent.index or cb not in cent.index:
+            continue
+        ax.plot([cent.loc[ca, "x"], cent.loc[cb, "x"]],
+                [cent.loc[ca, "y"], cent.loc[cb, "y"]],
+                color="black", lw=3.0 * w / maxw, alpha=0.5, zorder=2)
+    s = ax.scatter(cent["x"], cent["y"], s=60,
+                   c=[cl_node.get(c, np.nan) for c in cent.index],
+                   cmap="viridis", edgecolors="black", linewidths=0.6,
+                   zorder=3)
+    for c in cent.index:
+        ax.annotate(str(c), (cent.loc[c, "x"], cent.loc[c, "y"]),
+                    fontsize=6, ha="center", va="center", zorder=4,
+                    color="white")
+    fig.colorbar(s, ax=ax, fraction=0.046, label=pt_label)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title("PAGA graph (edges weight>=0.1)", fontsize=9)
+    fig.tight_layout()
+    paga_png = ds_dir / "paga_umap.png"
+    fig.savefig(paga_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    out["paga_umap_png"] = str(paga_png)
+    return out
+
+
 def main() -> None:
-    """主流程：定根四模式 → 按 engine 分路（DPT / Palantir / Slingshot）。"""
+    """主流程：定根四模式 → 按 engine 分路（DPT / Palantir / Slingshot）
+    → 可选 PAGA 相 / 谱系×分支交叉（双向触发）。"""
     import matplotlib.pyplot as plt
     import scanpy as sc
 
@@ -758,6 +964,11 @@ def main() -> None:
     branch_top_n = int(args.get("branch_top_n", 0))
     dyn_modules_k = int(args.get("dyn_modules_k", 0))
     modules_enrich = str(args.get("modules_enrich", "")).strip()
+    paga = bool(args.get("paga", False))
+    paga_pt = bool(args.get("paga_pt", False))
+    if paga_pt and not paga:
+        fail("INVALID_INPUT", "paga_pt=true requires paga=true")
+        return
     engine = str(args.get("engine", "dpt")).strip().lower()
     start_cell = str(args.get("start_cell", "")).strip()
     if engine not in ("dpt", "palantir", "slingshot"):
@@ -852,6 +1063,14 @@ def main() -> None:
                                  dyn_top_n, ds_dir,
                                  dyn_modules_k=dyn_modules_k,
                                  modules_enrich=modules_enrich)
+        if paga:
+            out.update(_run_paga(adata, pt, clusters, ds_dir, paga_pt,
+                                 root_cluster))
+        pst_wide = _load_pst_wide(ds_dir, adata)
+        if pst_wide is not None \
+                and "palantir_branch" in adata.obs.columns:
+            out.update(_branch_lineage_cross(ds_dir, adata, pst_wide,
+                                             "slingshot"))
         adata.write_h5ad(WS_ROOT / args["dataset_id"]
                          / "processed.h5ad")
         stats = _cluster_stats(clusters, pt)
@@ -883,7 +1102,15 @@ def main() -> None:
                                 branch_top_n, ds_dir,
                                 dyn_modules_k=dyn_modules_k,
                                 modules_enrich=modules_enrich)
-        if branch_top_n > 0:  # 分支归属已写 obs → 统一落盘
+        if paga:
+            out.update(_run_paga(adata, pt, clusters, ds_dir, paga_pt,
+                                 root_cluster))
+        pst_wide = _load_pst_wide(ds_dir, adata)
+        if pst_wide is not None \
+                and "palantir_branch" in adata.obs.columns:
+            out.update(_branch_lineage_cross(ds_dir, adata, pst_wide,
+                                             "palantir"))
+        if branch_top_n > 0 or paga_pt:  # obs 新增列 → 统一落盘
             adata.write_h5ad(WS_ROOT / args["dataset_id"]
                              / "processed.h5ad")
         stats = _cluster_stats(clusters, pt)
@@ -969,6 +1196,12 @@ def main() -> None:
         dyn = _dyn_genes(adata, pt, dyn_top_n, ds_dir,
                          modules_k=dyn_modules_k,
                          modules_enrich=modules_enrich)
+    if paga:
+        dyn.update(_run_paga(adata, pt, clusters, ds_dir, paga_pt,
+                             root_cluster))
+        if paga_pt:  # paga_dpt_pseudotime 已写 obs → 统一落盘
+            adata.write_h5ad(WS_ROOT / args["dataset_id"]
+                             / "processed.h5ad")
 
     emit({
         "ok": True,

@@ -176,8 +176,9 @@ def register_l3_singlecell(
                       root_cluster: str = "", dyn_top_n: int = 50,
                       engine: str = "dpt", start_cell: str = "",
                       branch_top_n: int = 0, dyn_modules_k: int = 0,
-                      modules_enrich: str = "") -> dict[str, Any]:
-        """拟时序（Phase 32/53/Palantir/分支推断/趋势聚类/Slingshot）。"""
+                      modules_enrich: str = "", paga: bool = False,
+                      paga_pt: bool = False) -> dict[str, Any]:
+        """拟时序（Phase 32/53/Palantir/分支推断/趋势聚类/Slingshot/PAGA）。"""
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
@@ -186,6 +187,7 @@ def register_l3_singlecell(
                 "branch_top_n": branch_top_n,
                 "dyn_modules_k": dyn_modules_k,
                 "modules_enrich": modules_enrich,
+                "paga": paga, "paga_pt": paga_pt,
             }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
@@ -761,6 +763,16 @@ def register_l3_singlecell(
                                                   "wikipathways_mouse）；"
                                                   "空=跳过。鼠源数据注意"
                                                   "go_bp 为人源库"},
+                "paga": {"type": "boolean", "default": False,
+                         "description": "PAGA 簇级图抽象分析相：任意引擎"
+                                        "pt 后追加 tl.paga 簇级连接图"
+                                        "（paga_graph.csv+paga_umap.png，"
+                                        "节点按簇 pt 均值着色）"},
+                "paga_pt": {"type": "boolean", "default": False,
+                            "description": "PAGA-initialized DPT（需 "
+                                           "paga=true 前置）：PAGA 图推"
+                                           "端点簇定根再跑 DPT，写回 "
+                                           "obs['paga_dpt_pseudotime']"},
             },
             "required": ["dataset_ref"],
         },
