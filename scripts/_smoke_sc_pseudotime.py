@@ -31,7 +31,9 @@ BioRunner 调用约定：docker run --rm --network none -v <workspace>:/ws
 ⑰dpt+paga=1：n_paga_edges≥1 + paga_graph.csv/paga_umap.png；
 ⑱palantir+branch50+paga+paga_pt 组合：交叉反向触发（triggered_by=
   palantir）+paga 双产物+obs paga_dpt_pseudotime 齐备；paga_pt 无
-  paga → INVALID_INPUT。
+  paga → INVALID_INPUT；
+⑲sc_plot umap_obs（Phase 58）：obs 列 UMAP 着色双 png 落盘；
+  空 obs_cols / 非法列名 → INVALID_INPUT。
 """
 import json
 import subprocess
@@ -90,6 +92,19 @@ def run_pt(ds: str = DS, **kw):
         return json.loads(r.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
         raise SystemExit(f"{kw} rc={r.returncode}\n"
+                         f"{r.stdout[-400:]}\n{r.stderr[-600:]}") from None
+
+
+def run_tool(script: str, ds: str = DS, **kw):
+    """容器内跑任意 sc_tools 脚本（stdin JSON），返回 emit 的结果 dict。"""
+    payload = json.dumps({"dataset_id": ds, **kw})
+    r = subprocess.run(BASE + ["python", f"/opt/sc_tools/{script}"],
+                       input=payload, capture_output=True, text=True,
+                       timeout=1200)
+    try:
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        raise SystemExit(f"{script} {kw} rc={r.returncode}\n"
                          f"{r.stdout[-400:]}\n{r.stderr[-600:]}") from None
 
 
@@ -316,6 +331,20 @@ assert (ad2_p.obs.loc[m18, "lineage_branch"].astype(str)
 bad18 = run_pt(DS2, paga_pt=True)
 assert not bad18["ok"] and bad18["error_code"] == "INVALID_INPUT", bad18
 
+# ⑲ sc_plot umap_obs（Phase 58）：DS2 obs 已含 slingshot_lineage/
+# lineage_branch（场景⑭写回）→ 双 png 落盘；空 obs_cols / 非法列名拒
+o19 = run_tool("plot.py", ds=DS2, genes=[], kind="umap_obs",
+               obs_cols=["slingshot_lineage", "lineage_branch"])
+assert o19["ok"] and o19["kind"] == "umap_obs", o19
+assert len(o19["pngs"]) == 2, o19
+for p in o19["pngs"]:
+    assert Path(p.replace("/ws", WS.as_posix())).exists(), p
+bad19a = run_tool("plot.py", ds=DS2, genes=[], kind="umap_obs")
+assert not bad19a["ok"] and bad19a["error_code"] == "INVALID_INPUT", bad19a
+bad19b = run_tool("plot.py", ds=DS2, genes=[], kind="umap_obs",
+                  obs_cols=["no_such_col"])
+assert not bad19b["ok"] and bad19b["error_code"] == "INVALID_INPUT", bad19b
+
 for f in ("pseudotime/pseudotime.csv",
           "pseudotime/pseudotime_umap.png",
           "pseudotime/paga_graph.png",
@@ -341,4 +370,5 @@ print("SMOKE OK",
       f"| cross sig={o14['n_cross_sig']}/{o14['n_lineages']}",
       f"| paga edges={o17['n_paga_edges']}",
       f"| palantir+paga_pt cross={o18['cross_triggered_by']}",
-      "| paga_pt w/o paga rejected")
+      "| paga_pt w/o paga rejected",
+      f"| umap_obs pngs={len(o19['pngs'])} bad rejected")

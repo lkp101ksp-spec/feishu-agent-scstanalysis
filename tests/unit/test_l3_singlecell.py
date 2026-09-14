@@ -104,6 +104,30 @@ def test_sc_plot_schema_limits_genes(tmp_path):
         "dataset_ref", "genes"}
 
 
+def test_sc_plot_umap_obs_phase(tmp_path):
+    """Phase 58：kind=umap_obs + obs_cols 透传 + schema enum/obs_cols 属性。"""
+    reg, runner = _registry(tmp_path)
+    reg.get("sc_plot").handler(
+        dataset_ref="d", genes=[], kind="umap_obs",
+        obs_cols=["slingshot_lineage", "lineage_branch"])
+    args = runner.run.call_args.args
+    assert args[0] == "plot"
+    assert args[1]["kind"] == "umap_obs"
+    assert args[1]["obs_cols"] == ["slingshot_lineage", "lineage_branch"]
+    props = reg.get("sc_plot").parameters["properties"]
+    assert "umap_obs" in props["kind"]["enum"]
+    assert props["obs_cols"]["maxItems"] == 6
+
+
+def test_sc_plot_umap_obs_defaults(tmp_path):
+    """Phase 58：默认调用零变化——obs_cols 缺省为空，kind 默认 violin。"""
+    reg, runner = _registry(tmp_path)
+    reg.get("sc_plot").handler(dataset_ref="d", genes=["CD3D"])
+    args = runner.run.call_args.args
+    assert args[1]["kind"] == "violin"
+    assert args[1].get("obs_cols", []) == []
+
+
 # === Phase 25：GPU 镜像分流 ===
 
 def _gpu_registry(tmp_path, bio_use_gpu):

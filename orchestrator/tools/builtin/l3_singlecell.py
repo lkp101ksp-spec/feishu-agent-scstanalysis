@@ -118,12 +118,15 @@ def register_l3_singlecell(
         return out
 
     def sc_plot(*, dataset_ref: str, genes: list[str],
-                kind: str = "violin") -> dict[str, Any]:
-        """指定基因画图（violin/umap_gene）→ png 路径列表。"""
+                kind: str = "violin",
+                obs_cols: list[str] | None = None) -> dict[str, Any]:
+        """指定基因画图（violin/umap_gene）或 obs 列 UMAP 着色
+        （kind=umap_obs + obs_cols，Phase 58）→ png 路径列表。"""
         try:
             out = runner.run("plot", {
                 "dataset_id": dataset_ref,
                 "genes": parse_gene_list(genes), "kind": kind,
+                "obs_cols": list(obs_cols or []),
             }, timeout_sec=600)
         except BioRunError as e:
             return _err(e)
@@ -574,8 +577,10 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_plot",
         description=(
-            "指定基因可视化（kind=violin 按簇小提琴 / umap_gene UMAP 着色），"
-            "输出 png 路径列表。最多 6 个基因/次。需先跑 sc_process。"
+            "指定基因可视化（kind=violin 按簇小提琴 / umap_gene UMAP 着色）"
+            "或 obs 列 UMAP 着色（kind=umap_obs + obs_cols，类别/连续列"
+            "自适应，如 slingshot_lineage/lineage_branch/palantir_branch），"
+            "输出 png 路径列表。最多 6 个基因/列每次。需先跑 sc_process。"
         ),
         parameters={
             "type": "object",
@@ -585,7 +590,11 @@ def register_l3_singlecell(
                           "maxItems": 6,
                           "description": "基因符号列表（如 CD3D/MS4A1）"},
                 "kind": {"type": "string", "default": "violin",
-                         "enum": ["violin", "umap_gene"]},
+                         "enum": ["violin", "umap_gene", "umap_obs"]},
+                "obs_cols": {"type": "array", "items": {"type": "string"},
+                             "maxItems": 6,
+                             "description": "obs 列名列表（仅 kind=umap_obs "
+                                            "使用，如 slingshot_lineage）"},
             },
             "required": ["dataset_ref", "genes"],
         },
