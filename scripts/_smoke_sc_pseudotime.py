@@ -258,11 +258,26 @@ for f in ("slingshot_pt.csv", "slingshot_curves.csv",
     assert (br_dir / f).exists(), f
 ad2_sl = sc.read_h5ad(ds2_dir / "processed.h5ad")
 assert "slingshot_pseudotime" in ad2_sl.obs, ad2_sl.obs.columns
+# ⑭a2 谱系归属写回（Phase 57）：slingshot_lineage 列存在、取值合法、
+# 非全 unassigned
+assert "slingshot_lineage" in ad2_sl.obs, ad2_sl.obs.columns
+sl_vals = set(ad2_sl.obs["slingshot_lineage"].astype(str))
+legal = {"unassigned"} | {f"lineage{i}"
+                          for i in range(1, o14["n_lineages"] + 1)}
+assert sl_vals <= legal and sl_vals - {"unassigned"}, sl_vals
 # ⑭b 交叉自动触发（场景⑩已写 palantir_branch）：双产物+主导映射+
 # Fisher 三列+n_cross_sig≥1
 assert o14["cross_triggered_by"] == "slingshot", o14
 assert len(o14["lineage_branch_map"]) == o14["n_lineages"] >= 2, o14
 assert o14["n_cross_sig"] >= 1, o14
+# ⑭c 命运支标签写回（Phase 57）：lineage_branch 与 lineage_branch_map
+# 逐细胞一致（unassigned 谱系→unassigned）
+assert "lineage_branch" in ad2_sl.obs, ad2_sl.obs.columns
+lb_map = {k: v["branch"] for k, v in o14["lineage_branch_map"].items()}
+m_lin = ad2_sl.obs["slingshot_lineage"].astype(str) != "unassigned"
+assert (ad2_sl.obs.loc[m_lin, "lineage_branch"].astype(str)
+        == ad2_sl.obs.loc[m_lin, "slingshot_lineage"]
+        .astype(str).map(lb_map)).all()
 cross_df = pd.read_csv(br_dir / "slingshot_branch_cross.csv")
 for c in ("fisher_p", "fisher_q", "roe", "dominant_branch"):
     assert c in cross_df.columns, cross_df.columns
@@ -290,6 +305,14 @@ assert o18["n_paga_edges"] >= 1 and o18["paga_root_cluster"], o18
 assert o18["n_cross_sig"] >= 1, o18
 ad2_p = sc.read_h5ad(ds2_dir / "processed.h5ad")
 assert "paga_dpt_pseudotime" in ad2_p.obs, ad2_p.obs.columns
+# ⑱b 反向触发写回（Phase 57）：palantir 侧交叉同样落 lineage_branch
+# 且与当轮 lineage_branch_map 一致
+assert "lineage_branch" in ad2_p.obs, ad2_p.obs.columns
+lb18 = {k: v["branch"] for k, v in o18["lineage_branch_map"].items()}
+m18 = ad2_p.obs["slingshot_lineage"].astype(str) != "unassigned"
+assert (ad2_p.obs.loc[m18, "lineage_branch"].astype(str)
+        == ad2_p.obs.loc[m18, "slingshot_lineage"]
+        .astype(str).map(lb18)).all()
 bad18 = run_pt(DS2, paga_pt=True)
 assert not bad18["ok"] and bad18["error_code"] == "INVALID_INPUT", bad18
 

@@ -709,6 +709,13 @@ def _run_slingshot(adata: Any, iroot: int, clusters: pd.Series,
     curves.to_csv(curves_csv, index=False)
 
     adata.obs["slingshot_pseudotime"] = pt
+    # 谱系归属物化写回 obs（Phase 57）：argmax 谱系标签，全 NA→unassigned，
+    # 供 sc_plot 按谱系着色 / sc_cellfreq 以谱系为 celltype_col 消费
+    assign = pd.Series("unassigned", index=adata.obs_names, dtype=object)
+    valid_lin = pst.notna().any(axis=1)
+    if valid_lin.any():
+        assign.loc[valid_lin] = pst.loc[valid_lin].idxmax(axis=1)
+    adata.obs["slingshot_lineage"] = pd.Categorical(assign)
 
     fig, ax = plt.subplots(figsize=(5.6, 4.4))
     s = ax.scatter(umap[:, 0], umap[:, 1], s=4, c=pt, cmap="viridis",
@@ -839,6 +846,13 @@ def _branch_lineage_cross(ds_dir: Any, adata: Any, pst: pd.DataFrame,
     cross_png = ds_dir / "slingshot_branch_cross.png"
     fig.savefig(cross_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+    # 谱系→主导支映射物化写回 obs（Phase 57）：细胞级命运支标签，
+    # mixed 谱系标 "mixed"、unassigned 谱系标 "unassigned"，
+    # 供 sc_plot 着色 / sc_cellfreq celltype_col="lineage_branch" 消费
+    dom_map = {r["lineage"]: r["dominant_branch"] for r in rows}
+    adata.obs["lineage_branch"] = pd.Categorical(
+        assign.map(lambda x: dom_map.get(x, "unassigned")))
 
     return {
         "branch_cross_csv": str(cross_csv),
@@ -1106,11 +1120,14 @@ def main() -> None:
             out.update(_run_paga(adata, pt, clusters, ds_dir, paga_pt,
                                  root_cluster))
         pst_wide = _load_pst_wide(ds_dir, adata)
+        cross = None
         if pst_wide is not None \
                 and "palantir_branch" in adata.obs.columns:
-            out.update(_branch_lineage_cross(ds_dir, adata, pst_wide,
-                                             "palantir"))
-        if branch_top_n > 0 or paga_pt:  # obs 新增列 → 统一落盘
+            cross = _branch_lineage_cross(ds_dir, adata, pst_wide,
+                                          "palantir")
+            out.update(cross)
+        # obs 新增列（分支/谱系标签/paga_dpt）→ 统一落盘
+        if branch_top_n > 0 or paga_pt or cross is not None:
             adata.write_h5ad(WS_ROOT / args["dataset_id"]
                              / "processed.h5ad")
         stats = _cluster_stats(clusters, pt)
