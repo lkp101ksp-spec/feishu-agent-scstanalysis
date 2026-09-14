@@ -33,7 +33,9 @@ BioRunner 调用约定：docker run --rm --network none -v <workspace>:/ws
   palantir）+paga 双产物+obs paga_dpt_pseudotime 齐备；paga_pt 无
   paga → INVALID_INPUT；
 ⑲sc_plot umap_obs（Phase 58）：obs 列 UMAP 着色双 png 落盘；
-  空 obs_cols / 非法列名 → INVALID_INPUT。
+  空 obs_cols / 非法列名 → INVALID_INPUT；
+⑳trajectory_full（Phase 59）：忽略 engine 串跑 palantir+slingshot+
+  交叉自动触发（triggered_by=trajectory_full）；显式 engine=dpt 亦被忽略。
 """
 import json
 import subprocess
@@ -345,6 +347,21 @@ bad19b = run_tool("plot.py", ds=DS2, genes=[], kind="umap_obs",
                   obs_cols=["no_such_col"])
 assert not bad19b["ok"] and bad19b["error_code"] == "INVALID_INPUT", bad19b
 
+# ⑳ trajectory_full（Phase 59，DS2 双分支数据）：忽略 engine 串跑
+# palantir（branch 缺省升 50）+slingshot+交叉自动触发；显式 engine=dpt
+# 同样被忽略（DS 单谱系退化 n_terminal=1 无 branch_dyn_csv，不可用）
+o20 = run_pt(DS2, trajectory_full=True, dyn_top_n=0, root_cluster="trunk")
+assert o20["ok"] and o20["method"] == "trajectory_full", o20
+assert o20["trajectory_full"] is True and "engine_note" in o20, o20
+assert o20["palantir"]["n_terminal"] >= 2, o20
+assert "branch_dyn_csv" in o20["palantir"], o20
+assert o20["slingshot"]["n_lineages"] >= 1, o20
+assert o20["slingshot"]["cross_triggered_by"] == "trajectory_full", o20
+assert o20["slingshot"]["n_cross_sig"] >= 1, o20
+o20b = run_pt(DS2, trajectory_full=True, dyn_top_n=0, engine="dpt",
+              root_cluster="trunk")
+assert o20b["ok"] and o20b["method"] == "trajectory_full", o20b
+
 for f in ("pseudotime/pseudotime.csv",
           "pseudotime/pseudotime_umap.png",
           "pseudotime/paga_graph.png",
@@ -371,4 +388,6 @@ print("SMOKE OK",
       f"| paga edges={o17['n_paga_edges']}",
       f"| palantir+paga_pt cross={o18['cross_triggered_by']}",
       "| paga_pt w/o paga rejected",
-      f"| umap_obs pngs={len(o19['pngs'])} bad rejected")
+      f"| umap_obs pngs={len(o19['pngs'])} bad rejected",
+      f"| trajectory_full L={o20['slingshot']['n_lineages']}"
+      f" sig={o20['slingshot']['n_cross_sig']} engine ignored")

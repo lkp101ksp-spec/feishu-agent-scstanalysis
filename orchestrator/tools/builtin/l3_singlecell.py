@@ -180,8 +180,10 @@ def register_l3_singlecell(
                       engine: str = "dpt", start_cell: str = "",
                       branch_top_n: int = 0, dyn_modules_k: int = 0,
                       modules_enrich: str = "", paga: bool = False,
-                      paga_pt: bool = False) -> dict[str, Any]:
-        """拟时序（Phase 32/53/Palantir/分支推断/趋势聚类/Slingshot/PAGA）。"""
+                      paga_pt: bool = False,
+                      trajectory_full: bool = False) -> dict[str, Any]:
+        """拟时序（Phase 32/53/Palantir/分支推断/趋势聚类/Slingshot/PAGA/
+        trajectory_full 全景）。"""
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
@@ -191,6 +193,7 @@ def register_l3_singlecell(
                 "dyn_modules_k": dyn_modules_k,
                 "modules_enrich": modules_enrich,
                 "paga": paga, "paga_pt": paga_pt,
+                "trajectory_full": trajectory_full,
             }, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
@@ -337,7 +340,8 @@ def register_l3_singlecell(
                 mapping: dict[str, str] | None = None, out_col: str = "",
                 csv_file: str = "", key_col: str = "",
                 old: str = "", new: str = "") -> dict[str, Any]:
-        """元数据编辑（Phase 35）：merge_csv/map_values/rename_col。"""
+        """元数据编辑（Phase 35/59）：merge_csv/map_values/rename_col/
+        list_cols（obs 分组列发现，只读）。"""
         try:
             payload = {
                 "dataset_id": dataset_ref, "op": op, "col": col,
@@ -782,6 +786,12 @@ def register_l3_singlecell(
                                            "paga=true 前置）：PAGA 图推"
                                            "端点簇定根再跑 DPT，写回 "
                                            "obs['paga_dpt_pseudotime']"},
+                "trajectory_full": {"type": "boolean", "default": False,
+                                    "description": "轨迹全景模式（Phase "
+                                                   "59）：忽略 engine，一次"
+                                                   "串跑 palantir（含分支）"
+                                                   "+slingshot+谱系×分支交叉"
+                                                   "（+paga 跟随 flags）"},
             },
             "required": ["dataset_ref"],
         },
@@ -1076,7 +1086,8 @@ def register_l3_singlecell(
                 "dataset_ref": {"type": "string",
                                 "description": "sc_process 输出的 dataset_ref"},
                 "op": {"type": "string",
-                       "enum": ["merge_csv", "map_values", "rename_col"]},
+                       "enum": ["merge_csv", "map_values", "rename_col",
+                                "list_cols"]},
                 "col": {"type": "string", "default": "",
                         "description": "map_values 的源列"},
                 "mapping": {"type": "object",

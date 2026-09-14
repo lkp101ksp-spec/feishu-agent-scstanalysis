@@ -89,12 +89,32 @@ def main() -> None:
         changed = [new]
         detail = {"renamed": f"{old} -> {new}"}
 
+    elif op == "list_cols":
+        # obs 分组列发现（Phase 59，只读不写回）：类别列（2≤nunique≤100）
+        # 供 celltype_col/group_col 选列 + 轨迹产物列模式标注
+        traj_names = {"palantir_branch", "lineage_branch",
+                      "slingshot_lineage"}
+        group_cols, traj_cols = [], []
+        for c in adata.obs.columns:
+            s = adata.obs[c]
+            nun = int(s.nunique(dropna=True))
+            is_cat = (isinstance(s.dtype, pd.CategoricalDtype)
+                      or s.dtype == object) and 2 <= nun <= 100
+            if is_cat:
+                group_cols.append({"col": str(c), "n_levels": nun})
+            if str(c) in traj_names or str(c).endswith("_pseudotime"):
+                traj_cols.append(str(c))
+        changed = []
+        detail = {"group_cols": group_cols,
+                  "trajectory_cols": traj_cols}
+
     else:
-        raise ValueError(f"op must be merge_csv/map_values/rename_col, "
-                         f"got {op!r}")
+        raise ValueError(f"op must be merge_csv/map_values/rename_col/"
+                         f"list_cols, got {op!r}")
 
     h5ad_path = WS_ROOT / args["dataset_id"] / "processed.h5ad"
-    adata.write(h5ad_path)
+    if op != "list_cols":  # list_cols 只读不落盘
+        adata.write(h5ad_path)
     emit({
         "ok": True,
         "dataset_ref": args["dataset_id"],

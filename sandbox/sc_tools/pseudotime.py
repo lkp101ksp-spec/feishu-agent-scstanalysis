@@ -983,17 +983,21 @@ def main() -> None:
     if paga_pt and not paga:
         fail("INVALID_INPUT", "paga_pt=true requires paga=true")
         return
+    trajectory_full = bool(args.get("trajectory_full", False))
     engine = str(args.get("engine", "dpt")).strip().lower()
     start_cell = str(args.get("start_cell", "")).strip()
     if engine not in ("dpt", "palantir", "slingshot"):
         fail("INVALID_INPUT",
              f"engine {engine!r} not in ['dpt', 'palantir', 'slingshot']")
         return
-    if start_cell and engine not in ("palantir", "slingshot"):
+    # trajectory_full（Phase 59）忽略 engine：start_cell/branch_top_n 的
+    # 引擎限定随之解除（两相共用 start_cell；branch_top_n 缺省升 50）
+    if start_cell and not trajectory_full \
+            and engine not in ("palantir", "slingshot"):
         fail("INVALID_INPUT",
              "start_cell only valid with engine='palantir'/'slingshot'")
         return
-    if branch_top_n > 0 and engine != "palantir":
+    if branch_top_n > 0 and engine != "palantir" and not trajectory_full:
         fail("INVALID_INPUT",
              "branch_top_n only valid with engine='palantir'")
         return
@@ -1070,6 +1074,58 @@ def main() -> None:
         fail("INVALID_INPUT",
              "processed.h5ad lacks highly_variable column; "
              "run sc_process first (or set dyn_top_n=branch_top_n=0)")
+        return
+
+    if trajectory_full:
+        # Phase 59 轨迹全景：忽略 engine，同一 iroot 锚定串跑
+        # palantir 相（pt+分支，branch_top_n 缺省升 50）→ slingshot 相
+        # → 谱系×分支交叉（双向产物齐备必触发）→ paga 跟随 flags；
+        # 两相 obs 写回（palantir_branch/slingshot_lineage/lineage_branch）
+        # 末尾统一落盘一次
+        if "X_pca" not in adata.obsm:
+            fail("INVALID_INPUT",
+                 "processed.h5ad lacks X_pca; run sc_process first")
+            return
+        bt = branch_top_n if branch_top_n > 0 else 50
+        out_p, pt_p = _run_palantir(adata, iroot, clusters, dyn_top_n,
+                                    bt, ds_dir,
+                                    dyn_modules_k=dyn_modules_k,
+                                    modules_enrich=modules_enrich)
+        out_s, _pt_s = _run_slingshot(adata, iroot, clusters, root_mode,
+                                      dyn_top_n, ds_dir,
+                                      dyn_modules_k=dyn_modules_k,
+                                      modules_enrich=modules_enrich)
+        if paga:
+            out_p.update(_run_paga(adata, pt_p, clusters, ds_dir, paga_pt,
+                                   root_cluster))
+        pst_wide = _load_pst_wide(ds_dir, adata)
+        if pst_wide is not None \
+                and "palantir_branch" in adata.obs.columns:
+            out_s.update(_branch_lineage_cross(ds_dir, adata, pst_wide,
+                                               "trajectory_full"))
+        adata.write_h5ad(WS_ROOT / args["dataset_id"]
+                         / "processed.h5ad")
+        stats = _cluster_stats(clusters, pt_p)
+        emit({
+            "ok": True,
+            "dataset_ref": args["dataset_id"],
+            "method": "trajectory_full",
+            "engine": "trajectory_full",
+            "trajectory_full": True,
+            "engine_note": "engine param ignored in trajectory_full mode",
+            "n_cells": int(adata.n_obs),
+            "root_marker": root_marker,
+            "root_cluster": root_cluster,
+            "root_mode": root_mode,
+            "root_cell_index": iroot,
+            "root_note": root_note,
+            "palantir": out_p,
+            "slingshot": out_s,
+            "per_cluster": [
+                {"cluster": c, "mean": _rf(r["mean"]),
+                 "median": _rf(r["median"]), "n_cells": int(r["size"])}
+                for c, r in stats.iterrows()],
+        })
         return
 
     if engine == "slingshot":

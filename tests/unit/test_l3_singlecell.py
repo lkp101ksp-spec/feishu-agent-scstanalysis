@@ -479,6 +479,31 @@ def test_sc_pseudotime_paga_schema_defaults(tmp_path):
     assert props["paga_pt"]["default"] is False
 
 
+def test_sc_pseudotime_trajectory_full_phase(tmp_path):
+    """Phase 59：trajectory_full 透传 + schema property（bool 默认 False）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "trajectory_full": True,
+        "n_lineages": 3, "n_cross_sig": 2}
+    out = reg.get("sc_pseudotime").handler(
+        dataset_ref="d", root_cluster="2", trajectory_full=True)
+    args = runner.run.call_args.args
+    assert args[1]["trajectory_full"] is True
+    assert out["trajectory_full"] is True
+    props = reg.get("sc_pseudotime").parameters["properties"]
+    assert props["trajectory_full"]["type"] == "boolean"
+    assert props["trajectory_full"]["default"] is False
+
+
+def test_sc_pseudotime_trajectory_full_defaults(tmp_path):
+    """Phase 59：默认调用 trajectory_full=False（零行为变化）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True}
+    reg.get("sc_pseudotime").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[1]["trajectory_full"] is False
+
+
 # === Phase 33：常用分析第二批（组间差异/亚聚类/整合/组成） ===
 
 

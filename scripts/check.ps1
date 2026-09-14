@@ -43,8 +43,22 @@ if ($LASTEXITCODE -ne 0) { Write-Host "[FAIL] mypy 未通过" -ForegroundColor R
 # 4) pytest 默认层（SQLite）+ 覆盖率摘要（硬门禁；pg 层靠 -m 隔离，Docker 起着也不混入）
 #    --basetemp 钉仓库内 .pytest_tmp：Windows 默认 Temp\pytest-of-* 曾遇 WinError 5 权限拒绝
 Write-Host "`n== [4/4] pytest 默认层 + cov ==" -ForegroundColor Cyan
-& $py -m pytest -q -m "not pg" --basetemp="$root\.pytest_tmp" --cov --cov-report=term
-if ($LASTEXITCODE -ne 0) { Write-Host "[FAIL] pytest 默认层未通过" -ForegroundColor Red; exit 2 }
+# Phase 59 抖动取证：输出落 .check_pytest.log——FAIL 保留+echo 尾 50 行
+# （单次抖动复跑 PASS 不留证的历史教训），PASS 删除。
+# 抖动根因修复（2026-09-14）：PS5.1 + ErrorActionPreference=Stop 下，原生进程
+# 经管道向 stderr 写任意杂散行（如解释器 teardown 的 "kernel idle sweep failed"）
+# 即抛 NativeCommandError 中断闸门——改用 cmd /c 文件重定向，stderr 不进 PS 管道。
+$pytestLog = Join-Path $root ".check_pytest.log"
+cmd /c """$py"" -m pytest -q -m ""not pg"" --basetemp=""$root\.pytest_tmp"" --cov --cov-report=term > ""$pytestLog"" 2>&1"
+$pytestCode = $LASTEXITCODE
+Get-Content $pytestLog -Tail 15
+if ($pytestCode -ne 0) {
+    Write-Host "[FAIL] pytest 默认层未通过（完整日志：.check_pytest.log）" -ForegroundColor Red
+    Write-Host "---- 日志尾部 50 行 ----" -ForegroundColor Yellow
+    Get-Content $pytestLog -Tail 50
+    exit 2
+}
+Remove-Item $pytestLog -ErrorAction SilentlyContinue
 
 # 5) pg 层：可选执行，否则给出提示
 if ($Pg) {
