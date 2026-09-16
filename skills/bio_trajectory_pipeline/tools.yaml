@@ -1,0 +1,14 @@
+tools:
+  - name: bio_trajectory_pipeline
+    description: 单细胞轨迹全链一键编排（trajectory_full+着色+命运偏向+支间通讯；root_cluster 必填）
+    parameters:
+      type: object
+      properties:
+        dataset_id: {type: string, description: "bio_workspace 下数据集目录名（processed.h5ad 须含 X_pca/X_umap/leiden）"}
+        root_cluster: {type: string, description: "锚定根簇（leiden 簇号字符串，祖/干细胞簇；勿 fallback）"}
+        species: {type: string, default: human, description: "human|mouse（cellchat 配体受体库）"}
+        steps: {type: string, default: fast, description: "fast=四步（不含 cellchat）| full=含支间通讯"}
+        group_col: {type: string, description: "可选分组列名；缺省用 list_cols 发现的 group 列"}
+      required: [dataset_id, root_cluster]
+    command: ["I:/飞书agent/.venv/Scripts/python.exe", "run_pipeline.py"]
+    timeout_sec: 7200

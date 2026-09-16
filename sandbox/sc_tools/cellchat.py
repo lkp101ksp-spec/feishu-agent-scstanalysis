@@ -257,6 +257,12 @@ def main() -> None:
              f"{_cat_cols(adata)}")
         return
 
+    # 资源分级护栏（建议⑥）：未显式抽样且总细胞数超阈 → 自动分层抽样
+    # （超大数据集裸跑内存/时长不可控；emit 钉注 auto_capped）
+    auto_capped = max_cells_per_group <= 0 and adata.n_obs > 80000
+    if auto_capped:
+        max_cells_per_group = 5000
+
     ds_dir = WS_ROOT / args["dataset_id"]
     if not group_col:
         # 单组（Phase 34 现状行为）
@@ -270,12 +276,15 @@ def main() -> None:
             "celltype_col": celltype_col, "resource": resource,
             "n_celltypes": int(labels.nunique()),
             "dropped_small_types": [str(d) for d in dropped],
-            "n_cells_used": int(adata.n_obs), "subsampled": subsampled})
+            "n_cells_used": int(adata.n_obs), "subsampled": subsampled,
+            "auto_capped": auto_capped})
         if subsampled:
             payload["note"] = (
                 f"按 {celltype_col} 分层抽样：每组最多 "
                 f"{max_cells_per_group} 细胞（{n_total}→{adata.n_obs}），"
-                "结果为抽样估计")
+                "结果为抽样估计"
+                + ("；超大数据集自动触发（>80000 细胞未显式设上限）"
+                   if auto_capped else ""))
         emit(payload)
         return
 
@@ -327,7 +336,8 @@ def main() -> None:
         "method": method, "group_col": group_col, "groups": [g1, g2],
         "celltype_col": celltype_col, "resource": resource,
         "n_sig_g1": int(len(sig_by[g1])), "n_sig_g2": int(len(sig_by[g2])),
-        "top_delta": top_delta,
+        "top_delta": top_delta, "auto_capped": auto_capped,
+        "max_cells_per_group": max_cells_per_group,
         "diff_csv": diff_payload["diff_csv"],
         "diff_heatmap_png": diff_payload["diff_heatmap_png"],
         "per_group": per_group,

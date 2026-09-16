@@ -1,8 +1,9 @@
 """D 报告汇编：sc_* 节点产物收集 + csv 摘要截断（纯函数，无副作用）。
 
-产物提取泛化：图片取既有四键（umap_png/dotplot_png/spatial_png/pngs，
-与 research_runner._sc_image_host_paths 同款），csv 取以 .csv 结尾的
-字符串输出，关键数字取标量/短字符串/短列表——新 sc 工具自动纳入。
+产物提取泛化：图片取任意 .png 结尾字符串与 pngs 列表（与 csv 的
+.csv 结尾判定对称），csv 取以 .csv 结尾的字符串输出，关键数字取
+标量/短字符串/短列表（嵌套子 dict 递归下钻、键加前缀，trajectory_full
+的 palantir/slingshot 全景产物可完整入报告）——新 sc 工具自动纳入。
 """
 from __future__ import annotations
 
@@ -100,6 +101,38 @@ def _is_short_scalar(val: Any) -> bool:
     return False
 
 
+def _harvest(outputs: dict[str, Any], section: Section, ws_root: str,
+             prefix: str = "") -> None:
+    """从 outputs（或嵌套子 dict）提取产物到 section（提取序=emit 序）。
+
+    图片：任意 .png 结尾字符串 + pngs 列表（通用判定与 csv 对称，
+    覆盖 branch_umap_png/paga_png/trend_heatmap_png 等非白名单键）；
+    csv：.csv 结尾字符串；关键数字：短标量，嵌套键加前缀防撞
+    （trajectory_full 的 palantir.n_terminal / slingshot.n_lineages）。
+    值为 dict 时递归下钻（json emit 边界，无深嵌套风险）。
+    """
+    for key, val in outputs.items():
+        full = f"{prefix}{key}"
+        if isinstance(val, str) and val.endswith(".png"):
+            host = container_to_host(val, ws_root)
+            if host:
+                section.images.append(host)
+        elif isinstance(val, str) and val.endswith(".csv"):
+            host = container_to_host(val, ws_root)
+            if host:
+                section.csvs.append(host)
+        elif isinstance(val, list) and key == "pngs":
+            for p in val:
+                if isinstance(p, str) and p.endswith(".png"):
+                    host = container_to_host(p, ws_root)
+                    if host:
+                        section.images.append(host)
+        elif isinstance(val, dict):
+            _harvest(val, section, ws_root, prefix=f"{full}.")
+        elif _is_short_scalar(val):
+            section.numbers[full] = val
+
+
 def collect_sections(plan: Any, scheduler: Any, ws_root: str) -> list[Section]:
     """按 plan 节点顺序收集 SUCCESS 的 sc_*/st_* 节点产物。
 
@@ -121,23 +154,7 @@ def collect_sections(plan: Any, scheduler: Any, ws_root: str) -> list[Section]:
             continue
         section = Section(title=SECTION_TITLES.get(tool, tool),
                           tool_name=tool)
-        raw_imgs: list[str] = []
-        for key in ("umap_png", "dotplot_png", "spatial_png"):
-            if handle.outputs.get(key):
-                raw_imgs.append(handle.outputs[key])
-        raw_imgs.extend(p for p in (handle.outputs.get("pngs") or [])
-                        if isinstance(p, str))
-        for p in raw_imgs:
-            host = container_to_host(p, ws_root)
-            if host:
-                section.images.append(host)
-        for key, val in handle.outputs.items():
-            if isinstance(val, str) and val.endswith(".csv"):
-                host = container_to_host(val, ws_root)
-                if host:
-                    section.csvs.append(host)
-            elif _is_short_scalar(val):
-                section.numbers[key] = val
+        _harvest(handle.outputs, section, ws_root)
         sections.append(section)
     return sections
 

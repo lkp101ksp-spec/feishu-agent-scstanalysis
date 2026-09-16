@@ -80,6 +80,71 @@ def test_collect_artifact_classification(tmp_path):
     assert "note" not in cnv.numbers
 
 
+def test_collect_nested_trajectory_full_outputs(tmp_path):
+    """trajectory_full 嵌套 emit（palantir/slingshot 子 dict）下钻收集。
+
+    键加引擎前缀防撞（palantir.n_terminal）；records 列表不进 numbers。
+    """
+    plan = SimpleNamespace(nodes=[_node("n1", "sc_pseudotime")])
+    sch = SimpleNamespace(_handles={
+        "n1": _handle(ExecutionState.SUCCESS, {
+            "method": "trajectory_full",
+            "n_cells": 12899,
+            "root_cluster": "2",
+            "palantir": {
+                "n_terminal": 12,
+                "start_cell": "AAACATACAACCAC-1",
+                "pseudotime_csv": "/ws/ds/palantir_pt.csv",
+                "terminal_csv": "/ws/ds/terminal_states.csv",
+                "umap_png": "/ws/ds/palantir_umap.png",
+                "branch_umap_png": "/ws/ds/palantir_branch_umap.png",
+                "branch_de_csv": "/ws/ds/palantir_branch_de.csv",
+                "terminal_states": [{"cell": "x", "leiden": "3"}],
+            },
+            "slingshot": {
+                "n_lineages": 3,
+                "lineages": ["lineage1", "lineage2", "lineage3"],
+                "slingshot_pt_csv": "/ws/ds/slingshot_pt.csv",
+                "umap_png": "/ws/ds/slingshot_umap.png",
+            },
+        })})
+    sections = collect_sections(plan, sch, str(tmp_path))
+    sec = sections[0]
+    assert sec.numbers["palantir.n_terminal"] == 12
+    assert sec.numbers["slingshot.n_lineages"] == 3
+    assert sec.numbers["n_cells"] == 12899
+    assert sec.numbers["slingshot.lineages"] == ["lineage1", "lineage2",
+                                                 "lineage3"]
+    for rel in ("ds/palantir_pt.csv", "ds/terminal_states.csv",
+                "ds/palantir_branch_de.csv", "ds/slingshot_pt.csv"):
+        assert _host_path(tmp_path, rel) in sec.csvs, rel
+    for rel in ("ds/palantir_umap.png", "ds/palantir_branch_umap.png",
+                "ds/slingshot_umap.png"):
+        assert _host_path(tmp_path, rel) in sec.images, rel
+    # records 列表（list[dict]）不是短标量，不进 numbers
+    assert "palantir.terminal_states" not in sec.numbers
+
+
+def test_collect_generic_png_and_no_pngs_in_numbers(tmp_path):
+    """任意 .png 结尾输出串入图（paga_png/branch_trend_png 等非四键）；
+    pngs 列表只进图不重复进 numbers。"""
+    plan = SimpleNamespace(nodes=[_node("n1", "sc_pseudotime")])
+    sch = SimpleNamespace(_handles={
+        "n1": _handle(ExecutionState.SUCCESS, {
+            "paga_png": "/ws/ds/paga.png",
+            "branch_trend_png": "/ws/ds/branch_trend.png",
+            "pngs": ["/ws/ds/dot1.png", "/ws/ds/dot2.png"],
+        })})
+    sec = collect_sections(plan, sch, str(tmp_path))[0]
+    assert sec.images == [
+        _host_path(tmp_path, "ds/paga.png"),
+        _host_path(tmp_path, "ds/branch_trend.png"),
+        _host_path(tmp_path, "ds/dot1.png"),
+        _host_path(tmp_path, "ds/dot2.png"),
+    ]
+    assert "pngs" not in sec.numbers
+
+
 def test_unknown_tool_falls_back_to_tool_name(tmp_path):
     plan = SimpleNamespace(nodes=[_node("n1", "sc_newtool")])
     sch = SimpleNamespace(_handles={

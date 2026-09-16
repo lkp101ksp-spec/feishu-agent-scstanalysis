@@ -493,7 +493,11 @@ def register_l3_singlecell(
         description=(
             "读入本地单细胞数据（.h5ad 或 10x mtx 目录）。"
             "输出 dataset_ref（下游 sc_* 工具用 <node_id>.dataset_ref 引用）、"
-            "n_cells、n_genes、mt_pct 概要。path 必须在管理员允许的数据目录内。"
+            "n_cells、n_genes、mt_pct 概要。输出另含 velocity_ready/"
+            "velocity_note——spliced/unspliced 层前置校验（RNA velocity "
+            "可行性；10x 总计数矩阵天然缺失，缺层时用 sc_pseudotime "
+            "trajectory_full 替代）。"
+            "path 必须在管理员允许的数据目录内。"
             "注意：若用户给的是此前分析过的数据集引用（12 位 hex，如 "
             "f1e89bf88edc），不要重新 sc_load——直接把该 ref 作为下游工具的 "
             "dataset_ref 参数；sc_load 仅用于首次读入原始数据文件。"
@@ -947,7 +951,9 @@ def register_l3_singlecell(
                 "top_n": {"type": "integer", "default": 30, "maximum": 100},
                 "max_cells_per_group": {
                     "type": "integer", "default": 0,
-                    "description": "每组（细胞类型）抽样上限，0=全量。"
+                    "description": "每组（细胞类型）抽样上限，0=全量"
+                                   "（>80000 细胞时 0 自动按每组 5000 "
+                                   "分层抽样，emit 钉注 auto_capped）。"
                                    "大数据集可设 100 显著加速，"
                                    "结果为抽样估计"},
                 "method": {"type": "string", "default": "cellchat",

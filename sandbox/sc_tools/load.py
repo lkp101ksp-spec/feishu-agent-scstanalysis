@@ -48,6 +48,42 @@ def _detect_and_read(path: str) -> Any:
     raise SystemExit(1)
 
 
+def _velocity_diag(adata: Any) -> dict[str, Any]:
+    """RNA velocity 前置校验：spliced/unspliced 层检测与覆盖度（建议⑤）。
+
+    scVelo/velocyto 需剪接定量层；10x cellranger 总计数矩阵天然不含。
+    返回字段并入 emit：
+    - velocity_ready + velocity_layers（每层非零基因覆盖）
+    - 缺层/全零时附 velocity_note（替代方案提示）
+    """
+    layers = getattr(adata, "layers", {})
+    out: dict[str, Any] = {"velocity_ready": False}
+    have = {k: k in layers for k in ("spliced", "unspliced")}
+    if not all(have.values()):
+        missing = [k for k, v in have.items() if not v]
+        out["velocity_layers"] = have
+        out["velocity_note"] = (
+            f"missing layers: {','.join(missing)}；RNA velocity 需 "
+            "velocyto/kallisto|bustools 定量的 spliced/unspliced 层"
+            "（10x cellranger 总计数矩阵不含剪接信息）；可用 "
+            "sc_pseudotime trajectory_full（Palantir 方向场）替代")
+        return out
+    import numpy as np
+
+    stats: dict[str, dict[str, int]] = {}
+    for k in ("spliced", "unspliced"):
+        col_nnz = np.asarray((layers[k] > 0).sum(axis=0)).ravel()
+        stats[k] = {"nonzero_genes": int((col_nnz > 0).sum()),
+                    "total_genes": int(adata.n_vars)}
+    out["velocity_layers"] = stats
+    if stats["unspliced"]["nonzero_genes"] >= 10:
+        out["velocity_ready"] = True
+    else:
+        out["velocity_note"] = (
+            "unspliced 层几乎全零——定量失败或数据不含内含子 reads")
+    return out
+
+
 def main() -> None:
     from common import read_args
 
@@ -94,6 +130,7 @@ def main() -> None:
         "n_genes": int(adata.n_vars),
         "mt_pct": mt_summary,
         "workspace": str(ds_dir),
+        **_velocity_diag(adata),
     })
 
 
