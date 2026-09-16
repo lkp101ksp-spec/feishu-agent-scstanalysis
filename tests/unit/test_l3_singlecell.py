@@ -1103,7 +1103,7 @@ def test_sc_cnv_forwards_params(tmp_path):
     assert payload == {"dataset_id": "d", "method": "cnvturbo",
                        "celltype_col": "celltypist_label",
                        "ref_groups": ["T cells"], "resolution": 0.8,
-                       "cluster_smooth": True}
+                       "cluster_smooth": True, "purity_check": True}
     assert runner.run.call_args[1]["timeout_sec"] == 3600
     assert "ok" not in out
     assert out["n_malignant"] == 5
@@ -1119,4 +1119,5 @@ def test_sc_cnv_default_params(tmp_path):
     _, payload = runner.run.call_args[0]
     assert payload == {"dataset_id": "d", "method": "infercnvpy",
                        "celltype_col": "leiden", "ref_groups": None,
-                       "resolution": 1.0, "cluster_smooth": False}
+                       "resolution": 1.0, "cluster_smooth": False,
+                       "purity_check": True}

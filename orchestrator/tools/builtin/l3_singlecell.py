@@ -473,15 +473,19 @@ def register_l3_singlecell(
                celltype_col: str = "leiden",
                ref_groups: list[str] | None = None,
                resolution: float = 1.0,
-               cluster_smooth: bool = False) -> dict[str, Any]:
+               cluster_smooth: bool = False,
+               purity_check: bool = True) -> dict[str, Any]:
         """CNV 推断与恶性判定（B1）：双后端 → 亚克隆。cluster_smooth
-        仅作用于 cnvturbo：HMM 细胞级判定后加簇级多数投票平滑。"""
+        仅作用于 cnvturbo：HMM 细胞级判定后加簇级多数投票平滑。
+        purity_check 纯度护栏：免疫 marker 高表达克隆回退
+        non-malignant（emit suspect_subclones 钉注）。"""
         try:
             out = runner.run("cnv", {
                 "dataset_id": dataset_ref, "method": method,
                 "celltype_col": celltype_col, "ref_groups": ref_groups,
                 "resolution": resolution,
                 "cluster_smooth": cluster_smooth,
+                "purity_check": purity_check,
             }, timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
@@ -1311,6 +1315,13 @@ def register_l3_singlecell(
                     "description": "仅 cnvturbo：HMM 细胞级判定后加 CNV 簇"
                                    "级多数投票平滑（与 infercnvpy 后处理"
                                    "对齐；口径评估 2026-09-12）"},
+                "purity_check": {
+                    "type": "boolean", "default": True,
+                    "description": "纯度护栏：免疫 marker（T/B）高表达的"
+                                   "亚克隆回退 non-malignant 并在 emit "
+                                   "suspect_subclones 钉注（19149 C15="
+                                   "T 细胞污染克隆教训）；免疫恶性肿瘤"
+                                   "（淋巴瘤/白血病）数据集须关"},
             },
             "required": ["dataset_ref"],
         },

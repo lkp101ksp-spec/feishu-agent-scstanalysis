@@ -4,8 +4,10 @@ stdin: {"dataset_id": ..., "method": "infercnvpy"|"cnvturbo",
         "celltype_col": "leiden",          # 参考细胞来源列（注释列亦可）
         "ref_groups": ["T cells", ...],    # 显式参考；缺省内置清单匹配
         "resolution": 1.0,                 # 亚克隆 leiden 分辨率
-        "cluster_smooth": false}           # 仅 cnvturbo：HMM 判定后加
+        "cluster_smooth": false,           # 仅 cnvturbo：HMM 判定后加
         # 簇级多数投票平滑（对齐 infercnvpy 后处理口径，2026-09-12 评估）
+        "purity_check": true}              # 纯度护栏：免疫 marker 高表达
+        # 克隆回退 non-malignant（19149 C15 教训）；免疫恶性肿瘤数据集关
 数据流（doublet.py 先例）：counts 走 filtered/raw 回退链（全基因矩阵），
 标签/UMAP 走 processed.h5ad 按 obs_names 交集对齐；两后端同源起步
 （infercnvpy 侧自 normalize+log1p，cnvturbo 侧吃原始 counts）保证交叉
@@ -321,6 +323,49 @@ def _chromosome_heatmap(x_cnv: np.ndarray, chrom_col: np.ndarray,
     plt.close(fig)
 
 
+def _purge_immune_clones(adata: Any, common_cells: Any,
+                         subclone: np.ndarray,
+                         is_mal: np.ndarray) -> tuple[list[dict[str, Any]], str]:
+    """免疫污染克隆剔除（纯度护栏，19149 C15 教训：T 细胞误归恶性）。
+
+    每亚克隆免疫 marker（T: CD3D/CD3E/CD2/CD8A；B: MS4A1/CD79A/CD19，
+    小写自适应鼠源）平均 log 表达 vs 其余恶性细胞中位数——
+    绝对值 >0.5 且相对基线 >max(5 倍, +0.5) 判 suspect：
+    is_mal 回 False、subclone 回 non-malignant。免疫恶性肿瘤
+    （淋巴瘤/白血病）数据集应关 purity_check。返回 (suspect 清单, 钉注)。
+    """
+    markers = {"CD3D", "CD3E", "CD2", "CD8A", "MS4A1", "CD79A", "CD19"}
+    names = [str(g) for g in adata.var_names]
+    have = [g for g in names if g in markers or g.lower() in markers]
+    if len(have) < 3:
+        return [], ""
+    sub_ad = adata[common_cells, have]
+    expr = sub_ad.X.toarray() if hasattr(sub_ad.X, "toarray") \
+        else np.asarray(sub_ad.X)
+    imm = np.asarray(expr, dtype=np.float64).mean(axis=1)
+    mal_pos = np.asarray(is_mal, dtype=bool)
+    base = float(np.median(imm[mal_pos])) if mal_pos.any() else 0.0
+    suspect: list[dict[str, Any]] = []
+    for label in sorted(set(subclone) - {"non-malignant"}):
+        m = np.asarray([str(s) == label for s in subclone])
+        if not m.any():
+            continue
+        score = float(imm[m].mean())
+        if score > 0.5 and score > max(base * 5.0, base + 0.5):
+            suspect.append({"clone": str(label), "n": int(m.sum()),
+                            "immune_score": round(score, 3),
+                            "malignant_baseline": round(base, 3),
+                            "markers_found": have})
+            is_mal[m] = False
+            subclone[m] = "non-malignant"
+    note = ""
+    if suspect:
+        note = (f"；纯度护栏剔除免疫污染克隆 {len(suspect)} 个"
+                f"（{'/'.join(s['clone'] for s in suspect)}——T/B marker "
+                "高表达被 CNV 分数误归恶性，已回退 non-malignant）")
+    return suspect, note
+
+
 def main() -> None:
     """主流程：对齐 → 双后端之一推断 → 打分/判定/亚克隆 → 写回产物。"""
     args = read_args()
@@ -465,6 +510,15 @@ def main() -> None:
         subclone[is_mal] = "C1"
         note += "；恶性细胞 <50 退化为单克隆 C1"
 
+    # 纯度护栏（建议②）：免疫污染克隆剔除（subclone/is_mal 原地修改）
+    purity_check = bool(args.get("purity_check", True))
+    suspect_subclones: list[dict[str, Any]] = []
+    if purity_check and n_mal > 0:
+        suspect_subclones, note_p = _purge_immune_clones(
+            adata, common_cells, subclone, is_mal)
+        note += note_p
+        n_mal = int(is_mal.sum())
+
     out_dir = WS_ROOT / args["dataset_id"] / "cnv"
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -533,6 +587,7 @@ def main() -> None:
         "n_subclones": len(sub_labels),
         "subclone_sizes": {c: int((subclone == c).sum())
                            for c in sub_labels},
+        "suspect_subclones": suspect_subclones,
         "malignant_by_celltype": malignant_by_ct,
         # pngs 聚合键：IM 发图与 D 报告共用宿主四键收集（umap/dotplot/
         # spatial/pngs），2026-09-11 验收发现单名键导致图漏收
