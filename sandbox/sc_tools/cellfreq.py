@@ -1,7 +1,7 @@
 """sc_cellfreq：细胞组成比较（Phase 33，对齐 toolsv1 server_cell_freq_merged）。
 
 stdin: {"dataset_id": ..., "by": "sample", "group": "condition",
-        "celltype_col": "leiden"}
+        "celltype_col": "leiden", "donor_col": ""}
 需 processed.h5ad。按 by 列（样本/受试者）统计各簇细胞比例 →
 比例表 csv + 堆叠柱状图 png；group 列给出时每簇做卡方检验
 （该簇 vs 其余 × 各 group，按样本合并计数；返回原始 chi2/p，未做多重校正）。
@@ -10,6 +10,9 @@ group 值域恰 2 时附加（2026-09-13 命运偏向增强）：
 偏好指数（observed/expected，>1 偏好）+ Ro/e 热图 + fate_bias
 摘要；celltype_col 传 palantir_branch 即分支命运偏向分析。
 group >2 值时仅卡方 + note 降级。
+donor_col 给定时附加供体级组成检验（2026-09-16）：每供体簇占比 →
+组间供体 MW-U + BH + Cliff's delta（donor_level 字段并列输出）——
+细胞级卡方把供体内细胞当独立样本，伪重复夸大显著性。
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
-from scipy.stats import chi2_contingency, fisher_exact
+from scipy.stats import chi2_contingency, fisher_exact, mannwhitneyu
 from statsmodels.stats.multitest import multipletests
 
 
@@ -178,6 +181,82 @@ def main() -> None:
                 "fisher_q": t["fisher_q"],
                 "higher_in": g_levels2[0] if r1 > 1 else g_levels2[1]})
 
+    # 供体级组成检验（donor_col 给定时，与细胞级并列）
+    donor_level: dict[str, Any] | None = None
+    donor_col = str(args.get("donor_col", "")).strip()
+    if donor_col:
+        if not group:
+            raise ValueError("donor_col requires group column")
+        if donor_col not in adata.obs:
+            raise ValueError(
+                f"donor_col {donor_col!r} not in obs; available: "
+                f"{_cat_cols(adata)}")
+        don_s = adata.obs[donor_col].astype(str)
+        g_s = adata.obs[group].astype(str)
+        d_grp = pd.Series({
+            d: gss.unique().tolist() for d, gss in g_s.groupby(don_s)})
+        bad = d_grp[d_grp.map(len) > 1]
+        if not bad.empty:
+            raise ValueError(
+                f"donors with mixed {group} values: {bad.index.tolist()[:10]}")
+        d_grp = d_grp.map(lambda v: v[0])
+        g_levels_d = sorted(set(d_grp))
+        if len(g_levels_d) != 2:
+            raise ValueError(
+                f"donor-level test needs exactly 2 groups in {group}, "
+                f"got {g_levels_d}")
+        don_counts = pd.crosstab(don_s, ct_s).reindex(
+            columns=order, fill_value=0)
+        don_props = don_counts.div(don_counts.sum(axis=1), axis=0)
+        ga, gb = g_levels_d[0], g_levels_d[1]
+        don_a = sorted(d_grp[d_grp == ga].index)
+        don_b = sorted(d_grp[d_grp == gb].index)
+        if len(don_a) < 3 or len(don_b) < 3:
+            raise ValueError(
+                f"need >=3 donors per group: {ga}={len(don_a)}, "
+                f"{gb}={len(don_b)}")
+        drows = []
+        for c in order:
+            x1 = don_props.loc[don_a, c].to_numpy(dtype=float)
+            x2 = don_props.loc[don_b, c].to_numpy(dtype=float)
+            u, p = mannwhitneyu(x1, x2, alternative="two-sided")
+            drows.append({
+                "cluster": c,
+                "mean_prop_a": round(float(x1.mean()), 4),
+                "mean_prop_b": round(float(x2.mean()), 4),
+                "delta_a-b": round(float(x1.mean() - x2.mean()), 4),
+                "cliffs_delta": round(
+                    float(2 * u / (len(don_a) * len(don_b)) - 1), 3),
+                "p": float(f"{p:.3e}")})
+        dres = pd.DataFrame(drows)
+        dres.insert(0, "group_a", ga)
+        dres.insert(1, "group_b", gb)
+        dres["q"] = multipletests(dres["p"], method="fdr_bh")[1]
+        dres["q"] = dres["q"].map(lambda x: float(f"{x:.3e}"))
+        dres = dres.sort_values("p").reset_index(drop=True)
+        props_out = don_props.copy()
+        props_out.insert(0, group, d_grp.reindex(props_out.index).to_numpy())
+        donor_csv = ds_dir / f"donor_props_by_{donor_col}.csv"
+        props_out.to_csv(donor_csv)
+        deets_csv = ds_dir / f"donor_test_by_{donor_col}.csv"
+        dres.to_csv(deets_csv, index=False)
+        donor_level = {
+            "donor_col": donor_col,
+            "n_donors_a": len(don_a), "n_donors_b": len(don_b),
+            "group_a": ga, "group_b": gb,
+            "n_sig": int((dres["q"] < 0.05).sum()),
+            "top": [{"cluster": r["cluster"],
+                     "delta_a-b": r["delta_a-b"],
+                     "cliffs_delta": r["cliffs_delta"], "q": r["q"]}
+                    for _, r in dres.head(5).iterrows()],
+            "props_csv": str(donor_csv),
+            "csv": str(deets_csv),
+            "note": (f"供体级：每{donor_col}簇占比→MW-U"
+                     f"({len(don_a)}v{len(don_b)})+BH——与细胞级卡方并列；"
+                     "小 n 功效有限（5v5 完全分离极值 p≈7.9e-3），"
+                     "不显著≠无差异"),
+        }
+
     emit({
         "ok": True,
         "dataset_ref": args["dataset_id"],
@@ -192,6 +271,7 @@ def main() -> None:
                       "group); raw p, no multiple-testing correction"
                       ) if tests else None,
         "fate_bias": fate_bias or None,
+        "donor_level": donor_level,
         "roe_csv": str(ds_dir / f"roe_by_{group}.csv"
                        ) if roe_df is not None else None,
         "roe_png": str(roe_png) if roe_png else None,

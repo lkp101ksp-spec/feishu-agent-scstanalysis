@@ -15,6 +15,7 @@
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -87,22 +88,44 @@ def main() -> int:
         "pipeline": [],
     }
 
+    # 断点续跑（2026-09-16 建议3）：上轮 summary 中 ok 的步骤直接复用
+    # （产物路径不变），失败重试只补跑缺口——30 分钟级任务重试成本减半；
+    # fast→full 升级时 cellchat 不在旧清单照常补跑。--fresh 1 强制全重跑。
+    out_path = WS_ROOT / ds / "trajectory_pipeline_summary.json"
+    prev_steps: dict[str, dict[str, Any]] = {}
+    if out_path.exists() and args.get("fresh", "0") != "1":
+        try:
+            prev = json.loads(out_path.read_text(encoding="utf-8"))
+            prev_steps = {s.get("step", ""): s
+                          for s in prev.get("pipeline", []) if s.get("ok")}
+        except Exception:  # noqa: BLE001 —— 旧 summary 损坏则全重跑
+            prev_steps = {}
+    resumed: list[str] = []
+
+    def _step(name: str,
+              run_fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        """上轮 ok 步骤复用（产物未变），否则执行 run_fn。"""
+        if name in prev_steps:
+            resumed.append(name)
+            return dict(prev_steps[name])
+        return run_fn()
+
     # 1) 轨迹全景（Phase 59 一键模式）
-    out = run_tool(
-        "pseudotime",
-        {
-            "dataset_id": ds,
-            "trajectory_full": True,
-            "root_cluster": root,
-            "dyn_modules_k": 6,
-            "modules_enrich": "go_bp",
-            "paga": True,
-            "paga_pt": True,
-        },
-    )
-    pal, sling = out.get("palantir", {}), out.get("slingshot", {})
-    summary["pipeline"].append(
-        {
+    def _run_traj() -> dict[str, Any]:
+        out = run_tool(
+            "pseudotime",
+            {
+                "dataset_id": ds,
+                "trajectory_full": True,
+                "root_cluster": root,
+                "dyn_modules_k": 6,
+                "modules_enrich": "go_bp",
+                "paga": True,
+                "paga_pt": True,
+            },
+        )
+        pal, sling = out.get("palantir", {}), out.get("slingshot", {})
+        return {
             "step": "trajectory_full",
             "ok": out.get("ok", True),
             "n_terminal": pal.get("n_terminal"),
@@ -113,7 +136,8 @@ def main() -> int:
             "branch_counts": pal.get("branch_counts"),
             "artifacts": {k: v for k, v in {**pal, **sling}.items() if k.endswith(("_csv", "_png"))},
         }
-    )
+
+    summary["pipeline"].append(_step("trajectory_full", _run_traj))
 
     # 2) 列发现（只读）
     cols = run_tool("meta", {"dataset_id": ds, "op": "list_cols"})
@@ -129,31 +153,42 @@ def main() -> int:
         if c in (detail.get("trajectory_cols") or []) or c in group_cols
     ]
     if obs_cols:
-        plot = run_tool("plot", {"dataset_id": ds, "kind": "umap_obs", "obs_cols": obs_cols})
-        summary["pipeline"].append(
-            {"step": "umap_obs", "ok": plot.get("ok", True), "pngs": plot.get("pngs", [])}
-        )
+
+        def _run_plot() -> dict[str, Any]:
+            plot = run_tool("plot", {"dataset_id": ds, "kind": "umap_obs", "obs_cols": obs_cols})
+            return {"step": "umap_obs", "ok": plot.get("ok", True), "pngs": plot.get("pngs", [])}
+
+        summary["pipeline"].append(_step("umap_obs", _run_plot))
 
     # 4) 命运偏向（存在 group 列时）
     group = args.get("group_col") or ("group" if "group" in group_cols else None)
     if group:
-        cf = run_tool(
-            "cellfreq", {"dataset_id": ds, "by": "sample", "group": group, "celltype_col": "lineage_branch"}
-        )
-        summary["pipeline"].append(
-            {
+
+        def _run_cf() -> dict[str, Any]:
+            cf = run_tool(
+                "cellfreq",
+                {"dataset_id": ds, "by": "sample", "group": group,
+                 "celltype_col": "lineage_branch"},
+            )
+            return {
                 "step": "cellfreq",
                 "ok": cf.get("ok", True),
                 "fate_bias": cf.get("fate_bias"),
                 "roe_csv": cf.get("roe_csv"),
             }
-        )
+
+        summary["pipeline"].append(_step("cellfreq", _run_cf))
 
     # 5) 支间通讯（full）
     if steps == "full":
-        cc = run_tool("cellchat", {"dataset_id": ds, "celltype_col": "lineage_branch", "species": species})
-        summary["pipeline"].append(
-            {
+
+        def _run_cc() -> dict[str, Any]:
+            cc = run_tool(
+                "cellchat",
+                {"dataset_id": ds, "celltype_col": "lineage_branch",
+                 "species": species},
+            )
+            return {
                 "step": "cellchat",
                 "ok": cc.get("ok", True),
                 "n_pairs": cc.get("n_pairs_tested"),
@@ -161,9 +196,11 @@ def main() -> int:
                 "top": cc.get("top", [])[:5],
                 "csv": cc.get("csv"),
             }
-        )
 
-    out_path = WS_ROOT / ds / "trajectory_pipeline_summary.json"
+        summary["pipeline"].append(_step("cellchat", _run_cc))
+
+    if resumed:
+        summary["resumed_steps"] = resumed
     out_path.write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
     print(
         json.dumps(
@@ -171,6 +208,7 @@ def main() -> int:
                 "ok": True,
                 "summary_json": str(out_path),
                 "steps_done": [s["step"] for s in summary["pipeline"]],
+                "resumed": resumed,
             },
             ensure_ascii=False,
         )

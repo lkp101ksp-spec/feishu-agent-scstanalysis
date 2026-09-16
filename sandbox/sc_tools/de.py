@@ -2,10 +2,14 @@
 
 stdin: {"dataset_id": ..., "groupby": "condition",
         "group_a": "treated", "group_b": "control",
-        "method": "wilcoxon", "top_n": 20}
+        "method": "wilcoxon", "top_n": 20, "donor_col": ""}
 需 processed.h5ad（sc_process 产物）。obs 需含 groupby 列
 （源数据自带，如 condition/sample/批次的注释列）。
 rank_genes_groups 定向对比 a vs b：上调 = log2fc > 0（a 相对 b）。
+donor_col 给定时附加供体级 pseudobulk 检验（2026-09-16）：每供体
+raw counts 聚合 → log1p CPT → 每基因组间供体 MW-U + BH + Cliff's
+delta，与细胞级结果并列输出（donor_level 字段）——细胞级检验把
+供体内细胞当独立样本，伪重复夸大显著性（59900 实测 15/15→0/15）。
 """
 from __future__ import annotations
 
@@ -14,6 +18,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
+from scipy.stats import mannwhitneyu
+from statsmodels.stats.multitest import multipletests
 
 
 def _cat_cols(adata: Any) -> str:
@@ -119,6 +125,88 @@ def main() -> None:
     dn_df = df[(df["log2fc"] < 0) & (df["pval_adj"] < 0.05)].sort_values(
         "score")
 
+    # 供体级 pseudobulk（donor_col 给定时，与细胞级并列）
+    donor_level: dict[str, Any] | None = None
+    donor_col = str(args.get("donor_col", "")).strip()
+    if donor_col:
+        if donor_col not in adata.obs:
+            raise ValueError(
+                f"donor_col {donor_col!r} not in obs; available: "
+                f"{_cat_cols(adata)}")
+        don_s = adata.obs[donor_col].astype(str)
+        # 供体×组唯一性（混组供体无法归组）
+        d_grp = adata.obs.groupby(don_s)[groupby].agg(
+            lambda s: s.astype(str).unique().tolist())
+        bad = d_grp[d_grp.map(len) > 1]
+        if not bad.empty:
+            raise ValueError(
+                f"donors with mixed {groupby} values: {bad.index.tolist()[:10]}")
+        d_grp = d_grp.map(lambda v: v[0])
+        don_a = sorted(d_grp[d_grp == group_a].index)
+        don_b = sorted(d_grp[d_grp == group_b].index)
+        if len(don_a) < 3 or len(don_b) < 3:
+            raise ValueError(
+                f"need >=3 donors per group for pseudobulk: "
+                f"{group_a}={len(don_a)}, {group_b}={len(don_b)}")
+
+        # raw counts 供体聚合（onehot 向量矩阵乘，mat 恒为 细胞×基因）
+        mat = adata.raw.X if adata.raw is not None else adata.X
+        genes_d = (adata.raw.var_names if adata.raw is not None
+                   else adata.var_names).astype(str)
+        donors = don_a + don_b
+        rows = []
+        for d in donors:
+            m = (don_s == d).to_numpy().astype(np.float64)
+            rows.append(np.asarray(mat.T @ m).ravel())
+        pb = np.vstack(rows)  # 供体 × 基因 counts
+        cpt = np.log1p(pb / pb.sum(axis=1, keepdims=True) * 1e4)
+        # 低表达过滤：非零供体 >=3
+        keep = (pb > 0).sum(axis=0) >= 3
+        cpt = cpt[:, keep]
+        gene_k = np.asarray(genes_d)[keep]
+
+        a_rows, b_rows = cpt[:len(don_a)], cpt[len(don_a):]
+        drows = []
+        for j, g in enumerate(gene_k):
+            x1, x2 = a_rows[:, j], b_rows[:, j]
+            u, p = mannwhitneyu(x1, x2, alternative="two-sided")
+            drows.append({
+                "gene": str(g),
+                "mean_lfc_a": round(float(x1.mean()), 3),
+                "mean_lfc_b": round(float(x2.mean()), 3),
+                "log2fc": round(float(x1.mean() - x2.mean()), 3),
+                "cliffs_delta": round(
+                    float(2 * u / (len(don_a) * len(don_b)) - 1), 3),
+                "p": float(p)})
+        dres = pd.DataFrame(drows)
+        dres["q"] = multipletests(dres["p"], method="fdr_bh")[1]
+        dres["q"] = dres["q"].map(lambda x: float(f"{x:.2e}"))
+        dres["p"] = dres["p"].map(lambda x: float(f"{x:.2e}"))
+        dres["direction"] = np.where(dres["log2fc"] > 0,
+                                     "up_in_" + group_a, "down_in_" + group_a)
+        dres = dres.sort_values("p").reset_index(drop=True)
+        donor_csv = ds_dir / f"de_donor_{group_a}_vs_{group_b}.csv"
+        dres.to_csv(donor_csv, index=False)
+
+        def _dtop(sub: pd.DataFrame) -> list[dict[str, Any]]:
+            return [{"gene": r["gene"], "log2fc": r["log2fc"],
+                     "q": r["q"]} for _, r in sub.head(top_n).iterrows()]
+
+        dsig_up = dres[(dres["q"] < 0.05) & (dres["log2fc"] > 0)]
+        dsig_dn = dres[(dres["q"] < 0.05) & (dres["log2fc"] < 0)]
+        donor_level = {
+            "donor_col": donor_col,
+            "n_donors_a": len(don_a), "n_donors_b": len(don_b),
+            "n_genes_tested": int(keep.sum()),
+            "n_sig_up": int(len(dsig_up)), "n_sig_down": int(len(dsig_dn)),
+            "up": _dtop(dsig_up), "down": _dtop(dsig_dn),
+            "csv": str(donor_csv),
+            "note": (f"pseudobulk：每供体 raw counts 聚合→log1p CPT→"
+                     f"组间 MW-U({len(don_a)}v{len(don_b)})+BH——与细胞级"
+                     "并列；小 n 供体检验功效有限（如 5v5 完全分离"
+                     "极值 p≈7.9e-3），供体级不显著不等于无差异"),
+        }
+
     emit({
         "ok": True,
         "dataset_ref": args["dataset_id"],
@@ -130,6 +218,7 @@ def main() -> None:
         "down": _top(dn_df),
         "csv": str(csv_path),
         "volcano_png": str(volcano_png),
+        "donor_level": donor_level,
     })
 
 

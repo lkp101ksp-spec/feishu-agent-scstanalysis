@@ -531,8 +531,23 @@ def test_sc_de_forwards_params(tmp_path):
     assert args[1]["group_a"] == "treated"
     assert args[1]["group_b"] == "control"
     assert args[1]["top_n"] == 30
+    assert "donor_col" not in args[1]  # 默认不传：细胞级 payload 零变化
     assert "ok" not in out
     assert out["up"][0]["gene"] == "GZMB"
+
+
+def test_sc_de_donor_col_passthrough(tmp_path):
+    """donor_col 给定时透传容器（供体级 pseudobulk 并列）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "donor_level": {
+            "n_donors_a": 5, "n_donors_b": 5, "n_sig_up": 3}}
+    out = reg.get("sc_de").handler(
+        dataset_ref="d", groupby="condition", group_a="treated",
+        group_b="control", donor_col="donor")
+    args = runner.run.call_args.args
+    assert args[1]["donor_col"] == "donor"
+    assert out["donor_level"]["n_sig_up"] == 3
 
 
 def test_sc_de_error_lists_columns(tmp_path):
@@ -591,8 +606,23 @@ def test_sc_cellfreq_forwards_params(tmp_path):
     assert args[0] == "cellfreq"
     assert args[1]["by"] == "sample"
     assert args[1]["group"] == "condition"
+    assert "donor_col" not in args[1]  # 默认不传：payload 零变化
     assert out["chi2_tests"][0]["cluster"] == "3"
     assert reg.get("sc_cellfreq").timeout_sec == 600
+
+
+def test_sc_cellfreq_donor_col_passthrough(tmp_path):
+    """donor_col 给定时透传容器（供体级组成检验并列）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "donor_level": {
+            "n_donors_a": 5, "n_donors_b": 5, "n_sig": 1}}
+    out = reg.get("sc_cellfreq").handler(
+        dataset_ref="d", by="sample", group="condition",
+        donor_col="donor")
+    args = runner.run.call_args.args
+    assert args[1]["donor_col"] == "donor"
+    assert out["donor_level"]["n_sig"] == 1
 
 
 # === Phase 34：B 类分析（细胞通讯/差异丰度/bulk 解卷积） ===

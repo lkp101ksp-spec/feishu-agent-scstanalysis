@@ -201,14 +201,19 @@ def register_l3_singlecell(
         return out
 
     def sc_de(*, dataset_ref: str, groupby: str, group_a: str,
-              group_b: str, method: str = "wilcoxon", top_n: int = 20) -> dict[str, Any]:
-        """组间差异（Phase 33）：两组定向 DE → csv+火山图。"""
+              group_b: str, method: str = "wilcoxon", top_n: int = 20,
+              donor_col: str = "") -> dict[str, Any]:
+        """组间差异（Phase 33）：两组定向 DE → csv+火山图。
+        donor_col 供体级 pseudobulk 并列检验（MW-U+BH，伪重复修正）。"""
         try:
-            out = runner.run("de", {
+            payload: dict[str, Any] = {
                 "dataset_id": dataset_ref, "groupby": groupby,
                 "group_a": group_a, "group_b": group_b,
                 "method": method, "top_n": top_n,
-            }, timeout_sec=1200)
+            }
+            if donor_col:
+                payload["donor_col"] = donor_col
+            out = runner.run("de", payload, timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -248,13 +253,18 @@ def register_l3_singlecell(
         return out
 
     def sc_cellfreq(*, dataset_ref: str, by: str, group: str = "",
-                    celltype_col: str = "leiden") -> dict[str, Any]:
-        """组成比较（Phase 33）：比例表+卡方 → csv+堆叠图。"""
+                    celltype_col: str = "leiden",
+                    donor_col: str = "") -> dict[str, Any]:
+        """组成比较（Phase 33）：比例表+卡方 → csv+堆叠图。
+        donor_col 供体级组成检验并列输出（MW-U+BH，伪重复修正）。"""
         try:
-            out = runner.run("cellfreq", {
+            payload: dict[str, Any] = {
                 "dataset_id": dataset_ref, "by": by, "group": group,
                 "celltype_col": celltype_col,
-            }, timeout_sec=600)
+            }
+            if donor_col:
+                payload["donor_col"] = donor_col
+            out = runner.run("cellfreq", payload, timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -832,6 +842,15 @@ def register_l3_singlecell(
                 "top_n": {"type": "integer", "default": 20,
                           "maximum": 100,
                           "description": "上调/下调各返回的基因数"},
+                "donor_col": {
+                    "type": "string", "default": "",
+                    "description": "供体列名（如 sample/donor）：给定时附加"
+                                   "供体级 pseudobulk 检验（每供体 counts "
+                                   "聚合→组间 MW-U+BH，donor_level 字段"
+                                   "并列输出）——修正细胞级伪重复"
+                                   "（同供体细胞相关致显著性虚高，"
+                                   "59900 实测 15/15→供体级 0/15）；"
+                                   "跨供体比较必传"},
             },
             "required": ["dataset_ref", "groupby", "group_a", "group_b"],
         },
@@ -920,6 +939,13 @@ def register_l3_singlecell(
                                          "空则只出比例表"},
                 "celltype_col": {"type": "string", "default": "leiden",
                                  "description": "细胞标签列（leiden 或注释列）"},
+                "donor_col": {
+                    "type": "string", "default": "",
+                    "description": "供体列名：给定时附加供体级组成检验"
+                                   "（每供体簇占比→组间 MW-U+BH，donor_level "
+                                   "字段并列输出）——修正细胞级卡方的"
+                                   "伪重复（同供体细胞相关）；跨供体"
+                                   "比较建议传，与 by 可同列"},
             },
             "required": ["dataset_ref", "by"],
         },

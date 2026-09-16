@@ -325,20 +325,27 @@ def _chromosome_heatmap(x_cnv: np.ndarray, chrom_col: np.ndarray,
 
 def _purge_immune_clones(adata: Any, common_cells: Any,
                          subclone: np.ndarray,
-                         is_mal: np.ndarray) -> tuple[list[dict[str, Any]], str]:
+                         is_mal: np.ndarray,
+                         scores: np.ndarray | None = None,
+                         ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
     """免疫污染克隆剔除（纯度护栏，19149 C15 教训：T 细胞误归恶性）。
 
-    每亚克隆免疫 marker（T: CD3D/CD3E/CD2/CD8A；B: MS4A1/CD79A/CD19，
-    小写自适应鼠源）平均 log 表达 vs 其余恶性细胞中位数——
-    绝对值 >0.5 且相对基线 >max(5 倍, +0.5) 判 suspect：
-    is_mal 回 False、subclone 回 non-malignant。免疫恶性肿瘤
-    （淋巴瘤/白血病）数据集应关 purity_check。返回 (suspect 清单, 钉注)。
+    主判据（回退）：每亚克隆免疫 marker（T: CD3D/CD3E/CD2/CD8A；
+    B: MS4A1/CD79A/CD19，小写自适应鼠源）平均 log 表达 vs 其余恶性
+    细胞中位数——绝对值 >0.5 且相对基线 >max(5 倍, +0.5) 判 suspect：
+    is_mal 回 False、subclone 回 non-malignant。
+    辅助判据（候选钉注不回退，2026-09-16 C15 边界案例）：obs 存在
+    palantir_entropy 列且 scores 给定时，克隆 median entropy>0.3 且
+    mean cnv_score<恶性细胞分 25 分位 → suspect_candidates——证据
+    不足以回退（干细胞样恶性克隆亦可高 entropy），仅提示人工复核。
+    免疫恶性肿瘤（淋巴瘤/白血病）数据集应关 purity_check。
+    返回 (suspect 清单, candidates 清单, 钉注)。
     """
     markers = {"CD3D", "CD3E", "CD2", "CD8A", "MS4A1", "CD79A", "CD19"}
     names = [str(g) for g in adata.var_names]
     have = [g for g in names if g in markers or g.lower() in markers]
     if len(have) < 3:
-        return [], ""
+        return [], [], ""
     sub_ad = adata[common_cells, have]
     expr = sub_ad.X.toarray() if hasattr(sub_ad.X, "toarray") \
         else np.asarray(sub_ad.X)
@@ -363,7 +370,41 @@ def _purge_immune_clones(adata: Any, common_cells: Any,
         note = (f"；纯度护栏剔除免疫污染克隆 {len(suspect)} 个"
                 f"（{'/'.join(s['clone'] for s in suspect)}——T/B marker "
                 "高表达被 CNV 分数误归恶性，已回退 non-malignant）")
-    return suspect, note
+
+    # 辅助判据：entropy 高 + CNV 分偏低的克隆（C15 型边界，仅钉注）
+    candidates: list[dict[str, Any]] = []
+    if scores is not None and "palantir_entropy" in adata.obs:
+        ent = pd.to_numeric(
+            adata.obs.loc[common_cells, "palantir_entropy"], errors="coerce"
+        ).to_numpy(dtype=float)
+        mal_now = np.asarray(is_mal, dtype=bool)
+        if mal_now.any() and np.isfinite(ent).any():
+            q25 = float(np.quantile(scores[mal_now], 0.25))
+            for label in sorted(set(subclone) - {"non-malignant"}):
+                m = np.asarray([str(s) == label for s in subclone]) & mal_now
+                if not m.any():
+                    continue
+                ent_c = ent[m]
+                ent_c = ent_c[np.isfinite(ent_c)]
+                if ent_c.size == 0:
+                    continue
+                med_e = float(np.median(ent_c))
+                mean_s = float(np.asarray(scores)[m].mean())
+                if med_e > 0.3 and mean_s < q25:
+                    candidates.append({
+                        "clone": str(label), "n": int(m.sum()),
+                        "median_entropy": round(med_e, 3),
+                        "mean_cnv_score": round(mean_s, 4),
+                        "malignant_q25": round(q25, 4),
+                        "reason": ("entropy 高+CNV 分偏低，疑似免疫/正常"
+                                   "残留未达 marker 阈值，建议人工复核"
+                                   "（未自动回退）")})
+            if candidates:
+                note += (f"；护栏候选 {len(candidates)} 个"
+                         f"（{'/'.join(c['clone'] for c in candidates)}"
+                         "——entropy>0.3 且 CNV 分<恶性 25 分位，仅钉注"
+                         "不回退，请复核）")
+    return suspect, candidates, note
 
 
 def main() -> None:
@@ -513,9 +554,10 @@ def main() -> None:
     # 纯度护栏（建议②）：免疫污染克隆剔除（subclone/is_mal 原地修改）
     purity_check = bool(args.get("purity_check", True))
     suspect_subclones: list[dict[str, Any]] = []
+    suspect_candidates: list[dict[str, Any]] = []
     if purity_check and n_mal > 0:
-        suspect_subclones, note_p = _purge_immune_clones(
-            adata, common_cells, subclone, is_mal)
+        suspect_subclones, suspect_candidates, note_p = _purge_immune_clones(
+            adata, common_cells, subclone, is_mal, scores=scores)
         note += note_p
         n_mal = int(is_mal.sum())
 
@@ -588,6 +630,7 @@ def main() -> None:
         "subclone_sizes": {c: int((subclone == c).sum())
                            for c in sub_labels},
         "suspect_subclones": suspect_subclones,
+        "suspect_candidates": suspect_candidates,
         "malignant_by_celltype": malignant_by_ct,
         # pngs 聚合键：IM 发图与 D 报告共用宿主四键收集（umap/dotplot/
         # spatial/pngs），2026-09-11 验收发现单名键导致图漏收

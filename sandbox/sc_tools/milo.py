@@ -8,6 +8,9 @@ refined 式邻域采样（与已留邻域重叠>0.8 的种子跳过）→ 样本
 逐邻域 QP-GLM（Poisson + 全局 Pearson 离散度，offset=log 样本总细胞数）→ BH 校正。
 口径声明：非 edgeR 准似然模型；BH 非 miloR SpatialFDR 加权校正——
 结果为近似口径，离散度 floor=1 欠离散不回缩保持偏保守，详见 emit 的 method_note。
+重复单位：GLM 拟合在 样本×邻域 计数上（sample_col 为重复单位），
+天然样本级无细胞级伪重复——与 sc_de/sc_cellfreq 的 donor_col
+供体级并列口径互补（2026-09-16 钉注）。
 """
 from __future__ import annotations
 
