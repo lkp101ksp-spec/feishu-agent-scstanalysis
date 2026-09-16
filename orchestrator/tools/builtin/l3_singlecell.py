@@ -291,6 +291,24 @@ def register_l3_singlecell(
         out.pop("ok", None)
         return out
 
+    def sc_cellchat_v2(*, dataset_ref: str, celltype_col: str = "leiden",
+                       species: str = "human", min_cells: int = 10,
+                       top_n: int = 30, max_cells_per_group: int = 0,
+                       interaction_range: float = 250.0) -> dict[str, Any]:
+        """细胞通讯 v2（Phase 57）：R 版 CellChat 2.2 + CellChatDB v2
+        → LR/通路级表 + 11 种网络中心性（hub/authority...）。"""
+        try:
+            out = runner.run("cellchat_v2", {
+                "dataset_id": dataset_ref, "celltype_col": celltype_col,
+                "species": species, "min_cells": min_cells,
+                "top_n": top_n, "max_cells_per_group": max_cells_per_group,
+                "interaction_range": interaction_range,
+            }, timeout_sec=3600)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     def sc_milo(*, dataset_ref: str, sample_col: str, group_col: str,
                 group_a: str, group_b: str, k: int = 0,
                 top_n: int = 20, max_cells_per_sample: int = 0) -> dict[str, Any]:
@@ -999,6 +1017,46 @@ def register_l3_singlecell(
         },
         risk_level="L1_compute",
         handler=sc_cellchat,
+        timeout_sec=3600,
+    ))
+    registry.register(ToolSpec(
+        name="sc_cellchat_v2",
+        description=(
+            "细胞通讯分析 v2（Phase 57）：R 版 CellChat 2.2.0.9001 原生"
+            "管线（jinworks fork，GitHub 源装）+ CellChatDB v2（3233 条"
+            "互作，离线内置）。与 sc_cellchat（liana 复现）互补的独有"
+            "能力：通路级通讯概率聚合（pathway_name）、11 种网络中心性"
+            "度量（hub/authority/eigen/page_rank/flowbet/info 等，通路×"
+            "细胞型）、以及 CellChat 特有的互作证据列（KEGG/PMID）。"
+            "输出显著 LR 对 top 表、通路级 top 表、全量 lr/pathway/"
+            "centrality/counts csv、top LR dotplot、互作计数热图与 hub"
+            "中心性热图。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 dataset_ref"},
+                "celltype_col": {"type": "string", "default": "leiden",
+                                 "description": "细胞标签列（leiden 或注释列）"},
+                "species": {"type": "string", "default": "human",
+                            "enum": ["human", "mouse"]},
+                "min_cells": {"type": "integer", "default": 10,
+                              "description": "细胞类型最少细胞数（低于剔除）"},
+                "top_n": {"type": "integer", "default": 30, "maximum": 100},
+                "max_cells_per_group": {
+                    "type": "integer", "default": 0,
+                    "description": "每细胞类型抽样上限，0=全量（>80000 "
+                                   "细胞时自动每组 5000 分层抽样）"},
+                "interaction_range": {
+                    "type": "number", "default": 250.0,
+                    "description": "（仅空间数据生效）互作距离约束 µm；"
+                                   "单细胞模式忽略"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_cellchat_v2,
         timeout_sec=3600,
     ))
     registry.register(ToolSpec(

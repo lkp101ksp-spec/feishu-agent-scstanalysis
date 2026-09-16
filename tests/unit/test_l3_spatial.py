@@ -29,14 +29,38 @@ def reg(runner):
 
 
 def test_st_registers_fourteen_tools(reg):
-    """st_* 14 工具全部注册为 L1_compute（Phase 51 +st_trajectory）。"""
+    """st_* 15 工具全部注册为 L1_compute（Phase 51 +st_trajectory、
+    Phase 57 +st_cellchat_v2）。"""
     names = sorted(t.name for t in reg.list())
-    assert names == ["st_cnv", "st_commot", "st_deconvolve", "st_domains",
-                     "st_load", "st_markers", "st_misty", "st_niche",
-                     "st_plot", "st_process", "st_qc", "st_stats",
-                     "st_trajectory", "st_vicinity"]
+    assert names == ["st_cellchat_v2", "st_cnv", "st_commot",
+                     "st_deconvolve", "st_domains", "st_load", "st_markers",
+                     "st_misty", "st_niche", "st_plot", "st_process",
+                     "st_qc", "st_stats", "st_trajectory", "st_vicinity"]
     for t in reg.list():
         assert t.risk_level == "L1_compute"
+
+
+def test_st_cellchat_v2_dispatches_bio_image(runner, reg):
+    """Phase 57：st_cellchat_v2 跨镜像分发——bio 镜像 + /opt/sc_tools
+    （CellChat v2 R 栈单点安装），参数透传。"""
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "mode": "spatial",
+        "n_lr": 24, "n_sig": 20, "n_pathway": 1,
+        "top": [{"interaction": "TGFB1_TGFBR1_TGFBR2",
+                 "pathway": "TGFb", "source": "A", "target": "B"}]}
+    out = reg.get("st_cellchat_v2").handler(
+        dataset_ref="d", celltype_col="spatial_domain", species="human",
+        interaction_range=250.0)
+    args, kwargs = runner.run.call_args
+    assert args[0] == "cellchat_v2"
+    assert args[1]["celltype_col"] == "spatial_domain"
+    assert args[1]["interaction_range"] == 250.0
+    assert kwargs["image"] == "feishu-research-agent/bio:cpu-latest"
+    assert kwargs["script_dir"] == "/opt/sc_tools"
+    assert kwargs["timeout_sec"] == 3600
+    assert out["mode"] == "spatial"
+    assert "ok" not in out
+    assert reg.get("st_cellchat_v2").risk_level == "L1_compute"
 
 
 def test_st_load_uses_dir_dataset_id_and_st_image(runner, reg, monkeypatch):
@@ -134,12 +158,13 @@ def test_st_plot_genes_plain_string_wraps_list(runner, reg):
 
 
 def test_register_fourteen_st_tools(reg):
-    """Phase 51 后 st_* 共 14 工具（13 + st_trajectory）。"""
+    """Phase 57 后 st_* 共 15 工具（14 + st_cellchat_v2）。"""
     names = sorted(t.name for t in reg.list() if t.name.startswith("st_"))
     assert names == [
-        "st_cnv", "st_commot", "st_deconvolve", "st_domains", "st_load",
-        "st_markers", "st_misty", "st_niche", "st_plot", "st_process",
-        "st_qc", "st_stats", "st_trajectory", "st_vicinity"]
+        "st_cellchat_v2", "st_cnv", "st_commot", "st_deconvolve",
+        "st_domains", "st_load", "st_markers", "st_misty", "st_niche",
+        "st_plot", "st_process", "st_qc", "st_stats", "st_trajectory",
+        "st_vicinity"]
 
 
 def test_st_domains_forwards_params(runner, reg):

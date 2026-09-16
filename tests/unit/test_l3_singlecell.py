@@ -692,6 +692,43 @@ def test_sc_cellchat_defaults_method_group(tmp_path):
     assert args[1]["group_col"] == ""
 
 
+def test_sc_cellchat_v2_forwards_params(tmp_path):
+    """Phase 57：sc_cellchat_v2 参数透传（R 版 CellChat 2.2）。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d", "mode": "single",
+        "n_lr": 41, "n_sig": 30, "n_pathway": 34,
+        "top": [{"interaction": "TGFB1_TGFBR1_TGFBR2",
+                 "pathway": "TGFb"}]}
+    out = reg.get("sc_cellchat_v2").handler(
+        dataset_ref="d", celltype_col="leiden", species="human",
+        min_cells=10, top_n=30, max_cells_per_group=0,
+        interaction_range=250.0)
+    args = runner.run.call_args.args
+    assert args[0] == "cellchat_v2"
+    assert args[1]["celltype_col"] == "leiden"
+    assert args[1]["species"] == "human"
+    assert args[1]["interaction_range"] == 250.0
+    assert "ok" not in out
+    assert out["top"][0]["pathway"] == "TGFb"
+    assert reg.get("sc_cellchat_v2").timeout_sec == 3600
+    assert reg.get("sc_cellchat_v2").risk_level == "L1_compute"
+
+
+def test_sc_cellchat_v2_defaults(tmp_path):
+    """Phase 57 默认值：leiden/human/10/30/0/250。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {"ok": True}
+    reg.get("sc_cellchat_v2").handler(dataset_ref="d")
+    args = runner.run.call_args.args
+    assert args[1]["celltype_col"] == "leiden"
+    assert args[1]["species"] == "human"
+    assert args[1]["min_cells"] == 10
+    assert args[1]["top_n"] == 30
+    assert args[1]["max_cells_per_group"] == 0
+    assert args[1]["interaction_range"] == 250.0
+
+
 def test_sc_milo_forwards_params(tmp_path):
     """handler 转发 milo 参数（样本列+分组列+定向对比）。"""
     reg, runner = _registry(tmp_path)

@@ -129,6 +129,41 @@ RUN apt-get update \
     && apt-get purge -y --no-install-recommends r-base-dev g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# CellChat v2（2.2.0.9001，jinworks fork GitHub 源——CRAN 无 v2；探针
+# r1-r9 递进排障钉注见 测试总结第五十五段）。网络分层：apt 走清华
+# Debian 直连（代理对 deb.debian.org 502 抖动）、CRAN 清华直连、
+# Bioc 官方仓+GitHub 走 build 代理（ARG PROXY，默认宿主 clash 的
+# netsh portproxy 17891→17890，与代理监听地址解耦）。Bioc repo 必须
+# 带 /bioc 层，否则 PACKAGES 404（r5-r7 误诊根因）。
+# 编译链 16 包逐轮定位：xml2/uv/cairo/fontconfig dev → C++ 工具链 →
+# ragg 五件套 freetype/png/tiff/jpeg/webp → units → cmake(nloptr)。
+# dependencies=TRUE 全家桶（+200 包含 Seurat/tidyverse，探针实测
+# 11min/轮全绿）；后续瘦身轮可试 FALSE 只装 hard deps。
+# purge 纪律：只 purge 显式清单（编译工具链 + r-base-dev + *-dev），
+# 不跑 autoremove——dev 的运行库依赖（ragg/textshaping/igraph 的 so
+# 链）自然留存，免去逐库 apt-mark manual 的 trixie 包名漂移风险；
+# 末尾 library(CellChat) 全量自检兜底，so 链断则 build 失败。
+# CellChatDB v2（3233 互作）随包离线内置，运行期容器断网可用。
+ARG PROXY=http://host.docker.internal:17891
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update -qq -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
+    && apt-get install -y -qq --no-install-recommends \
+       -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
+       build-essential pkg-config gfortran cmake r-base-dev \
+       libxml2-dev libuv1-dev libfontconfig1-dev libcairo2-dev \
+       libharfbuzz-dev libfribidi-dev libgit2-dev libpng-dev \
+       libfreetype6-dev libudunits2-dev libtiff5-dev libjpeg-dev libwebp-dev \
+    && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} \
+       http_proxy=${PROXY} https_proxy=${PROXY} \
+       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN', Bioc='https://bioconductor.org/packages/3.21/bioc'), Ncpus=4, timeout=1800); install.packages('remotes'); remotes::install_github('jinworks/CellChat', upgrade='never', dependencies=TRUE)" \
+    && apt-get purge -y --no-install-recommends \
+       build-essential g++ gfortran cmake pkg-config r-base-dev \
+       libxml2-dev libuv1-dev libfontconfig1-dev libcairo2-dev \
+       libharfbuzz-dev libfribidi-dev libgit2-dev libpng-dev \
+       libfreetype6-dev libudunits2-dev libtiff5-dev libjpeg-dev libwebp-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && Rscript -e "library(CellChat); cat('CellChat', as.character(packageVersion('CellChat')), 'db_rows', nrow(CellChatDB.human$interaction), '\n')"
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

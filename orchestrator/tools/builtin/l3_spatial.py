@@ -17,6 +17,8 @@ from orchestrator.tools.bio.bio_runner import (
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
 _ST_SCRIPT_DIR = "/opt/st_tools"
+# Phase 57：st_cellchat_v2 跨镜像分发——脚本在 bio 镜像的 sc_tools
+_SC_SCRIPT_DIR = "/opt/sc_tools"
 
 
 def _err(exc: BioRunError) -> dict[str, str]:
@@ -27,12 +29,16 @@ def _err(exc: BioRunError) -> dict[str, str]:
 def register_l3_spatial(
     registry: ToolRegistry, runner: BioRunner,
     *, st_image: str = "feishu-research-agent/bio:st-cpu-latest",
+    bio_image: str = "feishu-research-agent/bio:cpu-latest",
     st_deconvolve_timeout: int = 3600,
 ) -> None:
-    """注册 st_* 8 工具（runner 由 runtime 装配后传入）。
+    """注册 st_* 工具（runner 由 runtime 装配后传入）。
 
     st_deconvolve_timeout：cell2location 反卷积独立超时（训练耗时，
     由 settings.st_deconvolve_timeout_sec 注入覆盖）。
+    bio_image：Phase 57 st_cellchat_v2 跨镜像分发目标——CellChat v2
+    单点安装在 bio 镜像（R 栈不在 st 镜像重复安装），经同一 WS_ROOT
+    卷直读 st processed.h5ad。
     """
 
     def st_load(*, path: str) -> dict[str, Any]:
@@ -281,6 +287,29 @@ def register_l3_spatial(
                     "root_layer": root_layer,
                 }, image=st_image, script_dir=_ST_SCRIPT_DIR,
                 timeout_sec=600)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_cellchat_v2(*, dataset_ref: str,
+                       celltype_col: str = "spatial_domain",
+                       species: str = "human", min_cells: int = 10,
+                       top_n: int = 30, max_cells_per_group: int = 0,
+                       interaction_range: float = 250.0) -> dict[str, Any]:
+        """空间细胞通讯 v2（Phase 57）：CellChat v2 空间引擎（距离约束+
+        接触依赖），bio 镜像跨镜像分发（R 栈单点安装）。"""
+        try:
+            out = runner.run(
+                "cellchat_v2", {
+                    "dataset_id": dataset_ref,
+                    "celltype_col": celltype_col,
+                    "species": species, "min_cells": min_cells,
+                    "top_n": top_n,
+                    "max_cells_per_group": max_cells_per_group,
+                    "interaction_range": interaction_range,
+                }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
+                timeout_sec=3600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -670,4 +699,47 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_trajectory,
         timeout_sec=600,
+    ))
+    registry.register(ToolSpec(
+        name="st_cellchat_v2",
+        description=(
+            "空间细胞通讯 v2（Phase 57）：R 版 CellChat 2.2 空间引擎——"
+            "以 spot 空间坐标作通讯概率约束（distance.use + "
+            "interaction.range µm）并对 Cell-Cell Contact 类互作启用"
+            "接触依赖（knn=6），配合 CellChatDB v2（3233 互作，离线"
+            "内置）。与 st_commot（Python/OT 路线）互补：通路级聚合 + "
+            "11 种网络中心性（hub/authority...）+ 互作证据（KEGG/PMID）。"
+            "输出显著 LR 对 top 表、通路级 top 表、lr/pathway/centrality/"
+            "counts csv、top LR dotplot、互作计数热图、hub 中心性热图。"
+            "需先跑 st_process（obsm.spatial 自动触发空间模式；visium "
+            "fullres 像素坐标自动按 scalefactors 折算 µm，缺失时按原"
+            "单位口径并在 note 提示）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_process 输出的 dataset_ref"},
+                "celltype_col": {
+                    "type": "string", "default": "spatial_domain",
+                    "description": "标签列：spatial_domain（默认）/"
+                                   "st_deconvolute 反卷积主型列等"},
+                "species": {"type": "string", "default": "human",
+                            "enum": ["human", "mouse"]},
+                "min_cells": {"type": "integer", "default": 10,
+                              "description": "标签组最少 spot 数（低于剔除）"},
+                "top_n": {"type": "integer", "default": 30, "maximum": 100},
+                "max_cells_per_group": {
+                    "type": "integer", "default": 0,
+                    "description": "每标签组抽样上限，0=全量"},
+                "interaction_range": {
+                    "type": "number", "default": 250.0,
+                    "description": "互作距离约束（µm）；visium spot 中心"
+                                   "距 100µm，250≈2.5 spot"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_cellchat_v2,
+        timeout_sec=3600,
     ))
