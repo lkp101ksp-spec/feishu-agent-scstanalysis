@@ -11,14 +11,18 @@ BioRunner 调用约定：docker run --rm --network none -v <workspace>:/ws
 差异模式该对 up_in=A；③method 非法 / group_col 三值 → INVALID_INPUT。
 """
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pandas as pd
 
-WS = Path("I:/飞书agent/bio_workspace")
+# 宿主 workspace：默认本机路径，CI 冒烟（ci.yml bio-image-smoke job）
+# 用 BIO_WORKSPACE_ROOT 指到 runner.temp——与 settings.bio_workspace_root
+# 的 env 覆写口径一致
+WS = Path(os.environ.get("BIO_WORKSPACE_ROOT", "I:/飞书agent/bio_workspace"))
 DS = "sccellchatsmoke"
-IMG = "feishu-research-agent/bio:cpu-latest"
+IMG = os.environ.get("BIO_IMAGE", "feishu-research-agent/bio:cpu-latest")
 BASE = ["docker", "run", "--rm", "-i", "--network", "none",
         "-v", f"{str(WS).replace(chr(92), '/')}:/ws", IMG]
 

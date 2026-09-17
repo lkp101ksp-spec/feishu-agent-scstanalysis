@@ -9,6 +9,8 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  # 手动触发：bio 镜像全量构建冒烟（bio-image-smoke job 仅此事件生效）
+  workflow_dispatch:
 
 jobs:
   test:
@@ -57,3 +59,60 @@ jobs:
 
       - name: pytest pg 真库层
         run: python -m pytest tests/pg -m pg -q
+
+  # kernel 镜像冒烟（每次 push/PR）：镜像构建轻量（python:3.11-slim + 三个
+  # 基础包），构建后 tests/integration/test_sandbox_docker.py 的 skipif
+  # 探测自动激活，跑真容器四用例（print/numpy/错误/超时重建）。
+  docker-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+
+      - name: 安装依赖（kernel 集成测试需项目本体）
+        run: |
+          pip install -r requirements-lock.txt
+          pip install -e . --no-deps
+
+      - name: 构建 kernel 镜像
+        run: >-
+          docker build -t feishu-research-agent/kernel:latest
+          sandbox -f sandbox/kernel.Dockerfile
+
+      - name: kernel 真容器集成冒烟
+        run: python -m pytest tests/integration/test_sandbox_docker.py -v
+
+  # bio 镜像冒烟（仅手动触发）：全量构建含 R/CellChat 编译链（CellChat 层
+  # 探针实测 11min/轮、全镜像数十分钟级），进 PR 门禁不可行，故仅
+  # workflow_dispatch。PROXY 置空：默认 ARG 指向宿主 clash portproxy，
+  # CI runner 直连 GitHub/Bioconductor 无需代理。
+  bio-image-smoke:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 冒烟脚本宿主侧依赖（pandas 断言产物 CSV）
+        run: pip install pandas
+
+      - name: 构建 bio 镜像（PROXY 置空走直连）
+        run: >-
+          docker build --build-arg PROXY=
+          -t feishu-research-agent/bio:cpu-latest
+          sandbox -f sandbox/bio.Dockerfile
+
+      - name: sc_cellchat 合成冒烟（480 细胞断网端到端）
+        env:
+          BIO_WORKSPACE_ROOT: ${{ runner.temp }}/bio_ws
+        run: python scripts/_smoke_sc_cellchat.py
