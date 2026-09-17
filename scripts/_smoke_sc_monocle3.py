@@ -10,8 +10,9 @@ X_umap 借 PCA 前两维、neighbors 真算（宿主无 leidenalg/umap-learn
 t2 rho≥0.8（mask NA）+ 三产物落盘 + obs monocle3_pseudotime 写回；
 ②start_cell 显式条码 → root_mode=explicit；③monocle3+
 branch_top_n>0 → INVALID_INPUT（分支推断 palantir 专属纪律覆盖新
-引擎）；④dyn_top_n=20 → monocle3_dyn_genes.csv 且 G_fateA/G_fateB
-进 top_dyn。
+引擎）；④graph_top_n=20 → graph_test 真表达 mtx 通道 +
+monocle3_graphtest.csv 落盘 + 注入基因命中 top20 + n_graph_sig>0；
+⑤非 monocle3 引擎传 graph_top_n>0 → INVALID_INPUT。
 """
 import json
 import os
@@ -109,8 +110,33 @@ assert o2["root_cell_index"] == 0, o2
 bad = run_pt(engine="monocle3", branch_top_n=50)
 assert not bad["ok"] and bad["error_code"] == "INVALID_INPUT", bad
 
+# ④ graph_top_n=20：graph_test 真表达 mtx 通道——产物落盘 + 注入
+# 轨迹基因命中 top20 + q<0.05 显著计数（G_trunk_up 全程升沿图强
+# 自相关必命中；fateA/B 沿各自分支后段升同理应入列，按 3 中≥2 放宽）
+o4 = run_pt(engine="monocle3", root_cluster="trunk", dyn_top_n=0,
+            graph_top_n=20)
+assert o4["ok"] and o4["method"] == "monocle3", o4
+assert o4["n_graph_sig"] > 0, o4
+assert "G_trunk_up" in o4["graph_top_genes"], o4["graph_top_genes"]
+gt_csv = pt_dir / "monocle3_graphtest.csv"
+assert gt_csv.exists(), o4
+gt = pd.read_csv(gt_csv)
+assert len(gt) == 20 and {"gene", "q_value", "morans_I"} <= \
+    set(gt.columns), gt.columns
+hit = {"G_trunk_up", "G_fateA", "G_fateB"} & set(gt["gene"])
+assert len(hit) >= 2, f"注入基因命中不足: {sorted(hit)}"
+# q_value 升序纪律（bridge 导出排序契约）
+qv = pd.to_numeric(gt["q_value"], errors="coerce").to_numpy()
+assert (np.diff(qv[~np.isnan(qv)]) >= -1e-12).all(), "q_value 非升序"
+
+# ⑤ 非 monocle3 引擎传 graph_top_n>0 → INVALID_INPUT
+bad5 = run_pt(engine="palantir", graph_top_n=20)
+assert not bad5["ok"] and bad5["error_code"] == "INVALID_INPUT", bad5
+
 print("SMOKE OK",
       f"| edges={o1['n_graph_edges']} rho={rho:.3f} "
       f"na={o1['n_na_pseudotime']}",
       "| dyn top 含 fateA/B"
-      " | explicit root ok | branch_top_n rejected")
+      " | explicit root ok | branch_top_n rejected",
+      f"| graph_test sig={o4['n_graph_sig']} hit={sorted(hit)}"
+      " | non-monocle3 graph_top_n rejected")

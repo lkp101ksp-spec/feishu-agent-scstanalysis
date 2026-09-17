@@ -1,11 +1,13 @@
-"""sc_pseudotime：拟时序三引擎（Phase 32/53 DPT + Palantir + Slingshot）。
+"""sc_pseudotime：拟时序四引擎（Phase 32/53 DPT + Palantir + Slingshot
++ Phase 62 Monocle3）。
 
 stdin: {"dataset_id": ..., "root_marker": "NKG7",
         "root_cluster": "",   # Phase 53：leiden 簇定根，与 root_marker 互斥
         "dyn_top_n": 50,      # Phase 53：动态基因 top N；0=跳过
         "engine": "dpt",      # dpt（默认）/ palantir / slingshot / monocle3
-        "start_cell": "",     # palantir/slingshot 显式根条码（优先级最高）
+        "start_cell": "",     # palantir/slingshot/monocle3 显式根条码
         "branch_top_n": 0,    # palantir 专用：分支推断 top N；0=跳过
+        "graph_top_n": 0,     # monocle3 专用：graph_test top N；0=跳过
         "dyn_modules_k": 0,   # 动态基因趋势聚类模块数；0=跳过
         "modules_enrich": ""} # 模块富集 GS key（enrichment GS_KEYS）；空=跳过
 需 processed.h5ad（含 neighbors 图）。
@@ -766,8 +768,8 @@ def _run_slingshot(adata: Any, iroot: int, clusters: pd.Series,
 
 
 def _run_monocle3(adata: Any, iroot: int, dyn_top_n: int, ds_dir: Any,
-                  dyn_modules_k: int = 0,
-                  modules_enrich: str = "") -> tuple[dict[str, Any], Any]:
+                  dyn_modules_k: int = 0, modules_enrich: str = "",
+                  graph_top_n: int = 0) -> tuple[dict[str, Any], Any]:
     """Monocle3 引擎（重启评估落地，测试总结第六十段探针钉注）。
 
     X_pca + X_umap CSV 桥接 → Rscript monocle3_bridge.R（PCA 当表达
@@ -777,6 +779,10 @@ def _run_monocle3(adata: Any, iroot: int, dyn_top_n: int, ds_dir: Any,
     monocle3_umap.png（pt 着色 + 主图 MST 折线叠加 + 根红圈）；
     dyn 相复用 _dyn_genes（prefix="monocle3_"）。断连分区 pt=NA，
     保 NaN 并在 out 计数（monocle3 多分区语义，不静默填值）。
+    graph_top_n>0 时追加真表达 mtx 通道（X 全 HVG cells×genes
+    mmwrite + genes.csv）→ bridge graph_test 沿主图基因级 Moran's I
+    → 产物 monocle3_graphtest.csv（q_value 升序 top N）+
+    out n_graph_sig（q<0.05 计数）。
     """
     import subprocess
 
@@ -802,9 +808,29 @@ def _run_monocle3(adata: Any, iroot: int, dyn_top_n: int, ds_dir: Any,
     umap_csv = in_dir / "umap.csv"
     ump_df.to_csv(umap_csv)
 
+    expr_mtx = ""
+    genes_csv_path = ""
+    if graph_top_n > 0:
+        # 真表达 mtx 通道：X（log1p HVG，cells×genes）稀疏化 mmwrite
+        # + 基因清单 csv；bridge 检测到时以真表达重建 cds 表达层
+        from scipy.io import mmwrite
+        from scipy.sparse import csr_matrix, issparse
+        # X 形态双轨：真机 h5ad dense → ndarray；合成冒烟库 csr →
+        # 直接沿用（np.asarray(sparse) 会包成 object 数组炸 ValueError）
+        x_sp = adata.X if issparse(adata.X) else np.asarray(adata.X)
+        x_sp = csr_matrix(x_sp.astype(np.float32))
+        expr_mtx_p = in_dir / "expr.mtx"
+        mmwrite(str(expr_mtx_p), x_sp)
+        genes_p = in_dir / "genes.csv"
+        pd.Series(adata.var_names.astype(str)).to_csv(
+            genes_p, index=False, header=False)
+        expr_mtx = str(expr_mtx_p)
+        genes_csv_path = str(genes_p)
+
     root_cell = str(adata.obs_names[iroot])
     r_cmd = ["Rscript", "/opt/r_tools/monocle3_bridge.R",
-             str(pca_csv), str(umap_csv), str(in_dir), root_cell]
+             str(pca_csv), str(umap_csv), str(in_dir), root_cell,
+             expr_mtx, genes_csv_path]
     proc = subprocess.run(r_cmd, capture_output=True, text=True,
                           timeout=3300)
     if proc.returncode != 0:
@@ -858,6 +884,21 @@ def _run_monocle3(adata: Any, iroot: int, dyn_top_n: int, ds_dir: Any,
         "monocle3_graph_csv": str(graph_csv),
         "umap_png": str(umap_png),
     }
+    if graph_top_n > 0:
+        gt_path = in_dir / "mono3_graphtest.csv"
+        if not gt_path.exists():
+            raise RuntimeError(
+                "monocle3_bridge.R did not produce mono3_graphtest.csv; "
+                f"stdout tail: {proc.stdout[-500:]}")
+        gt = pd.read_csv(gt_path)
+        gt_csv = ds_dir / "monocle3_graphtest.csv"
+        gt.head(graph_top_n).to_csv(gt_csv, index=False)
+        n_sig = int((pd.to_numeric(gt["q_value"],
+                                   errors="coerce") < 0.05).sum())
+        out["monocle3_graphtest_csv"] = str(gt_csv)
+        out["n_graph_sig"] = n_sig
+        out["graph_top_genes"] = [str(g) for g in
+                                  gt["gene"].head(graph_top_n)]
     if dyn_top_n > 0:
         out.update(_dyn_genes(adata, pt, dyn_top_n, ds_dir,
                               prefix="monocle3_",
@@ -1091,6 +1132,7 @@ def main() -> None:
     branch_top_n = int(args.get("branch_top_n", 0))
     dyn_modules_k = int(args.get("dyn_modules_k", 0))
     modules_enrich = str(args.get("modules_enrich", "")).strip()
+    graph_top_n = int(args.get("graph_top_n", 0))
     paga = bool(args.get("paga", False))
     paga_pt = bool(args.get("paga_pt", False))
     if paga_pt and not paga:
@@ -1115,6 +1157,10 @@ def main() -> None:
     if branch_top_n > 0 and engine != "palantir" and not trajectory_full:
         fail("INVALID_INPUT",
              "branch_top_n only valid with engine='palantir'")
+        return
+    if graph_top_n > 0 and engine != "monocle3":
+        fail("INVALID_INPUT",
+             "graph_top_n only valid with engine='monocle3'")
         return
     if dyn_modules_k > 0 and dyn_top_n <= 0:
         fail("INVALID_INPUT",
@@ -1285,7 +1331,8 @@ def main() -> None:
             return
         out, pt = _run_monocle3(adata, iroot, dyn_top_n, ds_dir,
                                 dyn_modules_k=dyn_modules_k,
-                                modules_enrich=modules_enrich)
+                                modules_enrich=modules_enrich,
+                                graph_top_n=graph_top_n)
         if paga:
             out.update(_run_paga(adata, pt, clusters, ds_dir, paga_pt,
                                  root_cluster))

@@ -183,10 +183,10 @@ def register_l3_singlecell(
                       engine: str = "dpt", start_cell: str = "",
                       branch_top_n: int = 0, dyn_modules_k: int = 0,
                       modules_enrich: str = "", paga: bool = False,
-                      paga_pt: bool = False,
+                      paga_pt: bool = False, graph_top_n: int = 0,
                       trajectory_full: bool = False) -> dict[str, Any]:
         """拟时序（Phase 32/53/Palantir/分支推断/趋势聚类/Slingshot/PAGA/
-        trajectory_full 全景）。"""
+        trajectory_full 全景/Monocle3+graph_test）。"""
         try:
             out = runner.run("pseudotime", {
                 "dataset_id": dataset_ref, "root_marker": root_marker,
@@ -196,6 +196,7 @@ def register_l3_singlecell(
                 "dyn_modules_k": dyn_modules_k,
                 "modules_enrich": modules_enrich,
                 "paga": paga, "paga_pt": paga_pt,
+                "graph_top_n": graph_top_n,
                 "trajectory_full": trajectory_full,
             }, timeout_sec=1200)
         except BioRunError as e:
@@ -777,7 +778,8 @@ def register_l3_singlecell(
             "start_cell 显式根细胞条码（优先级最高）。输出每簇伪时序"
             "均值表、pseudotime csv、UMAP 伪时序图；DPT 附 PAGA 轨迹"
             "图，Palantir 附终末态表与分支概率列，Monocle3 附主图折点"
-            "csv；dyn_top_n>0 附动态基因趋势（dyn_genes.csv+趋势热图"
+            "csv（graph_top_n>0 附 graph_test 沿轨迹 Moran's I 基因"
+            "检验）；dyn_top_n>0 附动态基因趋势（dyn_genes.csv+趋势热图"
             "+top6 曲线）；branch_top_n>0 附分支推断（分支归属+分支间"
             "命运决定基因，对齐 Monocle2 BEAM 场景）；dyn_modules_k>0 "
             "附动态基因趋势聚类（早→晚表达程序模块，可附模块 GO/通路"
@@ -819,6 +821,13 @@ def register_l3_singlecell(
                                                 "0=跳过。分支归属+分支内"
                                                 "动态基因+pt 匹配分支间"
                                                 "差异（命运决定基因）"},
+                "graph_top_n": {"type": "integer", "default": 0,
+                                "description": "Monocle3 引擎专用："
+                                               "graph_test 沿轨迹 Moran's I"
+                                               " 基因级检验 top N；0=跳过。"
+                                               "输出 monocle3_graphtest.csv"
+                                               "（q_value 升序）+ n_graph_"
+                                               "sig（q<0.05 计数）"},
                 "dyn_modules_k": {"type": "integer", "default": 0,
                                   "description": "动态基因趋势聚类模块数；"
                                                  "0=跳过。显著动态基因全量"
