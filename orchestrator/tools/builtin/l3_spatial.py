@@ -2,6 +2,11 @@
 
 与 l3_singlecell 同模式：runner 由 runtime 组装注入；st 脚本走 st 镜像
 （run 时覆盖 image/script_dir）；handler 捕获 BioRunError 转错误输出。
+
+纪律：handler 的 runner.run timeout_sec 必须与 ToolSpec.timeout_sec 一致
+（缺失会静默回退 BioRunner 默认 900s，比声明的 1800s 提前杀容器——
+st_process/markers/domains/commot 曾中招）；tests/unit/
+test_l3_dispatch_contract.py 全工具合同测试钉死该一致性。
 """
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ from orchestrator.tools.bio.bio_runner import (
     compute_dataset_id_dir,
     parse_gene_list,
 )
+from orchestrator.tools.bio.dataset_profile import resolve_species
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
 _ST_SCRIPT_DIR = "/opt/st_tools"
@@ -54,7 +60,8 @@ def register_l3_spatial(
             out = runner.run(
                 "load", {"path": rel, "dataset_id": dataset_id},
                 mounts=[(mount_root, "/data")],
-                image=st_image, script_dir=_ST_SCRIPT_DIR)
+                image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -69,7 +76,8 @@ def register_l3_spatial(
                     "dataset_id": dataset_ref,
                     "min_genes": min_genes, "max_genes": max_genes,
                     "max_mt_pct": max_mt_pct,
-                }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -83,7 +91,8 @@ def register_l3_spatial(
                 "process", {
                     "dataset_id": dataset_ref, "n_pcs": n_pcs,
                     "resolution": resolution, "n_neighbors": n_neighbors,
-                }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -97,7 +106,8 @@ def register_l3_spatial(
                 "markers", {
                     "dataset_id": dataset_ref, "method": method,
                     "top_n": top_n,
-                }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -111,7 +121,8 @@ def register_l3_spatial(
                 "plot", {
                     "dataset_id": dataset_ref,
                     "genes": parse_gene_list(genes), "color_by": color_by,
-                }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -125,21 +136,26 @@ def register_l3_spatial(
                 "domains", {
                     "dataset_id": dataset_ref, "method": method,
                     "resolution": resolution,
-                }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=1200)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
         return out
 
-    def st_commot(*, dataset_ref: str, species: str = "human",
+    def st_commot(*, dataset_ref: str, species: str = "",
                   dis_thr: float = 200.0) -> dict[str, Any]:
         """配体受体空间通讯（COMMOT + CellChat 库）→ 通讯图 + top LR 对。"""
         try:
             out = runner.run(
                 "commot", {
-                    "dataset_id": dataset_ref, "species": species,
+                    "dataset_id": dataset_ref,
+                    "species": resolve_species(
+                        getattr(runner, "workspace_root", ""),
+                        dataset_ref, species),
                     "dis_thr": dis_thr,
-                }, image=st_image, script_dir=_ST_SCRIPT_DIR)
+                }, image=st_image, script_dir=_ST_SCRIPT_DIR,
+                timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -294,7 +310,7 @@ def register_l3_spatial(
 
     def st_cellchat_v2(*, dataset_ref: str,
                        celltype_col: str = "spatial_domain",
-                       species: str = "human", min_cells: int = 10,
+                       species: str = "", min_cells: int = 10,
                        top_n: int = 30, max_cells_per_group: int = 0,
                        interaction_range: float = 250.0) -> dict[str, Any]:
         """空间细胞通讯 v2（Phase 57）：CellChat v2 空间引擎（距离约束+
@@ -304,7 +320,10 @@ def register_l3_spatial(
                 "cellchat_v2", {
                     "dataset_id": dataset_ref,
                     "celltype_col": celltype_col,
-                    "species": species, "min_cells": min_cells,
+                    "species": resolve_species(
+                        getattr(runner, "workspace_root", ""),
+                        dataset_ref, species),
+                    "min_cells": min_cells,
                     "top_n": top_n,
                     "max_cells_per_group": max_cells_per_group,
                     "interaction_range": interaction_range,
@@ -456,8 +475,10 @@ def register_l3_spatial(
             "type": "object",
             "properties": {
                 "dataset_ref": {"type": "string"},
-                "species": {"type": "string", "enum": ["human", "mouse"],
-                            "default": "human"},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse", ""],
+                            "description": "CellChat LR 库物种；留空按基因"
+                                           "符号风格自动检测"},
                 "dis_thr": {"type": "number", "default": 200},
             },
             "required": ["dataset_ref"],
@@ -724,8 +745,10 @@ def register_l3_spatial(
                     "type": "string", "default": "spatial_domain",
                     "description": "标签列：spatial_domain（默认）/"
                                    "st_deconvolute 反卷积主型列等"},
-                "species": {"type": "string", "default": "human",
-                            "enum": ["human", "mouse"]},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse", ""],
+                            "description": "CellChatDB 物种；留空按基因"
+                                           "符号风格自动检测"},
                 "min_cells": {"type": "integer", "default": 10,
                               "description": "标签组最少 spot 数（低于剔除）"},
                 "top_n": {"type": "integer", "default": 30, "maximum": 100},

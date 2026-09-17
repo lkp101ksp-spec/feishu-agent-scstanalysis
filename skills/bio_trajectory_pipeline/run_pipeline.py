@@ -13,14 +13,19 @@
 """
 
 import json
+import os
 import subprocess
 import sys
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-WS_ROOT = Path("I:/飞书agent/bio_workspace")
-IMAGE = "feishu-research-agent/bio:cpu-latest"
+# 执行面统一：镜像/工作区与 settings 同 env 口径（BIO_IMAGE/
+# BIO_WORKSPACE_ROOT），不再硬编码 tag——settings 换 tag 时 skill 不漂移
+WS_ROOT = Path(os.environ.get(
+    "BIO_WORKSPACE_ROOT", "I:/飞书agent/bio_workspace"))
+IMAGE = os.environ.get("BIO_IMAGE", "feishu-research-agent/bio:cpu-latest")
 TOOLS = {
     "pseudotime": "/opt/sc_tools/pseudotime.py",
     "meta": "/opt/sc_tools/meta.py",
@@ -31,30 +36,41 @@ TOOLS = {
 
 
 def run_tool(tool: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """docker 跑 sc_tools 单步，返回 emit 末行 JSON；失败抛 RuntimeError。"""
-    proc = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "-i",
-            "--network",
-            "none",
-            "--cpus",
-            "4",
-            "--memory",
-            "16g",
-            "-v",
-            f"{WS_ROOT}:/ws",
-            IMAGE,
-            "python",
-            TOOLS[tool],
-        ],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=3900,
-    )
+    """docker 跑 sc_tools 单步，返回 emit 末行 JSON；失败抛 RuntimeError。
+
+    --name + 超时 docker kill：对齐 BioRunner 僵尸容器治理（subprocess
+    超时只杀 docker CLI，容器会残留抢 CPU）。
+    """
+    cname = f"bio-skill-{uuid.uuid4().hex[:12]}"
+    try:
+        proc = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-i",
+                "--name",
+                cname,
+                "--network",
+                "none",
+                "--cpus",
+                "4",
+                "--memory",
+                "16g",
+                "-v",
+                f"{WS_ROOT}:/ws",
+                IMAGE,
+                "python",
+                TOOLS[tool],
+            ],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            timeout=3900,
+        )
+    except subprocess.TimeoutExpired:
+        subprocess.run(["docker", "kill", cname], capture_output=True)
+        raise RuntimeError(f"{tool} 超时（3900s），容器 {cname} 已 kill") from None
     if proc.returncode != 0:
         raise RuntimeError(f"{tool} 失败（exit {proc.returncode}）：{proc.stderr[-500:]}")
     line = next(

@@ -40,7 +40,7 @@ for _alias, _typ in {"object": object, "float": float, "int": int,
     if not hasattr(np, _alias):
         setattr(np, _alias, _typ)
 
-from common import WS_ROOT, emit, load_adata, read_args, run  # noqa: E402
+from common import WS_ROOT, emit, load_adata, read_args, run, species_style_guard  # noqa: E402
 
 # 容器内由 handler 挂载：{db_root}/cisTarget_databases → CISTARGET_DIR，
 # {db_root}/motifAnnotations → MOTIF_DIR（均只读）。冒烟可 patch。
@@ -229,6 +229,7 @@ def main() -> None:
     counts_ad = load_adata({"dataset_id": args["dataset_id"], "file": "any"})
     proc = load_adata({"dataset_id": args["dataset_id"],
                        "file": "processed"})
+    species_style_guard(species, counts_ad.var_names, "SC_SPECIES_MISMATCH")
     if celltype_col not in proc.obs:
         raise ValueError(f"celltype column {celltype_col!r} not in "
                          f"processed obs")

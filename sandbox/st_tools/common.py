@@ -108,3 +108,45 @@ def load_adata(input_ref: dict[str, Any]) -> Any:
     raise FileNotFoundError(
         f"no h5ad under workspace for dataset {input_ref['dataset_id']}; "
         "run st_load first")
+
+
+def detect_symbol_style(var_names: Any) -> str:
+    """基因符号风格检测：title（Xkr4 鼠式）/ upper（XKR4 人式）/
+    ensembl（ENSG*/ENSMUS*）/ mixed（不确定）。
+
+    与 sc_tools/common.py 同款（st 镜像无 sc_tools，各自内嵌一份）。
+    """
+    names = [str(g) for g in var_names]
+    n = max(len(names), 1)
+    title = sum(1 for g in names
+                if g[:1].isalpha() and g[:1].isupper()
+                and any(c.islower() for c in g))
+    upper = sum(1 for g in names
+                if any(c.isalpha() for c in g) and g == g.upper())
+    ensembl = sum(1 for g in names if g.startswith(("ENSG", "ENSMUS")))
+    if ensembl / n > 0.5:
+        return "ensembl"
+    if title / n > 0.5:
+        return "title"
+    if upper / n > 0.5:
+        return "upper"
+    return "mixed"
+
+
+def species_style_guard(species: str, var_names: Any,
+                        error_code: str) -> None:
+    """species 与基因符号风格矛盾时快败（数据集口径记忆库第二层兜底，
+    Phase 61 教训转化；mixed 风格不拦）。"""
+    style = detect_symbol_style(var_names)
+    expect = {"human": "upper", "mouse": "title"}.get(species)
+    if style == "ensembl":
+        fail(error_code, "基因符号为 Ensembl ID（ENSG/ENSMUS），物种资源库"
+             "无法匹配；需先转换为基因 symbol 再运行本工具")
+        raise SystemExit(1)
+    if expect and style in ("title", "upper") and style != expect:
+        hint = ("mouse（符号 Title-case，如 Xkr4/Rp1）" if style == "title"
+                else "human（符号全大写，如 TGFB1/XKR4）")
+        fail(error_code, f"species={species} 与数据基因符号风格矛盾："
+             f"符号为 {style} 风格 → 数据集应为 {hint}；"
+             f"请改 species 重跑（或确认数据未做过符号映射）")
+        raise SystemExit(1)

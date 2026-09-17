@@ -14,6 +14,7 @@ from orchestrator.tools.bio.bio_runner import (
     compute_dataset_id,
     parse_gene_list,
 )
+from orchestrator.tools.bio.dataset_profile import resolve_species
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
 
@@ -163,12 +164,14 @@ def register_l3_singlecell(
         return out
 
     def sc_metabolism(*, dataset_ref: str, top_n: int = 30,
-                      species: str = "human") -> dict[str, Any]:
+                      species: str = "") -> dict[str, Any]:
         """代谢通路活性（Phase 32）：KEGG 逐通路打分 → 簇均值+热图。"""
         try:
             out = runner.run("metabolism", {
                 "dataset_id": dataset_ref, "top_n": top_n,
-                "species": species,
+                "species": resolve_species(
+                    getattr(runner, "workspace_root", ""),
+                    dataset_ref, species),
             }, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
@@ -271,7 +274,7 @@ def register_l3_singlecell(
         return out
 
     def sc_cellchat(*, dataset_ref: str, celltype_col: str = "leiden",
-                    species: str = "human", expr_prop: float = 0.1,
+                    species: str = "", expr_prop: float = 0.1,
                     min_cells: int = 10, top_n: int = 30,
                     max_cells_per_group: int = 0,
                     method: str = "cellchat",
@@ -281,7 +284,10 @@ def register_l3_singlecell(
         try:
             out = runner.run("cellchat", {
                 "dataset_id": dataset_ref, "celltype_col": celltype_col,
-                "species": species, "expr_prop": expr_prop,
+                "species": resolve_species(
+                    getattr(runner, "workspace_root", ""),
+                    dataset_ref, species),
+                "expr_prop": expr_prop,
                 "min_cells": min_cells, "top_n": top_n,
                 "max_cells_per_group": max_cells_per_group,
                 "method": method, "group_col": group_col,
@@ -292,7 +298,7 @@ def register_l3_singlecell(
         return out
 
     def sc_cellchat_v2(*, dataset_ref: str, celltype_col: str = "leiden",
-                       species: str = "human", min_cells: int = 10,
+                       species: str = "", min_cells: int = 10,
                        top_n: int = 30, max_cells_per_group: int = 0,
                        interaction_range: float = 250.0) -> dict[str, Any]:
         """细胞通讯 v2（Phase 57）：R 版 CellChat 2.2 + CellChatDB v2
@@ -300,7 +306,10 @@ def register_l3_singlecell(
         try:
             out = runner.run("cellchat_v2", {
                 "dataset_id": dataset_ref, "celltype_col": celltype_col,
-                "species": species, "min_cells": min_cells,
+                "species": resolve_species(
+                    getattr(runner, "workspace_root", ""),
+                    dataset_ref, species),
+                "min_cells": min_cells,
                 "top_n": top_n, "max_cells_per_group": max_cells_per_group,
                 "interaction_range": interaction_range,
             }, timeout_sec=3600)
@@ -415,7 +424,7 @@ def register_l3_singlecell(
         out.pop("ok", None)
         return out
 
-    def sc_scenic(*, dataset_ref: str, species: str = "human",
+    def sc_scenic(*, dataset_ref: str, species: str = "",
                   db: str = "500bp", max_cells: int = 3000,
                   celltype_col: str = "leiden", n_workers: int = 2,
                   seed: int = 42) -> dict[str, Any]:
@@ -434,7 +443,11 @@ def register_l3_singlecell(
             }
         try:
             out = runner.run("scenic", {
-                "dataset_id": dataset_ref, "species": species, "db": db,
+                "dataset_id": dataset_ref,
+                "species": resolve_species(
+                    getattr(runner, "workspace_root", ""),
+                    dataset_ref, species),
+                "db": db,
                 "max_cells": max_cells, "celltype_col": celltype_col,
                 "n_workers": n_workers, "seed": seed,
             }, mounts=[(str(ct_dir), "/scenic_db/cistarget"),
@@ -736,9 +749,10 @@ def register_l3_singlecell(
                                 "description": "sc_process 输出的 dataset_ref"},
                 "top_n": {"type": "integer", "default": 30, "maximum": 100,
                           "description": "返回/绘图的高方差通路数"},
-                "species": {"type": "string", "default": "human",
-                            "enum": ["human", "mouse"],
-                            "description": "物种（选 KEGG 人/小鼠通路库）"},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse", ""],
+                            "description": "物种（选 KEGG 人/小鼠通路库）；"
+                                           "留空按基因符号风格自动检测"},
             },
             "required": ["dataset_ref"],
         },
@@ -990,8 +1004,10 @@ def register_l3_singlecell(
                                 "description": "sc_process 输出的 dataset_ref"},
                 "celltype_col": {"type": "string", "default": "leiden",
                                  "description": "细胞标签列（leiden 或注释列）"},
-                "species": {"type": "string", "default": "human",
-                            "enum": ["human", "mouse"]},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse", ""],
+                            "description": "留空按基因符号风格自动检测"
+                                           "（Title-case=mouse/全大写=human）"},
                 "expr_prop": {"type": "number", "default": 0.1,
                               "description": "细胞类型中表达比例阈值"},
                 "min_cells": {"type": "integer", "default": 10,
@@ -1039,8 +1055,10 @@ def register_l3_singlecell(
                                 "description": "sc_process 输出的 dataset_ref"},
                 "celltype_col": {"type": "string", "default": "leiden",
                                  "description": "细胞标签列（leiden 或注释列）"},
-                "species": {"type": "string", "default": "human",
-                            "enum": ["human", "mouse"]},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse", ""],
+                            "description": "留空按基因符号风格自动检测"
+                                           "（Title-case=mouse/全大写=human）"},
                 "min_cells": {"type": "integer", "default": 10,
                               "description": "细胞类型最少细胞数（低于剔除）"},
                 "top_n": {"type": "integer", "default": 30, "maximum": 100},
@@ -1272,8 +1290,10 @@ def register_l3_singlecell(
             "properties": {
                 "dataset_ref": {"type": "string",
                                 "description": "sc_process 输出的 dataset_ref"},
-                "species": {"type": "string", "default": "human",
-                            "enum": ["human", "mouse"]},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse", ""],
+                            "description": "cisTarget 库物种；留空按基因"
+                                           "符号风格自动检测"},
                 "db": {"type": "string", "default": "500bp",
                        "enum": ["500bp", "10kb", "both"],
                        "description": "cisTarget rankings 库（500bp 快，"

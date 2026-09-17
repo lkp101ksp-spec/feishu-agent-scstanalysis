@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from common import WS_ROOT, emit, load_adata, read_args, run, upper_gene_map
+from common import WS_ROOT, emit, load_adata, read_args, run, species_style_guard, upper_gene_map
 
 GENE_SET_DIR = Path("/opt/gene_sets")
 MIN_PATHWAY_GENES = 5  # 与 scMetabolism/GSEA min_size 惯例一致
@@ -43,6 +43,7 @@ def main() -> None:
 
     adata = load_adata({"dataset_id": args["dataset_id"],
                         "file": "processed"})
+    species_style_guard(species, adata.var_names, "SC_SPECIES_MISMATCH")
     if "leiden" not in adata.obs:
         raise ValueError("processed.h5ad lacks leiden; run sc_process first")
 

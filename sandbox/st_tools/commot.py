@@ -32,6 +32,8 @@ def main() -> None:
     import numpy as np
 
     adata = ad.read_h5ad(WS_ROOT / args["dataset_id"] / "processed.h5ad")
+    from common import species_style_guard
+    species_style_guard(species, adata.var_names, "ST_SPECIES_MISMATCH")
     ensure_spatial(adata)
     if adata.raw is None:
         fail("ST_STATE_INVALID",

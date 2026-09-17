@@ -28,7 +28,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from common import WS_ROOT, emit, fail, load_adata, read_args, run
+from common import WS_ROOT, emit, fail, load_adata, read_args, run, species_style_guard
 
 METHODS = ("cellchat", "rank_aggregate")
 SIG_THRESH = 0.05
@@ -251,6 +251,7 @@ def main() -> None:
         return
 
     adata = load_adata({"dataset_id": args["dataset_id"], "file": "processed"})
+    species_style_guard(species, adata.var_names, "SC_SPECIES_MISMATCH")
     if celltype_col not in adata.obs:
         fail("INVALID_INPUT",
              f"celltype column {celltype_col!r} not in obs; available: "

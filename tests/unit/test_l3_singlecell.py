@@ -967,10 +967,10 @@ def test_sc_scenic_config_error_when_db_missing(tmp_path):
 
 
 def test_sc_scenic_schema_enums(tmp_path):
-    """species/db enum 锁定。"""
+    """species/db enum 锁定（species 含 ""=自动检测）。"""
     reg, _ = _registry(tmp_path)
     props = reg.get("sc_scenic").parameters["properties"]
-    assert props["species"]["enum"] == ["human", "mouse"]
+    assert props["species"]["enum"] == ["human", "mouse", ""]
     assert props["db"]["enum"] == ["500bp", "10kb", "both"]
 
 
@@ -1069,7 +1069,7 @@ def test_sc_knockout_error_passthrough(tmp_path):
 
 
 def test_sc_metabolism_forwards_species_mouse(tmp_path):
-    """handler 转发 species=mouse 到 payload；schema enum 锁定 human/mouse。"""
+    """handler 转发 species=mouse 到 payload；schema enum 含自动检测。"""
     reg, runner = _registry(tmp_path)
     runner.run.return_value = {
         "ok": True, "dataset_ref": "d", "species": "mouse",
@@ -1083,8 +1083,8 @@ def test_sc_metabolism_forwards_species_mouse(tmp_path):
     assert "ok" not in out
     assert out["species"] == "mouse"
     props = reg.get("sc_metabolism").parameters["properties"]
-    assert props["species"]["enum"] == ["human", "mouse"]
-    assert props["species"]["default"] == "human"
+    assert props["species"]["enum"] == ["human", "mouse", ""]
+    assert "default" not in props["species"]  # 留空=handler 记忆库自动检测
 
 
 def test_sc_cellchat_forwards_species_mouse(tmp_path):
@@ -1101,7 +1101,30 @@ def test_sc_cellchat_forwards_species_mouse(tmp_path):
     assert "ok" not in out
     assert out["species"] == "mouse"
     props = reg.get("sc_cellchat").parameters["properties"]
-    assert props["species"]["enum"] == ["human", "mouse"]
+    assert props["species"]["enum"] == ["human", "mouse", ""]
+
+
+def test_sc_cellchat_species_auto_from_memory(tmp_path):
+    """执行面统一轮：species 留空 → 记忆库猜测（_profiles/<ref>.json）
+    覆盖默认（Phase 61 教训：默认 human 遇鼠源数据零交集）。"""
+    import json as _json
+
+    ref = "aaaaaaaaaaaa"
+    (tmp_path / "_profiles").mkdir()
+    (tmp_path / "_profiles" / f"{ref}.json").write_text(
+        _json.dumps({"ref": ref, "species_guess": "mouse"}),
+        encoding="utf-8")
+    runner = SimpleNamespace(
+        run=MagicMock(return_value={
+            "ok": True, "dataset_ref": ref, "resource": "mouseconsensus",
+            "species": "mouse", "n_sig": 3, "top": []}),
+        resolve_data_path=MagicMock(),
+        workspace_root=str(tmp_path))
+    reg = ToolRegistry()
+    register_l3_singlecell(reg, runner)
+    reg.get("sc_cellchat").handler(dataset_ref=ref)  # 不传 species
+    args = runner.run.call_args.args
+    assert args[1]["species"] == "mouse"
 
 
 # === 耗时工具抽样上限（默认 0=全量，显式抽样加速） ===
