@@ -10,3 +10,8 @@
 
 - 本机是 Windows、CI 是 ubuntu：凡改动涉及平台专属符号（`ctypes.WinDLL`、`get_last_error`、路径盘符语义等），仅在本机跑门禁存在平台盲区，必须加 `python -m mypy --platform linux` 反模拟（或直接推 CI 验证）。
 - 平台分支必须写成 `if sys.platform == "win32":` 语句块——三元表达式不触发 mypy 的可达性特判，双平台都会检查。
+
+## 大库真机验证纪律（2026-09-17 用户口径）
+
+- 真机回归/对照/新功能验证遇到大库（如 59900 细胞级），**一律先随机 subset ~1000 细胞子集数据集再测**（固定种子、保留 obs/obsm），不直接在全量上反复烧；子集验证通过后如需全量结论再单独跑。
+- 参考实现：`bio_workspace/pt1ksmoke`（seed=7，从 50165a559c91_bbknn 抽取）。
