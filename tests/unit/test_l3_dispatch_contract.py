@@ -76,9 +76,16 @@ def runner() -> MagicMock:
 
 
 @pytest.fixture
-def reg(runner: MagicMock) -> ToolRegistry:
+def reg(runner: MagicMock, tmp_path: Path) -> ToolRegistry:
     registry = ToolRegistry()
-    register_l3_singlecell(registry, runner)
+    # sc_scenic handler 要求 DB 目录真实存在（缺则 SC_CONFIG 快败，
+    # CI 上曾因此挂掉合同测试——本机靠 repo 根真实 DB 目录侥幸绿）。
+    # 合同测试只验分发参数不触容器，tmp 空目录即可。
+    scenic_db = tmp_path / "scenic_db"
+    (scenic_db / "cisTarget_databases").mkdir(parents=True)
+    (scenic_db / "motifAnnotations").mkdir()
+    register_l3_singlecell(
+        registry, runner, bio_scenic_db_root=str(scenic_db))
     register_l3_spatial(registry, runner)
     return registry
 
