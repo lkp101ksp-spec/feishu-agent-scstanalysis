@@ -204,6 +204,24 @@ def register_l3_singlecell(
         out.pop("ok", None)
         return out
 
+    def sc_cytotrace2(*, dataset_ref: str, species: str = "mouse",
+                      ncores: int = 4, batch_size: int = 0,
+                      smooth_batch_size: int = 0,
+                      cluster_col: str = "leiden") -> dict[str, Any]:
+        """CytoTRACE2 绝对干性打分（Kang 2025 Nat Methods）：每细胞
+        potency score(0-1)+六级 potency 类别；输入须整数 raw/CPM 计数。"""
+        try:
+            out = runner.run("cytotrace2", {
+                "dataset_id": dataset_ref, "species": species,
+                "ncores": ncores, "batch_size": batch_size,
+                "smooth_batch_size": smooth_batch_size,
+                "cluster_col": cluster_col,
+            }, timeout_sec=1800)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     def sc_de(*, dataset_ref: str, groupby: str, group_a: str,
               group_b: str, method: str = "wilcoxon", top_n: int = 20,
               donor_col: str = "") -> dict[str, Any]:
@@ -862,6 +880,53 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_pseudotime,
         timeout_sec=1200,
+    ))
+    registry.register(ToolSpec(
+        name="sc_cytotrace2",
+        description=(
+            "CytoTRACE2 绝对干性打分（Kang et al. Nature Methods 2025，"
+            "与拟时序引擎互补的无根干性信号）：19 模型 GSBN ensemble "
+            "输出每细胞绝对发育潜能——CytoTRACE2_Score（0=分化 1=全能，"
+            "跨数据集可比）+ 六级 potency 类别（Differentiated/Unipotent/"
+            "Oligopotent/Multipotent/Pluripotent/Totipotent）+ Relative "
+            "相对序 + preKNN 平滑前两列（稀有表型按 FAQ 用 preKNN 口径）。"
+            "输出：cytotrace2_result.csv（cell×5 列）、按簇 preKNN 均值"
+            "汇总表（top5_clusters 上报）、UMAP Score 着色图；五列写回 "
+            "obs。注意：绝对干性经跨组织校准，与细胞类型 marker 打分"
+            "（如干细胞 marker）是两种口径，肿瘤数据 top 干性常为肿瘤"
+            "干性/增殖亚群，按互补信号解读。硬约束：输入必须是整数 "
+            "raw/CPM 计数（不能 log/scaled）——自动定位 filtered/raw."
+            "h5ad 或 processed 的 counts 层，全不命中则报错提示换 "
+            "sc_load/sc_qc 产物或 merge_10x 形态上游。大库（>10k 细胞）"
+            "建议先随机 subset ~1000-10000（固定种子）再跑。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "数据集 ref（需含整数计数"
+                                               "形态）"},
+                "species": {"type": "string", "default": "mouse",
+                            "description": "基因符号物种：mouse（默认）/"
+                                           "human（自动正交映射到模型"
+                                           "小鼠基因空间）"},
+                "ncores": {"type": "integer", "default": 4,
+                           "description": "R 侧并行核数（<16GB 内存建议"
+                                          "1-2）"},
+                "batch_size": {"type": "integer", "default": 0,
+                               "description": "分批大小；0=包默认 10000"},
+                "smooth_batch_size": {"type": "integer", "default": 0,
+                                      "description": "平滑子采样大小；"
+                                                     "0=包默认 1000"},
+                "cluster_col": {"type": "string", "default": "leiden",
+                                "description": "簇汇总 obs 列（缺失则"
+                                               "跳过 by_cluster 产物）"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_cytotrace2,
+        timeout_sec=1800,
     ))
     registry.register(ToolSpec(
         name="sc_de",

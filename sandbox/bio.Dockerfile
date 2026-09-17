@@ -192,6 +192,27 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
     && rm -rf /var/lib/apt/lists/* \
     && Rscript -e "library(monocle3); cat('monocle3', as.character(packageVersion('monocle3')), 'ok\n')"
 
+# CytoTRACE2 绝对干性打分（独立工具 sc_cytotrace2，2026-09-17 死刑
+# 推翻翻案探针钉注见 测试总结六补记）：R 版 digitalcytometry GitHub
+# 源，模型参数 parameter_dict_19.rds 等 5 件随 inst/extdata 分发
+# （离线审计零运行期下载；断网 10k 实跑 11.9min/4 核全绿）。
+# Depends 大头（Seurat/SeuratObject/RSpectra/RANN/stringr 等）
+# cellchat 层已带，实缺 HiClimR/Rfast：ncdf4→libnetcdf-dev、
+# RcppParallel→cmake、HiClimR.f90→gfortran。tarball 走 api.github.com
+# 端点（codeload 直连对部分网络不稳，探针实证；GitHub CI 无墙直通）。
+# purge 同 cellchat 纪律：只 purge 显式清单不 autoremove，libnetcdf
+# 运行库自然留存；末尾 library 自检兜底 so 链。
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update -qq -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
+    && apt-get install -y -qq --no-install-recommends \
+       -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
+       build-essential pkg-config gfortran cmake r-base-dev libnetcdf-dev \
+    && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); install.packages(c('HiClimR','Rfast')); options(timeout=900); download.file('https://api.github.com/repos/digitalcytometry/cytotrace2/tarball/main', '/tmp/c2.tar.gz', mode='wb'); untar('/tmp/c2.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('cytotrace2', basename(d))][1]; install.packages(file.path(d, 'cytotrace2_r'), repos=NULL, type='source'); unlink(c('/tmp/c2.tar.gz', d), recursive=TRUE)" \
+    && apt-get purge -y --no-install-recommends \
+       build-essential g++ gfortran cmake pkg-config r-base-dev libnetcdf-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && Rscript -e "suppressMessages(library(CytoTRACE2)); cat('CytoTRACE2', as.character(packageVersion('CytoTRACE2')), 'ok\n')"
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

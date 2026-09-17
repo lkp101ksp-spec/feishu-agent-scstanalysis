@@ -109,7 +109,7 @@ L3 通道（ToolSpec.timeout_sec → handler 透传，合同测试双钉）：
 |---|---|
 | 600 | sc_load, sc_qc, sc_plot, sc_cellfreq, sc_meta, sc_cellcycle, st_load, st_qc, st_plot, st_niche, st_vicinity, st_trajectory |
 | 1200 | sc_markers, sc_pseudotime, sc_de, sc_deconv, sc_doublet, sc_wnn, st_markers, st_domains |
-| 1800 | sc_process, sc_enrichment, sc_score_genes, sc_metabolism, sc_subcluster, sc_integrate, sc_annotate, st_process, st_commot, st_stats, st_misty |
+| 1800 | sc_process, sc_enrichment, sc_score_genes, sc_metabolism, sc_subcluster, sc_integrate, sc_annotate, sc_cytotrace2, st_process, st_commot, st_stats, st_misty |
 | 3600 | sc_cellchat, sc_cellchat_v2, sc_milo, sc_scenic, sc_knockout, sc_cnv, st_deconvolve*, st_cnv, st_cellchat_v2 |
 
 - \* st_deconvolve 为参数化档：handler 由
