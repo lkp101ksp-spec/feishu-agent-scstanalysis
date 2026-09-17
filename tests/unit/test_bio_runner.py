@@ -355,7 +355,7 @@ def test_run_touches_last_access(tmp_path, monkeypatch):
     assert (d / ".last_access").exists()
 
 
-# === Phase 25：--gpus 透传 ===
+# === Phase 25: --gpus 透传 ===
 
 def test_run_gpus_adds_flag(runner, fake_docker_ok):
     """gpus=True → docker cmd 含 --gpus all（--name 占位后按值定位）。"""
@@ -369,3 +369,22 @@ def test_run_default_no_gpus(runner, fake_docker_ok):
     """默认 gpus=False → cmd 不含 --gpus。"""
     runner.run("qc", {"dataset_id": "abcdef123456"})
     assert "--gpus" not in fake_docker_ok.cmd
+
+
+# === 执行面统一挂账③：工具级 cpus/memory 覆写（2026-09-17） ===
+
+def test_run_resource_override_applied(runner, fake_docker_ok):
+    """run(cpus=..., memory=...) 覆写实例默认，落到 docker cmd。"""
+    runner.run("scenic", {"dataset_id": "abcdef123456"},
+               cpus="8", memory="32g")
+    cmd = fake_docker_ok.cmd
+    assert cmd[cmd.index("--cpus") + 1] == "8"
+    assert cmd[cmd.index("--memory") + 1] == "32g"
+
+
+def test_run_resource_default_when_not_overridden(runner, fake_docker_ok):
+    """不传覆写 → 沿用实例默认 cpus=4 / memory=16g。"""
+    runner.run("qc", {"dataset_id": "abcdef123456"})
+    cmd = fake_docker_ok.cmd
+    assert cmd[cmd.index("--cpus") + 1] == "4"
+    assert cmd[cmd.index("--memory") + 1] == "16g"

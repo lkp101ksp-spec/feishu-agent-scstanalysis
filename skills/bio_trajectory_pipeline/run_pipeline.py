@@ -21,11 +21,19 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-# 执行面统一：镜像/工作区与 settings 同 env 口径（BIO_IMAGE/
-# BIO_WORKSPACE_ROOT），不再硬编码 tag——settings 换 tag 时 skill 不漂移
+# 执行面统一：镜像/工作区/容器资源与 settings 同 env 口径（BIO_IMAGE/
+# BIO_WORKSPACE_ROOT/BIO_CPUS/BIO_MEMORY），不再硬编码 tag 与 4c/16g——
+# settings 换配置时 skill 不漂移
 WS_ROOT = Path(os.environ.get(
     "BIO_WORKSPACE_ROOT", "I:/飞书agent/bio_workspace"))
 IMAGE = os.environ.get("BIO_IMAGE", "feishu-research-agent/bio:cpu-latest")
+CPUS = os.environ.get("BIO_CPUS", "4")
+MEMORY = os.environ.get("BIO_MEMORY", "16g")
+# 每步超时（秒）：skill 编排五步串行全景，单步成本高于 L3 单工具档
+# （1200s 级）——trajectory_full 含 enrich+PAGA 历史峰值 30min+，3900s
+# 留 25% 余量。口径表：docs/superpowers/specs/
+# 2026-09-17-execution-plane-unification-design.md 附录 A（测试守护）。
+STEP_TIMEOUT_SEC = 3900
 TOOLS = {
     "pseudotime": "/opt/sc_tools/pseudotime.py",
     "meta": "/opt/sc_tools/meta.py",
@@ -54,9 +62,9 @@ def run_tool(tool: str, payload: dict[str, Any]) -> dict[str, Any]:
                 "--network",
                 "none",
                 "--cpus",
-                "4",
+                CPUS,
                 "--memory",
-                "16g",
+                MEMORY,
                 "-v",
                 f"{WS_ROOT}:/ws",
                 IMAGE,
@@ -66,11 +74,12 @@ def run_tool(tool: str, payload: dict[str, Any]) -> dict[str, Any]:
             input=json.dumps(payload),
             capture_output=True,
             text=True,
-            timeout=3900,
+            timeout=STEP_TIMEOUT_SEC,
         )
     except subprocess.TimeoutExpired:
         subprocess.run(["docker", "kill", cname], capture_output=True)
-        raise RuntimeError(f"{tool} 超时（3900s），容器 {cname} 已 kill") from None
+        raise RuntimeError(
+            f"{tool} 超时（{STEP_TIMEOUT_SEC}s），容器 {cname} 已 kill") from None
     if proc.returncode != 0:
         raise RuntimeError(f"{tool} 失败（exit {proc.returncode}）：{proc.stderr[-500:]}")
     line = next(

@@ -156,13 +156,16 @@ class BioRunner:
             timeout_sec: int | None = None,
             mounts: list[tuple[str, str]] | None = None,
             image: str | None = None, script_dir: str = "/opt/sc_tools",
-            gpus: bool = False) -> dict[str, Any]:
+            gpus: bool = False, cpus: str | None = None,
+            memory: str | None = None) -> dict[str, Any]:
         """跑 <script_dir>/<script>.py，返回 stdout JSON dict。
 
         mounts: 额外 (主机目录, 容器目录) 挂载（sc_load 的数据目录）。
         image/script_dir: 覆盖实例默认镜像与脚本目录——st_* 空间转录组
         工具传 image=st 镜像 + script_dir=/opt/st_tools（Phase 21 spec §3）。
         gpus=True 时 docker run 带 --gpus all（GPU 镜像，Phase 25）。
+        cpus/memory: 工具级资源覆写（执行面统一挂账③，2026-09-17）；
+        None 时走实例默认（settings.bio_cpus/bio_memory 全局一份）。
         超时/非零退出/JSON 解析失败 → BioRunError。
         """
         # Phase 23：GC 打点（best-effort，读引用也算"最近使用"）
@@ -176,7 +179,7 @@ class BioRunner:
         if gpus:
             cmd += ["--gpus", "all"]
         cmd += ["-i", "--network", "none",
-                "--cpus", self.cpus, "--memory", self.memory,
+                "--cpus", cpus or self.cpus, "--memory", memory or self.memory,
                 "-v", f"{self.workspace_root}:/ws"]
         for host_dir, container_dir in (mounts or []):
             cmd += ["-v", f"{host_dir}:{container_dir}:ro"]

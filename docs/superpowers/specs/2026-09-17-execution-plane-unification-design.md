@@ -1,7 +1,7 @@
 # 执行面统一设计（Spec）
 
 - 日期：2026-09-17
-- 状态：核心项已落地（本 spec 追认 + 挂账未落地项）
+- 状态：全项落地（核心项 + 挂账①②③均收官，附录 A 口径表测试守护）
 - 来源：遗留建议④（"执行面统一（需立 spec）"）+ 执行面现状调研（2026-09-17）
 
 ## 1. 问题定义
@@ -58,18 +58,31 @@ st_cellchat_v2 走 bio 镜像 + /opt/sc_tools（CellChat v2 R 栈单点
 600/1200/1800/3600 四档 + st_deconvolve 参数化档混合——档位差异
 反映真实计算成本（scenic 40min 级 vs plot 秒级），强行归一要么
 浪费墙钟要么回归误杀。research 墙钟（research_sc_timeout_sec=3600）
-与单步 3600s 贴边的挤压问题见挂账①。
+与单步 3600s 贴边的挤压问题：挂账①已验证降级（见 §3）。
+全量口径统一为附录 A 一张表（双通道），测试守护防漂移。
 
-## 3. 挂账（未落地，按需另立）
+## 3. 挂账收官（2026-09-17 三项全落地）
 
-- ① **收尾墙钟挤压**：maybe_build_report 同步执行于 research 收尾链
-  且受 3600s 墙钟约束——本次复验实测 12 图 render 30.9s，短期无忧；
-  若未来单步 3600s + 重报告并存，需评估收尾阶段墙钟豁免或异步化。
-- ② **tools.yaml（skill）与 L3 超时口径表**：trajectory 全景 L3 侧
-  1200s vs skill 编排 3900s/步——skill 侧五步串行天然更久，非漂移；
-  若后续 skill 编排引入并行或单步超 3900s 再评估。
-- ③ **BioRunner 参数面收口**：cpus/memory 目前 settings 全局一份，
-  工具级覆写（如 scenic 要更多 worker）暂无需求，不预建。
+- ① **收尾墙钟挤压 → 已验证降级，关闭**。sent 真机复验
+  （12 ImageBlock 量级，每图 3 次 API）实测：create 1.55s /
+  render 30.87s / grant 0.65s，合计 ≈33s，占 3600s research 墙钟
+  0.9%——重报告收尾不构成挤压。重评触发条件（任一即重开）：
+  单报告图量 ≥60、render 阶段 >120s、或单步顶满 3600s 与
+  重报告并存。
+- ② **双通道超时口径表 → 已落地**（附录 A）：L3 40 工具四档 +
+  skill 编排每步 3900s + research 墙钟 + BioRunner 兜底，一表化；
+  skill 侧超时提取为常量 `STEP_TIMEOUT_SEC`、容器资源改 env
+  口径（BIO_CPUS/BIO_MEMORY，与 settings 同源）。表由
+  test_l3_dispatch_contract.py 表守护测试钉死：registry 动态值 /
+  skill 源码常量 / settings 默认三方 vs 文档表，任一漂移即红。
+- ③ **工具级资源覆写 → 已落地**：ToolSpec 增 `cpus`/`memory`
+  （None=走全局默认），BioRunner.run 透传 docker --cpus/--memory，
+  合同测试与 timeout 同模式断言"声明必透传"。首批声明（宿主
+  64 GB/24 核、docker 可用 55 GiB，32g 覆写余量充足）：
+  - sc_cellchat_v2 / st_cellchat_v2：memory=32g（Phase 61 真机
+    59900×38 类矩阵内存峰值依据，曾单次稠密化 11 GiB 翻车）；
+  - sc_scenic：cpus=8 + memory=32g（dask n_workers 内存随 worker
+    线性涨，解锁 >4 worker 上限；description 已同步 32g 口径）。
 
 ## 4. 验证记录
 
@@ -77,3 +90,38 @@ st_cellchat_v2 走 bio 镜像 + /opt/sc_tools（CellChat v2 R 栈单点
 - pytest 全量 1326 passed（-m "not pg"）、ruff 绿、mypy 双平台
   193 文件 0 错；
 - bio/st 镜像 COPY 层 rebuild + 卫兵冒烟（同轮 ⑥ 项一并验证）。
+
+挂账收官轮（2026-09-17）补充：
+
+- 合同测试扩 cpus/memory 断言（40 工具）+ 表守护测试（附录 A 三方
+  比对）+ BioRunner 覆写透传单测；
+- 宿主容量实测：64 GB / 24 逻辑核，docker 可用 55 GiB / 24 CPU。
+
+## 附录 A：双通道超时口径表（挂账②，测试守护）
+
+> 守护测试：tests/unit/test_l3_dispatch_contract.py
+> （registry 动态值 / skill 源码常量 / settings 默认 vs 本表，
+> 任一漂移 CI 即红；改超时必须同步本表）。
+
+L3 通道（ToolSpec.timeout_sec → handler 透传，合同测试双钉）：
+
+| 档(s) | 工具 |
+|---|---|
+| 600 | sc_load, sc_qc, sc_plot, sc_cellfreq, sc_meta, sc_cellcycle, st_load, st_qc, st_plot, st_niche, st_vicinity, st_trajectory |
+| 1200 | sc_markers, sc_pseudotime, sc_de, sc_deconv, sc_doublet, sc_wnn, st_markers, st_domains |
+| 1800 | sc_process, sc_enrichment, sc_score_genes, sc_metabolism, sc_subcluster, sc_integrate, sc_annotate, st_process, st_commot, st_stats, st_misty |
+| 3600 | sc_cellchat, sc_cellchat_v2, sc_milo, sc_scenic, sc_knockout, sc_cnv, st_deconvolve*, st_cnv, st_cellchat_v2 |
+
+- \* st_deconvolve 为参数化档：handler 由
+  settings.st_deconvolve_timeout_sec 注入（默认 3600）。
+- 工具级资源覆写（挂账③）：sc_scenic（cpus=8, memory=32g）、
+  sc_cellchat_v2 / st_cellchat_v2（memory=32g）；其余工具走全局
+  settings.bio_cpus（默认 4）/ bio_memory（默认 16g）。
+
+skill / 框架通道：
+
+| 执行点 | 档(s) | 来源 |
+|---|---|---|
+| skill bio_trajectory_pipeline 每步 | 3900 | run_pipeline.py 常量 STEP_TIMEOUT_SEC |
+| research 墙钟（plan 含 sc_*/st_*） | 3600 | settings.research_sc_timeout_sec 默认 |
+| BioRunner 兜底默认（handler 未传时） | 900 | settings.bio_script_timeout_sec 默认 |

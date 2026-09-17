@@ -328,7 +328,7 @@ def register_l3_spatial(
                     "max_cells_per_group": max_cells_per_group,
                     "interaction_range": interaction_range,
                 }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
-                timeout_sec=3600)
+                timeout_sec=3600, memory="32g")
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -765,4 +765,5 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_cellchat_v2,
         timeout_sec=3600,
+        memory="32g",
     ))

@@ -312,7 +312,7 @@ def register_l3_singlecell(
                 "min_cells": min_cells,
                 "top_n": top_n, "max_cells_per_group": max_cells_per_group,
                 "interaction_range": interaction_range,
-            }, timeout_sec=3600)
+            }, timeout_sec=3600, memory="32g")
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -452,7 +452,7 @@ def register_l3_singlecell(
                 "n_workers": n_workers, "seed": seed,
             }, mounts=[(str(ct_dir), "/scenic_db/cistarget"),
                        (str(ma_dir), "/scenic_db/motifannot")],
-                timeout_sec=3600)
+                timeout_sec=3600, cpus="8", memory="32g")
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -1076,6 +1076,7 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_cellchat_v2,
         timeout_sec=3600,
+        memory="32g",
     ))
     registry.register(ToolSpec(
         name="sc_milo",
@@ -1305,7 +1306,7 @@ def register_l3_singlecell(
                                  "description": "簇标签列（抽样/RSS 用）"},
                 "n_workers": {"type": "integer", "default": 2,
                               "description": "dask worker 数（内存随 worker "
-                                             "线性涨，16g 容器勿超 4）"},
+                                             "线性涨，本工具 32g 容器勿超 8）"},
                 "seed": {"type": "integer", "default": 42},
             },
             "required": ["dataset_ref"],
@@ -1313,6 +1314,7 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_scenic,
         timeout_sec=3600,
+        cpus="8", memory="32g",
     ))
     registry.register(ToolSpec(
         name="sc_wnn",

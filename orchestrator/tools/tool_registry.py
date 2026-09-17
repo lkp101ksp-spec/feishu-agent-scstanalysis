@@ -33,6 +33,12 @@ class ToolSpec(BaseModel):
     handler: Callable[..., Any]
     requires_approval: bool = False
     timeout_sec: int = 60
+    # 执行面统一挂账③（2026-09-17）：工具级容器资源覆写（docker
+    # --cpus/--memory）；None=走 BioRunner 全局默认（settings.bio_cpus/
+    # bio_memory）。与 timeout_sec 同模式双写：handler 显式传值 +
+    # spec 声明 + 合同测试钉死一致（防"纸面覆写"）。
+    cpus: Optional[str] = None
+    memory: Optional[str] = None
     max_retries: int = 1
     tool_version: str = "1.0.0"
     approval_card_template: Optional[str] = None
