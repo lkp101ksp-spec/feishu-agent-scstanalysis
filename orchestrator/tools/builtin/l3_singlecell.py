@@ -763,22 +763,25 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_pseudotime",
         description=(
-            "拟时序三引擎（Phase 32/53 DPT + Palantir + Slingshot）："
-            "推断细胞分化/发育顺序。engine='dpt'（默认）：scanpy "
-            "diffmap+DPT，对齐 Monocle 拟时序排序场景；engine='palantir'"
-            "：马尔可夫链扩散（Setty 2019），额外给出终末态与分支概率"
-            "（部分覆盖分支推断需求）；engine='slingshot'：簇级 MST+"
-            "主曲线（Street 2018），给出显式谱系数与曲线几何，分叉"
-            "轨迹强项。定根：root_marker/root_cluster 二选一（皆空取"
-            "第 0 个细胞）；engine='palantir'/'slingshot' 时可另给 "
+            "拟时序四引擎（Phase 32/53 DPT + Palantir + Slingshot + "
+            "Monocle3）：推断细胞分化/发育顺序。engine='dpt'（默认）："
+            "scanpy diffmap+DPT，对齐 Monocle 拟时序排序场景；"
+            "engine='palantir'：马尔可夫链扩散（Setty 2019），额外给出"
+            "终末态与分支概率（部分覆盖分支推断需求）；"
+            "engine='slingshot'：簇级 MST+主曲线（Street 2018），给出"
+            "显式谱系数与曲线几何，分叉轨迹强项；engine='monocle3'："
+            "learn_graph 主图+order_cells 定向（Cao 2019），显式分支"
+            "树 MST 几何，断连分区 pt 记 NA 并计数。定根：root_marker/"
+            "root_cluster 二选一（皆空取第 0 个细胞）；"
+            "engine='palantir'/'slingshot'/'monocle3' 时可另给 "
             "start_cell 显式根细胞条码（优先级最高）。输出每簇伪时序"
             "均值表、pseudotime csv、UMAP 伪时序图；DPT 附 PAGA 轨迹"
-            "图，Palantir 附终末态表与分支概率列；dyn_top_n>0 附动态"
-            "基因趋势（dyn_genes.csv+趋势热图+top6 曲线）；"
-            "branch_top_n>0 附分支推断（分支归属+分支间命运决定基因，"
-            "对齐 Monocle2 BEAM 场景）；dyn_modules_k>0 附动态基因趋势"
-            "聚类（早→晚表达程序模块，可附模块 GO/通路富集）。"
-            "注意：DPT 不推断分支（CytoTRACE2 不在范围）。"
+            "图，Palantir 附终末态表与分支概率列，Monocle3 附主图折点"
+            "csv；dyn_top_n>0 附动态基因趋势（dyn_genes.csv+趋势热图"
+            "+top6 曲线）；branch_top_n>0 附分支推断（分支归属+分支间"
+            "命运决定基因，对齐 Monocle2 BEAM 场景）；dyn_modules_k>0 "
+            "附动态基因趋势聚类（早→晚表达程序模块，可附模块 GO/通路"
+            "富集）。注意：DPT 不推断分支（CytoTRACE2 不在范围）。"
             "需先跑 sc_process。"
         ),
         parameters={
@@ -802,11 +805,13 @@ def register_l3_singlecell(
                                           "palantir（马尔可夫链扩散，附"
                                           "终末态+分支概率）/slingshot"
                                           "（簇级 MST+主曲线，附谱系数与"
-                                          "曲线几何）"},
+                                          "曲线几何）/monocle3（learn_"
+                                          "graph 主图分支树+order_cells"
+                                          "定向）"},
                 "start_cell": {"type": "string", "default": "",
-                               "description": "palantir/slingshot 引擎专用"
-                                              "：显式根细胞条码，优先级"
-                                              "高于 root_marker/"
+                               "description": "palantir/slingshot/monocle3"
+                                              " 引擎专用：显式根细胞条码，"
+                                              "优先级高于 root_marker/"
                                               "root_cluster"},
                 "branch_top_n": {"type": "integer", "default": 0,
                                  "description": "Palantir 引擎专用：分支"

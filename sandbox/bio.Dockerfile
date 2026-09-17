@@ -164,6 +164,34 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
     && rm -rf /var/lib/apt/lists/* \
     && Rscript -e "library(CellChat); cat('CellChat', as.character(packageVersion('CellChat')), 'db_rows', nrow(CellChatDB.human$interaction), '\n')"
 
+# monocle3 第四轨迹引擎（sc_pseudotime engine='monocle3'，重启评估
+# 探针两轮钉注见 测试总结第六十段）：cole-trapnell-lab GitHub 源
+# （CRAN 无）。apt 链 = cellchat r1-r9 dev 链 + gdal/geos/proj（sf
+# 依赖）；探针实测 sf 8.1min + monocle3 链 13min（Ncpus=8 口径，
+# 本层 Ncpus=4 更慢，CI manual job 预算 50→71min）。purge 同
+# cellchat 纪律：只 purge 显式清单、不 autoremove——sf/units/
+# ggrastr 的运行 so 链（gdal/geos/proj/cairo 运行库）自然留存。
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update -qq -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
+    && apt-get install -y -qq --no-install-recommends \
+       -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
+       build-essential pkg-config gfortran cmake r-base-dev \
+       libgdal-dev libgeos-dev libproj-dev \
+       libxml2-dev libuv1-dev libfontconfig1-dev libcairo2-dev \
+       libharfbuzz-dev libfribidi-dev libgit2-dev libpng-dev \
+       libfreetype6-dev libudunits2-dev libtiff5-dev libjpeg-dev libwebp-dev \
+    && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} \
+       http_proxy=${PROXY} https_proxy=${PROXY} \
+       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN', Bioc='https://bioconductor.org/packages/3.21/bioc'), Ncpus=4, timeout=1800); install.packages('sf'); remotes::install_github('cole-trapnell-lab/monocle3', upgrade='never')" \
+    && apt-get purge -y --no-install-recommends \
+       build-essential g++ gfortran cmake pkg-config r-base-dev \
+       libgdal-dev libgeos-dev libproj-dev \
+       libxml2-dev libuv1-dev libfontconfig1-dev libcairo2-dev \
+       libharfbuzz-dev libfribidi-dev libgit2-dev libpng-dev \
+       libfreetype6-dev libudunits2-dev libtiff5-dev libjpeg-dev libwebp-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && Rscript -e "library(monocle3); cat('monocle3', as.character(packageVersion('monocle3')), 'ok\n')"
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

@@ -3,7 +3,7 @@
 stdin: {"dataset_id": ..., "root_marker": "NKG7",
         "root_cluster": "",   # Phase 53：leiden 簇定根，与 root_marker 互斥
         "dyn_top_n": 50,      # Phase 53：动态基因 top N；0=跳过
-        "engine": "dpt",      # dpt（默认）/ palantir / slingshot
+        "engine": "dpt",      # dpt（默认）/ palantir / slingshot / monocle3
         "start_cell": "",     # palantir/slingshot 显式根条码（优先级最高）
         "branch_top_n": 0,    # palantir 专用：分支推断 top N；0=跳过
         "dyn_modules_k": 0,   # 动态基因趋势聚类模块数；0=跳过
@@ -25,6 +25,11 @@ X_umap+leiden CSV 桥接 Rscript /opt/r_tools/slingshot_bridge.R
 均值 + lineage1..k 宽表）/ slingshot_curves.csv（曲线折点）/
 slingshot_umap.png（主 pt 着色+曲线叠加+根红圈）；主 pt 写回
 obs["slingshot_pseudotime"] 统一落盘；dyn 产物加 slingshot_ 前缀；
+engine="monocle3"：learn_graph 主图 + order_cells 定向（Cao 2019，
+分支树强项；重启评估探针钉注见 测试总结第六十段），X_pca+X_umap
+CSV 桥接 monocle3_bridge.R；产物 monocle3_pt.csv（断连分区 NA）/
+monocle3_graph.csv（MST 折点）/ monocle3_umap.png；主 pt 写回
+obs["monocle3_pseudotime"]；dyn 产物加 monocle3_ 前缀；
 fallback 定根不传 start.clus（自由推根），其余三模式传根细胞
 所在簇标签。
 root 四模式：start_cell 显式条码 > root_cluster 簇内度最高 >
@@ -753,6 +758,107 @@ def _run_slingshot(adata: Any, iroot: int, clusters: pd.Series,
     return out, pt
 
 
+def _run_monocle3(adata: Any, iroot: int, dyn_top_n: int, ds_dir: Any,
+                  dyn_modules_k: int = 0,
+                  modules_enrich: str = "") -> tuple[dict[str, Any], Any]:
+    """Monocle3 引擎（重启评估落地，测试总结第六十段探针钉注）。
+
+    X_pca + X_umap CSV 桥接 → Rscript monocle3_bridge.R（PCA 当表达
+    建 cds → 灌 reducedDims → cluster_cells → learn_graph 主图 →
+    order_cells 定向）→ 读回 mono3_pt；写 obs["monocle3_pseudotime"]
+    （main 统一落盘）；产物 monocle3_pt.csv / monocle3_graph.csv /
+    monocle3_umap.png（pt 着色 + 主图 MST 折线叠加 + 根红圈）；
+    dyn 相复用 _dyn_genes（prefix="monocle3_"）。断连分区 pt=NA，
+    保 NaN 并在 out 计数（monocle3 多分区语义，不静默填值）。
+    """
+    import subprocess
+
+    import matplotlib.pyplot as plt
+
+    if "X_pca" not in adata.obsm:
+        raise RuntimeError(
+            "processed.h5ad lacks X_pca; run sc_process first")
+    in_dir = ds_dir / "_mono3_in"
+    in_dir.mkdir(parents=True, exist_ok=True)
+    n_pc = min(50, adata.obsm["X_pca"].shape[1])
+    pca = np.asarray(adata.obsm["X_pca"])[:, :n_pc]
+    pca_df = pd.DataFrame(
+        pca, index=adata.obs_names,
+        columns=[f"PC{i + 1}" for i in range(n_pc)])
+    pca_df.index.name = "cell"
+    pca_csv = in_dir / "pca.csv"
+    pca_df.to_csv(pca_csv)
+    umap = np.asarray(adata.obsm["X_umap"])
+    ump_df = pd.DataFrame({"UMAP1": umap[:, 0], "UMAP2": umap[:, 1]},
+                          index=adata.obs_names)
+    ump_df.index.name = "cell"
+    umap_csv = in_dir / "umap.csv"
+    ump_df.to_csv(umap_csv)
+
+    root_cell = str(adata.obs_names[iroot])
+    r_cmd = ["Rscript", "/opt/r_tools/monocle3_bridge.R",
+             str(pca_csv), str(umap_csv), str(in_dir), root_cell]
+    proc = subprocess.run(r_cmd, capture_output=True, text=True,
+                          timeout=3300)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Rscript monocle3_bridge.R failed: {proc.stderr[-1500:]}")
+    pt_path = in_dir / "mono3_pt.csv"
+    if not pt_path.exists():
+        raise RuntimeError(
+            "monocle3_bridge.R did not produce mono3_pt.csv; "
+            f"stdout tail: {proc.stdout[-500:]}")
+
+    # 数字型条码 csv 往返 astype(str) 对齐（slingshot 同款教训）
+    pt_s = pd.read_csv(pt_path, index_col=0)["pseudotime"]
+    pt_s.index = pt_s.index.astype(str)
+    pt_s = pt_s.reindex(adata.obs_names)
+    pt = pt_s.to_numpy(dtype=float)
+    n_na = int(pt_s.isna().sum())
+
+    pt_df = pd.DataFrame({"monocle3_pseudotime": pt},
+                         index=adata.obs_names)
+    pt_csv = ds_dir / "monocle3_pt.csv"
+    pt_df.to_csv(pt_csv)
+    graph = pd.read_csv(in_dir / "mono3_graph.csv")
+    graph_csv = ds_dir / "monocle3_graph.csv"
+    graph.to_csv(graph_csv, index=False)
+
+    adata.obs["monocle3_pseudotime"] = pt
+
+    fig, ax = plt.subplots(figsize=(5.6, 4.4))
+    s = ax.scatter(umap[:, 0], umap[:, 1], s=4, c=pt, cmap="viridis",
+                   linewidths=0)
+    for _, e in graph.iterrows():
+        ax.plot([e["x1"], e["x2"]], [e["y1"], e["y2"]],
+                color="black", lw=0.9, alpha=0.8, zorder=3)
+    ax.scatter(umap[iroot, 0], umap[iroot, 1], s=90, facecolors="none",
+               edgecolors="red", linewidths=1.6, label="root", zorder=4)
+    ax.legend(loc="upper right", fontsize=7)
+    fig.colorbar(s, ax=ax, fraction=0.046, label="monocle3 pseudotime")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_title(f"Monocle3 learn_graph ({len(graph)} edges)", fontsize=9)
+    fig.tight_layout()
+    umap_png = ds_dir / "monocle3_umap.png"
+    fig.savefig(umap_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    out: dict[str, Any] = {
+        "n_graph_edges": int(len(graph)),
+        "n_na_pseudotime": n_na,
+        "monocle3_pt_csv": str(pt_csv),
+        "monocle3_graph_csv": str(graph_csv),
+        "umap_png": str(umap_png),
+    }
+    if dyn_top_n > 0:
+        out.update(_dyn_genes(adata, pt, dyn_top_n, ds_dir,
+                              prefix="monocle3_",
+                              modules_k=dyn_modules_k,
+                              modules_enrich=modules_enrich))
+    return out, pt
+
+
 def _load_pst_wide(ds_dir: Any, adata: Any) -> pd.DataFrame | None:
     """读 slingshot_pt.csv 谱系宽表（lineage* 列）对齐 obs_names。
 
@@ -966,8 +1072,8 @@ def _run_paga(adata: Any, pt: Any, clusters: pd.Series, ds_dir: Any,
 
 
 def main() -> None:
-    """主流程：定根四模式 → 按 engine 分路（DPT / Palantir / Slingshot）
-    → 可选 PAGA 相 / 谱系×分支交叉（双向触发）。"""
+    """主流程：定根四模式 → 按 engine 分路（DPT / Palantir / Slingshot
+    / Monocle3）→ 可选 PAGA 相 / 谱系×分支交叉（双向触发）。"""
     import matplotlib.pyplot as plt
     import scanpy as sc
 
@@ -986,16 +1092,18 @@ def main() -> None:
     trajectory_full = bool(args.get("trajectory_full", False))
     engine = str(args.get("engine", "dpt")).strip().lower()
     start_cell = str(args.get("start_cell", "")).strip()
-    if engine not in ("dpt", "palantir", "slingshot"):
+    if engine not in ("dpt", "palantir", "slingshot", "monocle3"):
         fail("INVALID_INPUT",
-             f"engine {engine!r} not in ['dpt', 'palantir', 'slingshot']")
+             f"engine {engine!r} not in "
+             "['dpt', 'palantir', 'slingshot', 'monocle3']")
         return
     # trajectory_full（Phase 59）忽略 engine：start_cell/branch_top_n 的
     # 引擎限定随之解除（两相共用 start_cell；branch_top_n 缺省升 50）
     if start_cell and not trajectory_full \
-            and engine not in ("palantir", "slingshot"):
+            and engine not in ("palantir", "slingshot", "monocle3"):
         fail("INVALID_INPUT",
-             "start_cell only valid with engine='palantir'/'slingshot'")
+             "start_cell only valid with "
+             "engine='palantir'/'slingshot'/'monocle3'")
         return
     if branch_top_n > 0 and engine != "palantir" and not trajectory_full:
         fail("INVALID_INPUT",
@@ -1148,6 +1256,39 @@ def main() -> None:
             "ok": True,
             "dataset_ref": args["dataset_id"],
             "method": "slingshot",
+            "engine": engine,
+            "n_cells": int(adata.n_obs),
+            "root_marker": root_marker,
+            "root_cluster": root_cluster,
+            "root_mode": root_mode,
+            "root_cell_index": iroot,
+            "root_note": root_note,
+            **out,
+            "per_cluster": [
+                {"cluster": c, "mean": _rf(r["mean"]),
+                 "median": _rf(r["median"]), "n_cells": int(r["size"])}
+                for c, r in stats.iterrows()],
+        })
+        return
+
+    if engine == "monocle3":
+        if "X_pca" not in adata.obsm:
+            fail("INVALID_INPUT",
+                 "processed.h5ad lacks X_pca; run sc_process first")
+            return
+        out, pt = _run_monocle3(adata, iroot, dyn_top_n, ds_dir,
+                                dyn_modules_k=dyn_modules_k,
+                                modules_enrich=modules_enrich)
+        if paga:
+            out.update(_run_paga(adata, pt, clusters, ds_dir, paga_pt,
+                                 root_cluster))
+        adata.write_h5ad(WS_ROOT / args["dataset_id"]
+                         / "processed.h5ad")
+        stats = _cluster_stats(clusters, pt)
+        emit({
+            "ok": True,
+            "dataset_ref": args["dataset_id"],
+            "method": "monocle3",
             "engine": engine,
             "n_cells": int(adata.n_obs),
             "root_marker": root_marker,
