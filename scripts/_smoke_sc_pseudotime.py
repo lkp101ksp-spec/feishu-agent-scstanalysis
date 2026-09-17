@@ -364,6 +364,47 @@ o20b = run_pt(DS2, trajectory_full=True, dyn_top_n=0, engine="dpt",
               root_cluster="trunk")
 assert o20b["ok"] and o20b["method"] == "trajectory_full", o20b
 
+# ㉑ palantir 大库 stdout 纯净回归（Phase 62 真机 59900 捕获：palantir
+# 1.4.5 run_palantir 的 unconditional print "Sampling and flocking
+# waypoints..." 在 n_cells > num_waypoints(1200) 时触发，直出 stdout
+# 破坏 BioRunner 全量 JSON 解析（SC_OUTPUT_INVALID）；修复=
+# redirect_stdout→stderr）。1300 细胞触发 sampling 分支，按 BioRunner
+# 严格口径整体 json.loads(stdout)——修复前必挂。run_pt 末行容错口径
+# 检测不到该污染，故手工 subprocess。
+DS3 = "ptpal1k3smoke"
+rng3 = np.random.default_rng(43)
+n3, ng3 = 1300, 50
+t3 = np.linspace(0, 1, n3)
+X3 = rng3.poisson(2, (n3, ng3)).astype(np.float32)
+X3[:, 0] = rng3.poisson(t3 * 60 + 0.1, n3).astype(np.float32)
+X3[:, 1] = rng3.poisson((1 - t3) * 60 + 0.1, n3).astype(np.float32)
+ad3 = sc.AnnData(csr_matrix(X3))
+ad3.var_names = ["G_up", "G_down"] + [f"G{i}" for i in range(2, ng3)]
+sc.pp.normalize_total(ad3)
+sc.pp.log1p(ad3)
+ad3.raw = ad3
+sc.pp.highly_variable_genes(ad3, n_top_genes=100)
+sc.pp.pca(ad3)
+sc.pp.neighbors(ad3)
+ad3.obs["leiden"] = pd.Categorical(
+    pd.cut(t3, 3, labels=["0", "1", "2"]).astype(str))
+ad3.obsm["X_umap"] = ad3.obsm["X_pca"][:, :2]
+ds3_dir = WS / DS3
+ds3_dir.mkdir(parents=True, exist_ok=True)
+ad3.write_h5ad(ds3_dir / "processed.h5ad")
+r21 = subprocess.run(
+    BASE + ["python", "/opt/sc_tools/pseudotime.py"],
+    input=json.dumps({"dataset_id": DS3, "engine": "palantir",
+                      "dyn_top_n": 0}),
+    capture_output=True, text=True, timeout=1200)
+o21 = json.loads(r21.stdout)  # BioRunner 严格口径：整体解析，非末行
+assert o21["ok"] and o21["method"] == "palantir", r21.stdout[:300]
+pt21 = pd.read_csv(ds3_dir / "pseudotime/palantir_pt.csv",
+                   index_col=0)["palantir_pseudotime"]
+rho21 = float(pd.Series(pt21.to_numpy(dtype=float)).corr(
+    pd.Series(t3), method="spearman"))
+assert rho21 > 0.9, f"palantir 大库 rho={rho21}"
+
 for f in ("pseudotime/pseudotime.csv",
           "pseudotime/pseudotime_umap.png",
           "pseudotime/paga_graph.png",
@@ -392,4 +433,5 @@ print("SMOKE OK",
       "| paga_pt w/o paga rejected",
       f"| umap_obs pngs={len(o19['pngs'])} bad rejected",
       f"| trajectory_full L={o20['slingshot']['n_lineages']}"
-      f" sig={o20['slingshot']['n_cross_sig']} engine ignored")
+      f" sig={o20['slingshot']['n_cross_sig']} engine ignored",
+      f"| palantir stdout-pure 1300c rho={rho21:.3f}")

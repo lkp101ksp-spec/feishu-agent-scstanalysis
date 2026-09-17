@@ -536,13 +536,20 @@ def _run_palantir(adata: Any, iroot: int, clusters: pd.Series,
     _dyn_genes（产物加 palantir_ 前缀）；branch_top_n>0 时分支
     推断复用 _branch_analysis（BEAM-lite 三步）。
     """
+    import contextlib
+    import sys
+
     import matplotlib.pyplot as plt
     import palantir
 
-    palantir.utils.run_diffusion_maps(adata, n_components=5)
-    palantir.utils.determine_multiscale_space(adata)
+    # palantir 1.4.5 的 run_palantir 有 unconditional print（"Sampling and
+    # flocking waypoints..." 等，n_cells > num_waypoints 时触发）直出 stdout，
+    # 会破坏 emit 的"stdout 唯一 JSON"纪律 → 全部进度输出转 stderr。
     start = str(adata.obs_names[iroot])
-    pr = palantir.core.run_palantir(adata, start, num_waypoints=1200)
+    with contextlib.redirect_stdout(sys.stderr):
+        palantir.utils.run_diffusion_maps(adata, n_components=5)
+        palantir.utils.determine_multiscale_space(adata)
+        pr = palantir.core.run_palantir(adata, start, num_waypoints=1200)
     pt = np.asarray(pr.pseudotime, dtype=float)
     terms = [str(t) for t in pr.branch_probs.columns]
 
