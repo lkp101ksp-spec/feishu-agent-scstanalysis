@@ -182,7 +182,7 @@ def main() -> None:
     if cp.returncode != 0:
         print(f"[FAIL] cross-validation: {cp.stderr[-2000:]}")
         raise SystemExit(1)
-    cross = json.loads(cp.stdout.strip().splitlines()[-1])
+    cross = json.loads(cp.stdout)  # BioRunner 严格口径：整体解析
     res["cross_validation"] = cross
     (REPORT_DIR / "report.json").write_text(
         json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")

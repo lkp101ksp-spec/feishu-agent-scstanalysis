@@ -80,7 +80,7 @@ def run_cnv(**kw):
     # 脚本级 fail() 也是 exit 1 + stdout JSON（BioRunner 同款口径）；
     # 仅当 stdout 无法解析为 JSON 才算执行崩溃
     try:
-        return json.loads(r.stdout.strip().splitlines()[-1])
+        return json.loads(r.stdout)  # BioRunner 严格口径：整体解析
     except (json.JSONDecodeError, IndexError):
         raise SystemExit(f"{kw} rc={r.returncode}\n"
                          f"{r.stdout[-400:]}\n{r.stderr[-600:]}") from None

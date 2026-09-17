@@ -50,7 +50,7 @@ def run_cf(**kw):
                        input=payload, capture_output=True, text=True,
                        timeout=600)
     try:
-        return json.loads(r.stdout.strip().splitlines()[-1])
+        return json.loads(r.stdout)  # BioRunner 严格口径：整体解析
     except (json.JSONDecodeError, IndexError):
         raise SystemExit(f"{kw} rc={r.returncode}\n"
                          f"{r.stdout[-400:]}\n{r.stderr[-600:]}") from None
