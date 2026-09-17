@@ -43,6 +43,26 @@ from shared.errors import FeishuAgentError, RateLimitExceededError
 
 logger = logging.getLogger(__name__)
 
+# 后台守护线程停机登记：start_* 每启动一个线程登记 (stop Event, Thread)。
+# 生产路径进程退出即收（daemon=True）；登记 + stop_background_threads 是
+# pytest 收口用——mock side_effect 的线程若不在 teardown 停掉，会在会后
+# 继续循环 logger.exception 污染输出尾部（测试总结第五十八段插曲③）。
+_BG_THREADS: list[tuple[threading.Event, threading.Thread]] = []
+
+
+def _register_bg(stop: threading.Event, t: threading.Thread) -> None:
+    """登记守护线程停机事件（模块内 start_* 统一调用）。"""
+    _BG_THREADS.append((stop, t))
+
+
+def stop_background_threads(timeout: float = 2.0) -> None:
+    """停掉本模块启动的全部守护线程并清空登记（pytest teardown 用）。"""
+    for stop, _ in _BG_THREADS:
+        stop.set()
+    for _, t in _BG_THREADS:
+        t.join(timeout=timeout)
+    _BG_THREADS.clear()
+
 
 def run_renew_scan_once(renew_scan_service: BindDocService) -> None:
     """同步执行一轮续期卡片扫描（async 方法在独立 event loop 跑一次）。"""
@@ -55,10 +75,10 @@ def start_renew_scanner(rt: Runtime) -> threading.Thread | None:
     if svc is None:
         return None
     interval = getattr(rt, "renew_scan_interval_sec", 60) or 60
+    stop = threading.Event()
 
     def loop() -> None:
-        while True:
-            time.sleep(interval)
+        while not stop.wait(interval):
             try:
                 run_renew_scan_once(svc)
             except Exception:
@@ -66,6 +86,7 @@ def start_renew_scanner(rt: Runtime) -> threading.Thread | None:
 
     t = threading.Thread(target=loop, daemon=True, name="renew-card-scanner")
     t.start()
+    _register_bg(stop, t)
     logger.info("renew card scanner started (interval=%ss, threshold=%ss)",
                 interval, getattr(svc, "renew_threshold_sec", "?"))
     return t
@@ -103,10 +124,10 @@ def start_kernel_idle_sweeper(
     """
     if kernel_pool is None or not interval_sec:
         return None
+    stop = threading.Event()
 
     def loop() -> None:
-        while True:
-            time.sleep(interval_sec)
+        while not stop.wait(interval_sec):
             try:
                 removed = kernel_pool.idle_sweep()
                 if removed:
@@ -117,6 +138,7 @@ def start_kernel_idle_sweeper(
 
     t = threading.Thread(target=loop, daemon=True, name="kernel-idle-sweeper")
     t.start()
+    _register_bg(stop, t)
     logger.info("kernel idle sweeper started (interval=%ss)", interval_sec)
     return t
 
@@ -141,10 +163,10 @@ def start_bio_workspace_gc_sweeper(settings: Settings) -> threading.Thread | Non
     interval = getattr(settings, "bio_workspace_gc_interval_sec", 3600)
     if not interval:
         return None
+    stop = threading.Event()
 
     def loop() -> None:
-        while True:
-            time.sleep(interval)
+        while not stop.wait(interval):
             try:
                 result = _bio_gc_sweep_once(settings)
                 if result["ttl_deleted"] or result["lru_deleted"]:
@@ -157,6 +179,7 @@ def start_bio_workspace_gc_sweeper(settings: Settings) -> threading.Thread | Non
 
     t = threading.Thread(target=loop, daemon=True, name="bio-workspace-gc")
     t.start()
+    _register_bg(stop, t)
     logger.info(
         "bio workspace gc sweeper started (interval=%ss, ttl=%ss, cap=%sGB)",
         interval, getattr(settings, "bio_workspace_ttl_sec", "?"),
@@ -172,10 +195,10 @@ def start_auto_sync_scanner(
         return None
     # interval_sec=0 允许（测试即时触发）；仅缺省时用 300s
     interval = 300 if interval_sec is None else interval_sec
+    stop = threading.Event()
 
     def loop() -> None:
-        while True:
-            time.sleep(interval)
+        while not stop.wait(interval):
             try:
                 run_auto_sync_tick(worker)
             except Exception:
@@ -183,6 +206,7 @@ def start_auto_sync_scanner(
 
     t = threading.Thread(target=loop, daemon=True, name="comment-auto-sync")
     t.start()
+    _register_bg(stop, t)
     logger.info("auto comment sync scanner started (interval=%ss)", interval)
     return t
 
@@ -213,14 +237,16 @@ def start_db_health_monitor(rt: Runtime, interval_sec: int = 30) -> threading.Th
     # engine.connect() 会无限挂起（2026-09-09 真机复现），监控线程被拖死
     mon = DBHealthMonitor(probe=lambda: probe_pg_url(rt.settings.database_url),
                           alert=alert, interval_sec=interval_sec)
+    stop = threading.Event()
 
     def loop() -> None:
-        while True:
+        while not stop.is_set():
             mon.tick()
-            time.sleep(mon.next_delay)
+            stop.wait(mon.next_delay)
 
     t = threading.Thread(target=loop, daemon=True, name="db-health-monitor")
     t.start()
+    _register_bg(stop, t)
     logger.info("db health monitor started (interval=%ss, admins=%d)",
                 interval_sec, len(admin_ids))
     return t

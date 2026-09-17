@@ -1,7 +1,16 @@
 """Phase 23：ws_client bio workspace GC sweeper 单测（沿用 scanner 模式）。"""
 from types import SimpleNamespace
 
+import pytest
+
 import gateway.ws_client as wsc
+
+
+@pytest.fixture(autouse=True)
+def _stop_bg_threads():
+    """会后停掉 ws_client 后台守护线程（与 test_ws_client.py 同规收口）。"""
+    yield
+    wsc.stop_background_threads()
 
 
 def _settings(**over):

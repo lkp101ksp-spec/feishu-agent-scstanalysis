@@ -25,7 +25,19 @@ from gateway.ws_client import (
     start_auto_sync_scanner,
     start_kernel_idle_sweeper,
     start_renew_scanner,
+    stop_background_threads,
 )
+
+
+@pytest.fixture(autouse=True)
+def _stop_bg_threads():
+    """会后停掉 ws_client 后台守护线程（本文件各用例启动的 sweeper）。
+
+    缺此收口时，mock side_effect 的线程在会后继续循环 logger.exception，
+    污染 pytest 输出尾部（测试总结第五十八段插曲③）。
+    """
+    yield
+    stop_background_threads()
 
 # --- IM 事件 fixture（真实 v2 schema 结构） ---
 
@@ -320,6 +332,31 @@ def test_start_kernel_idle_sweeper_swallows_exception():
     # 异常后线程仍存活且继续调用
     assert pool.idle_sweep.call_count >= 2
     assert t.is_alive()
+
+
+def test_stop_background_threads_halts_sweeper():
+    """stop_background_threads 协作停机：调用计数冻结、线程退出。
+
+    钉住会后收口语义——缺它时 side_effect 线程会后继续刷
+    logger.exception（本文件 autouse fixture 依赖此函数）。
+    """
+    import time
+    from unittest.mock import MagicMock
+
+    pool = MagicMock()
+    pool.idle_sweep.return_value = 0
+    t = start_kernel_idle_sweeper(pool, interval_sec=0.01)
+    assert t is not None
+    for _ in range(100):
+        if pool.idle_sweep.call_count >= 1:
+            break
+        time.sleep(0.02)
+    assert pool.idle_sweep.call_count >= 1
+    stop_background_threads()
+    n = pool.idle_sweep.call_count
+    time.sleep(0.05)  # 5 个 interval：若未停计数必涨
+    assert pool.idle_sweep.call_count == n
+    assert not t.is_alive()
 
 
 # --- 生产组装（runtime） ---
