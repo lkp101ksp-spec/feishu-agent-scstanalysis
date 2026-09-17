@@ -12,12 +12,14 @@
 240 细胞×300 genes（同基因名，表达量足够过 filter_genes）。
 """
 import json
+import os
 import subprocess
 from pathlib import Path
 
-WS = Path("I:/飞书agent/bio_workspace")
+# 宿主 workspace/镜像：env 覆写（CI 冒烟用，与 settings 同口径）
+WS = Path(os.environ.get("BIO_WORKSPACE_ROOT", "I:/飞书agent/bio_workspace"))
 DS = "stdeconvsmoke"
-IMG = "feishu-research-agent/bio:st-cpu-latest"
+IMG = os.environ.get("BIO_ST_IMAGE", "feishu-research-agent/bio:st-cpu-latest")
 BUILDER_DIR = "_builder_stdeconv"
 BASE = ["docker", "run", "--rm", "-i", "--network", "none",
         "-v", f"{str(WS).replace(chr(92), '/')}:/ws",

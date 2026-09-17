@@ -10,6 +10,7 @@ spot（左端）→ pseudotime 应沿 x 单调恢复（Spearman>0.9）；obs 注
 vicinity 列 → NO_VICINITY。梯度加在 log1p 后的 log 空间（教训十六）。
 """
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -18,10 +19,11 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-WS = Path("I:/飞书agent/bio_workspace")
+# 宿主 workspace/镜像：env 覆写（CI 冒烟用，与 settings 同口径）
+WS = Path(os.environ.get("BIO_WORKSPACE_ROOT", "I:/飞书agent/bio_workspace"))
 DS = "sttrajsmoke"
 DS_NOVIC = "sttrajnovic"
-IMG = "feishu-research-agent/bio:st-cpu-latest"
+IMG = os.environ.get("BIO_ST_IMAGE", "feishu-research-agent/bio:st-cpu-latest")
 BASE = ["docker", "run", "--rm", "-i", "--network", "none",
         "-v", f"{str(WS).replace(chr(92), '/')}:/ws", IMG]
 

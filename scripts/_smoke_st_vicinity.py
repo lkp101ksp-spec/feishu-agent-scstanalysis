@@ -8,13 +8,15 @@ docker run --rm -i --network none -v <workspace>:/ws <img> python
 /opt/st_tools/vicinity.py，stdin 传 args JSON。
 """
 import json
+import os
 import subprocess
 from pathlib import Path
 
-WS = Path("I:/飞书agent/bio_workspace")
+# 宿主 workspace/镜像：env 覆写（CI 冒烟用，与 settings 同口径）
+WS = Path(os.environ.get("BIO_WORKSPACE_ROOT", "I:/飞书agent/bio_workspace"))
 DS = "stvicsmoke"
 DS_NOSEED = "stvicnoseed"
-IMG = "feishu-research-agent/bio:st-cpu-latest"
+IMG = os.environ.get("BIO_ST_IMAGE", "feishu-research-agent/bio:st-cpu-latest")
 BASE = ["docker", "run", "--rm", "-i", "--network", "none",
         "-v", f"{str(WS).replace(chr(92), '/')}:/ws", IMG]
 
