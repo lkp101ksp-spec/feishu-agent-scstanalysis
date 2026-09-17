@@ -26,7 +26,9 @@ BioRunner 调用约定：docker run --rm --network none -v <workspace>:/ws
 ⑪dpt+branch_top_n>0 → INVALID_INPUT；
 ⑭slingshot 引擎（同双分支库，root_cluster=trunk）：n_lineages≥2
   + 主 pt vs 真值 t2 rho≥0.8 + 三产物 + obs 写回 + 谱系×分支交叉
-  自动触发（⑩已写 palantir_branch，Fisher 三列+sig≥1）；
+  自动触发（⑩已写 palantir_branch，Fisher 三列+sig≥1）
+  + 锚定 sanity 结构化（anchor_ok/lineage_starts 唯一=trunk，
+  R 侧谱系路径权威口径）；
 ⑮slingshot+branch_top_n>0 → INVALID_INPUT；
 ⑰dpt+paga=1：n_paga_edges≥1 + paga_graph.csv/paga_umap.png；
 ⑱palantir+branch50+paga+paga_pt 组合：交叉反向触发（triggered_by=
@@ -275,6 +277,17 @@ assert rho_sl >= 0.8, f"slingshot pt vs t2 rho={rho_sl}"
 for f in ("slingshot_pt.csv", "slingshot_curves.csv",
           "slingshot_umap.png", "slingshot_dyn_genes.csv"):
     assert (br_dir / f).exists(), f
+# ⑭a0 锚定 sanity 结构化口径（Phase 62 收尾，2026-09-17 翻案教训）：
+# R 侧谱系起点权威判据——显式 root_cluster=trunk 时 anchor_ok 必真、
+# 全部谱系起点唯一=trunk、path 均以 trunk 开头；替代 pst 最小段
+# 簇构成的间接猜测口径（UMAP 重叠带+簇大小悬殊下必误判）
+assert o14["anchor_ok"] is True, o14
+assert set(o14["lineage_starts"]) == {"trunk"}, o14["lineage_starts"]
+assert o14["anchor_note"] == "lineage starts: trunk", o14["anchor_note"]
+assert len(o14["lineage_paths"]) == o14["n_lineages"] >= 2, o14
+assert all(p.startswith("trunk->") or p == "trunk"
+           for p in o14["lineage_paths"].values()), o14["lineage_paths"]
+assert (br_dir / "_sling_in" / "sling_lineages.csv").exists()
 ad2_sl = sc.read_h5ad(ds2_dir / "processed.h5ad")
 assert "slingshot_pseudotime" in ad2_sl.obs, ad2_sl.obs.columns
 # ⑭a2 谱系归属写回（Phase 57）：slingshot_lineage 列存在、取值合法、
@@ -360,6 +373,8 @@ assert "branch_dyn_csv" in o20["palantir"], o20
 assert o20["slingshot"]["n_lineages"] >= 1, o20
 assert o20["slingshot"]["cross_triggered_by"] == "trajectory_full", o20
 assert o20["slingshot"]["n_cross_sig"] >= 1, o20
+# trajectory_full 串跑下锚定字段同步生效（同⑭a0 口径）
+assert o20["slingshot"]["anchor_ok"] is True, o20["slingshot"]
 o20b = run_pt(DS2, trajectory_full=True, dyn_top_n=0, engine="dpt",
               root_cluster="trunk")
 assert o20b["ok"] and o20b["method"] == "trajectory_full", o20b

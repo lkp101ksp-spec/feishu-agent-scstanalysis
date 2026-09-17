@@ -667,7 +667,9 @@ def _run_slingshot(adata: Any, iroot: int, clusters: pd.Series,
     细胞所属谱系 pt 行均值（NA 忽略）；写 obs["slingshot_pseudotime"]
     （main 统一落盘）；产物 slingshot_pt.csv / slingshot_curves.csv /
     slingshot_umap.png（主 pt 着色 + 谱系曲线 tab10 叠加 + 根红圈）；
-    dyn 相复用 _dyn_genes（prefix="slingshot_"）。
+    dyn 相复用 _dyn_genes（prefix="slingshot_"）。out 另带谱系路径
+    结构化字段（lineage_starts/lineage_paths/anchor_ok/anchor_note，
+    R 侧 metadata$lineages 直读——锚定 sanity 权威口径）。
     """
     import subprocess
 
@@ -722,6 +724,18 @@ def _run_slingshot(adata: Any, iroot: int, clusters: pd.Series,
     curves_csv = ds_dir / "slingshot_curves.csv"
     curves.to_csv(curves_csv, index=False)
 
+    # 谱系路径读回（锚定 sanity 结构化口径，2026-09-17 翻案教训：
+    # start.clus 是否生效看 R 侧谱系起点，而非 pst 最小段簇构成——
+    # UMAP 重叠带 + 簇大小悬殊下后者必然误判）；bridge 同仓同步
+    # 部署必产该文件，缺失即部署漂移，严格报错
+    lin_path_p = in_dir / "sling_lineages.csv"
+    if not lin_path_p.exists():
+        raise RuntimeError(
+            "slingshot_bridge.R did not produce sling_lineages.csv; "
+            f"stdout tail: {proc.stdout[-500:]}")
+    lin_paths = pd.read_csv(lin_path_p)
+    lineage_starts = lin_paths["start"].astype(str).tolist()
+
     adata.obs["slingshot_pseudotime"] = pt
     # 谱系归属物化写回 obs（Phase 57）：argmax 谱系标签，全 NA→unassigned，
     # 供 sc_plot 按谱系着色 / sc_cellfreq 以谱系为 celltype_col 消费
@@ -755,6 +769,15 @@ def _run_slingshot(adata: Any, iroot: int, clusters: pd.Series,
     out: dict[str, Any] = {
         "n_lineages": len(lin_cols),
         "lineages": lin_cols,
+        "lineage_starts": lineage_starts,
+        "lineage_paths": {r["lineage"]: r["path"] for _, r in
+                          lin_paths.iterrows()},
+        # 锚定生效判据：传 start.clus 时全部谱系起点应唯一等于该簇；
+        # fallback 自由推根恒 True（起点由 R 侧自定，如实上报）
+        "anchor_ok": bool(not start_clus or
+                          set(lineage_starts) == {start_clus}),
+        "anchor_note": "lineage starts: " + ", ".join(
+            sorted(set(lineage_starts))),
         "slingshot_pt_csv": str(pt_csv),
         "slingshot_curves_csv": str(curves_csv),
         "umap_png": str(umap_png),
