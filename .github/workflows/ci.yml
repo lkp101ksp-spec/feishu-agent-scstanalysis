@@ -12,9 +12,11 @@ on:
   # 手动触发：bio 镜像全量构建冒烟（bio-image-smoke job 仅此事件生效）
   workflow_dispatch:
 
+# 注：actions 钉新版（checkout@v5/setup-python@v6 走 Node24）；runner 钉
+# ubuntu-24.04（ubuntu-latest 2026-10-19 起 migrates to Ubuntu 26，防漂移）。
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     services:
       # pg 真库层（-m pg）：端口/账号与 tests/pg/conftest.py 默认 PG_TEST_URL 完全匹配，
@@ -34,9 +36,9 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -64,12 +66,12 @@ jobs:
   # 基础包），构建后 tests/integration/test_sandbox_docker.py 的 skipif
   # 探测自动激活，跑真容器四用例（print/numpy/错误/超时重建）。
   docker-smoke:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -94,12 +96,12 @@ jobs:
   # CI runner 直连 GitHub/Bioconductor 无需代理。
   bio-image-smoke:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -111,6 +113,13 @@ jobs:
           docker build --build-arg PROXY=
           -t feishu-research-agent/bio:cpu-latest
           sandbox -f sandbox/bio.Dockerfile
+
+      - name: 预创建 workspace 目录（runner 属主，防 bind-mount root 自动创建）
+        # docker -v 宿主路径不存在时由 dockerd 以 root 自动创建；sc_cellchat 冒烟
+        # 合成数据在容器内写 /ws（首次触碰即 root），后续宿主侧 mkdir
+        # （_smoke_sc_nichenet 步骤 0 的 _eval/_nnpeek）会被 EACCES 拒绝。
+        # 先由 runner 建目录，docker 复用已存在目录，属主保持 runner。
+        run: mkdir -p "${RUNNER_TEMP}/bio_ws/_eval"
 
       - name: sc_cellchat 合成冒烟（480 细胞断网端到端）
         env:
@@ -127,12 +136,12 @@ jobs:
   # st_stats 合成网格三分析（其余 _smoke_st_*.py 已同款 env 化，可按需加）。
   st-image-smoke:
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -143,6 +152,9 @@ jobs:
         run: >-
           docker build -t feishu-research-agent/bio:st-cpu-latest
           sandbox -f sandbox/st.Dockerfile
+
+      - name: 预创建 workspace 目录（runner 属主，同 bio-image-smoke 根因防御）
+        run: mkdir -p "${RUNNER_TEMP}/bio_ws"
 
       - name: st_stats 合成冒烟（10×10 网格断网端到端）
         env:
