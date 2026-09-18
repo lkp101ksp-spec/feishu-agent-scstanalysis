@@ -105,8 +105,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 冒烟脚本宿主侧依赖（pandas 断言产物 CSV）
-        run: pip install pandas
+      - name: 冒烟脚本宿主侧依赖（pandas/anndata 宿主造数与产物断言）
+        run: pip install pandas anndata
 
       - name: 构建 bio 镜像（PROXY 置空走直连）
         run: >-

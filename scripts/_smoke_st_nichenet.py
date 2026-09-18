@@ -6,7 +6,7 @@ KB 级统计桥接，容器断网跑。
   x≥10=远端），sender 带高表达 60 真实配体（含 A2M），5 诱饵配体只在
   远端表达 → 跑通 + A2M ∈ top10 + 诱饵 0/5 入 tested（空间约束地面
   真值——max_rings=1 下远端 r≥2 不入 sender 母体，sender_pct=0 被
-  min_expr 过滤）+ rings.png + pngs 键 + ring_counts 含 core=160；
+  min_expr 过滤）+ rings_{niche}.png 产物 + pngs 键 + ring_counts 含 core=160；
 ②mouse：Title-case 自动探测 species（不显式传）→ 跑通链路；
 ③geneset 全假名 → INVALID_INPUT（先验靶空间交集 <5）；
 ④receiver_niche 取值不存在 → ST_NICHENET_NO_GROUP；
@@ -155,14 +155,14 @@ assert o1["n_geneset_used"] == len(a2m_targets), o1["n_geneset_used"]
 assert o1["n_ligands_tested"] >= 30, o1["n_ligands_tested"]
 assert "A2M" in list(o1["top_ligands"])[:10], o1["top_ligands"]
 assert o1["ring_counts"].get("0") == 160 and o1["ring_counts"].get("1", 0) > 0, o1["ring_counts"]
-act = pd.read_csv(WS / "stnnsmoke" / "nichenet_ligand_activities.csv")
+act = pd.read_csv(WS / "stnnsmoke" / "nichenet_ligand_activities_r.csv")
 assert list(act.columns[:2]) == ["test_ligand", "auroc"], act.columns
 assert not act["test_ligand"].isin(decoys).any(), "decoys must be spatially filtered"
 for f in (
-    "nichenet_ligand_target_links.csv",
-    "nichenet_ligand_bar.png",
-    "nichenet_ligand_target_heatmap.png",
-    "rings.png",
+    "nichenet_ligand_target_links_r.csv",
+    "nichenet_ligand_bar_r.png",
+    "nichenet_ligand_target_heatmap_r.png",
+    "rings_r.png",
 ):
     assert (WS / "stnnsmoke" / f).exists(), f
 assert len(o1["pngs"]) == 3, o1["pngs"]

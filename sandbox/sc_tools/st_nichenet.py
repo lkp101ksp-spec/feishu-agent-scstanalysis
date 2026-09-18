@@ -21,11 +21,12 @@ sender/receiver 掩码表达比例统计（稀疏行 nnz 口径）→ expr_stats
 Rscript /opt/r_tools/nichenetr_bridge.R（先验四件构建期烘焙断网可用，
 零改动复用）→ 读回 ligand_activities/ligand_target_links + rings.png。
 
-产物：nichenet_ligand_activities.csv（全量降序+rank）/
-nichenet_ligand_target_links.csv（top 配体调控边）/
-nichenet_ligand_bar.png（top N aupr 条图）/
-nichenet_ligand_target_heatmap.png（配体×靶基因权重热图）/
-rings.png（分环着色空间图——空间工具身份产物）。
+产物（{niche}=receiver_niche slug 后缀，多 receiver 运行互不覆写）：
+nichenet_ligand_activities_{niche}.csv（全量降序+rank）/
+nichenet_ligand_target_links_{niche}.csv（top 配体调控边）/
+nichenet_ligand_bar_{niche}.png（top N aupr 条图）/
+nichenet_ligand_target_heatmap_{niche}.png（配体×靶基因权重热图）/
+rings_{niche}.png（分环着色空间图——空间工具身份产物）。
 out：n_spots/n_sender/n_receiver/ring_counts/n_geneset_input/
 n_geneset_used/n_ligands_tested/top_ligands（top10 dict）/n_links
 + pngs 聚合键（IM/D 报告纪律）。
@@ -38,6 +39,7 @@ processed.h5ad——st 镜像零增重。
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from collections import deque
 from typing import Any
@@ -182,6 +184,7 @@ def main() -> None:
         return
 
     core = cl == receiver_niche
+    slug = re.sub(r"[^0-9A-Za-z]+", "_", receiver_niche).strip("_").lower()[:40] or "niche"
     rings = _spatial_rings(coords, core, knn, max_rings)
     rmask = core
     smask = (rings >= 1) & (rings <= max_rings)
@@ -252,9 +255,9 @@ def main() -> None:
         if links_p.exists()
         else pd.DataFrame(columns=["test_ligand", "target", "weight"])
     )
-    act_csv = str(ds_dir / "nichenet_ligand_activities.csv")
+    act_csv = str(ds_dir / f"nichenet_ligand_activities_{slug}.csv")
     act.round(4).to_csv(act_csv, index=False)
-    links_csv = str(ds_dir / "nichenet_ligand_target_links.csv")
+    links_csv = str(ds_dir / f"nichenet_ligand_target_links_{slug}.csv")
     links.to_csv(links_csv, index=False)
 
     import matplotlib.pyplot as plt
@@ -265,7 +268,7 @@ def main() -> None:
     ax.set_xlabel("aupr_corrected")
     ax.set_title(f"NicheNet ligand activities ({species}, spatial)", fontsize=9)
     fig.tight_layout()
-    bar_png = str(ds_dir / "nichenet_ligand_bar.png")
+    bar_png = str(ds_dir / f"nichenet_ligand_bar_{slug}.png")
     fig.savefig(bar_png, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
@@ -289,11 +292,11 @@ def main() -> None:
         fig.colorbar(im, ax=ax, fraction=0.03, label="weight")
         ax.set_title("Ligand-target links (top ligands)", fontsize=9)
         fig.tight_layout()
-        heat_png = str(ds_dir / "nichenet_ligand_target_heatmap.png")
+        heat_png = str(ds_dir / f"nichenet_ligand_target_heatmap_{slug}.png")
         fig.savefig(heat_png, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
-    rings_png = str(ds_dir / "rings.png")
+    rings_png = str(ds_dir / f"rings_{slug}.png")
     fig, ax = plt.subplots(figsize=(6.0, 6.0))
     rorder = np.argsort(rings)  # 远端先画，core 最后压顶
     ax.scatter(coords[rorder, 0], coords[rorder, 1], c=rings[rorder],
