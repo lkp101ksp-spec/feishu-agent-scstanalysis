@@ -46,12 +46,13 @@ handler `sc_integrate`（l3_singlecell）**零改动**——`method` 本就
 + description 更新（提及双方法与 harmony 走 X_pca_harmony）。
 
 镜像 `bio.Dockerfile`：bbknn 层后追加 harmonypy pip 层（清华源，
-无编译依赖）：
+无编译依赖；2026-09-19 用户口径"v2 以上"钉 `>=2` 下限，实测实装
+2.0.2 cp312 wheel）：
 
 ```dockerfile
 # Phase 69 整合引擎二：harmonypy（纯 python，numba 由 scanpy 层带）。
 RUN pip install --no-cache-dir \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple harmonypy
+    -i https://pypi.tuna.tsinghua.edu.cn/simple "harmonypy>=2"
 ```
 
 ## §3 st_integrate 数据流与关键决策
