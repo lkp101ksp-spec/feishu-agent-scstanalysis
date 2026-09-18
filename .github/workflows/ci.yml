@@ -136,6 +136,11 @@ jobs:
           BIO_WORKSPACE_ROOT: ${{ runner.temp }}/bio_ws
         run: python scripts/_smoke_st_nichenet.py
 
+      - name: st_niche_scan 合成冒烟（三 niche 批量扫描+R 区 A2M 真值锚自证+三拒收断网端到端）
+        env:
+          BIO_WORKSPACE_ROOT: ${{ runner.temp }}/bio_ws
+        run: python scripts/_smoke_st_niche_scan.py
+
   # st 镜像冒烟（仅手动触发，与 bio-image-smoke 同规）：st.Dockerfile 无
   # GitHub 源/代理 ARG（纯 PyPI+CRAN 层），直连构建即可；冒烟跑最轻量的
   # st_stats 合成网格三分析（其余 _smoke_st_*.py 已同款 env 化，可按需加）。

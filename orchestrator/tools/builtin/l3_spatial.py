@@ -25,6 +25,8 @@ from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 _ST_SCRIPT_DIR = "/opt/st_tools"
 # Phase 57：st_cellchat_v2 跨镜像分发——脚本在 bio 镜像的 sc_tools
 _SC_SCRIPT_DIR = "/opt/sc_tools"
+# Phase 68：st_niche_scan 全 niche 批量（串行多 niche，档位 ×2 于单 niche）
+_NICHE_SCAN_TIMEOUT = 3600
 
 
 def _err(exc: BioRunError) -> dict[str, str]:
@@ -359,6 +361,37 @@ def register_l3_spatial(
                     "knn": knn,
                 }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
                 timeout_sec=1800)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_niche_scan(*, dataset_ref: str, groupby: str = "spatial_domain",
+                      min_spots: int = 5, n_geneset: int = 30,
+                      max_rings: int = 1, knn: int = 6, species: str = "",
+                      top_n_ligands: int = 30,
+                      min_expr: float = 0.1) -> dict[str, Any]:
+        """全 niche NicheNet 配体扫描（Phase 68）：枚举 groupby 全部取值
+        （≥min_spots），逐 niche 以其上调 top 基因为 geneset 串行调用
+        st_nichenet，墙钟预算自管（单 niche 上限 1800s、收尾余量 180s），
+        汇总 ligand×niche aupr 矩阵 + 热图 + summary；单 niche 失败不
+        中断，记入 failures 继续。"""
+        try:
+            out = runner.run(
+                "st_niche_scan", {
+                    "dataset_id": dataset_ref,
+                    "groupby": groupby,
+                    "min_spots": min_spots,
+                    "n_geneset": n_geneset,
+                    "max_rings": max_rings,
+                    "knn": knn,
+                    "species": resolve_species(
+                        getattr(runner, "workspace_root", ""),
+                        dataset_ref, species),
+                    "top_n_ligands": top_n_ligands,
+                    "min_expr": min_expr,
+                }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
+                timeout_sec=_NICHE_SCAN_TIMEOUT)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -854,4 +887,58 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_nichenet,
         timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="st_niche_scan",
+        description=(
+            "全 niche NicheNet 配体扫描（Phase 68，串行批量）：无需人工"
+            "指定 receiver niche 与 geneset——自动枚举 groupby 全部取值"
+            "（spot 数 ≥min_spots，计数降序），逐 niche 以其上调 top "
+            "n_geneset 基因为 geneset（niche 内 vs 其余 spot 均值差，剔"
+            "线粒体/核糖体前缀）串行调用 st_nichenet（kNN BFS 邻域约束"
+            "同单 niche 版），墙钟预算自管（单 niche 上限 1800s、收尾余"
+            "量 180s；预算不足的剩余 niche 记 TIME_BUDGET 失败不中断，"
+            "单 niche 失败也照常继续）。输出 ligand×niche 的 "
+            "aupr_corrected 汇总矩阵 CSV + 热图 + summary JSON（含 "
+            "n_niches_ok/failed、failures 明细、全体 niche 共有配体），"
+            "另有逐 niche 的 ligand_activities_{niche}.csv 等五件套"
+            "（slug 命名互不覆写）。适用：无先验 niche 选择时的全景配体"
+            "优先级排序（aupr 原值不做 z-score，横向比较看每列内排名）。"
+            "需先跑 st_process（obsm.spatial）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_process 输出的 dataset_ref"},
+                "groupby": {"type": "string", "default": "spatial_domain",
+                            "description": "niche 枚举的分组列名"},
+                "min_spots": {"type": "integer", "default": 5,
+                              "minimum": 1,
+                              "description": "niche 入选的最少 spot 数"},
+                "n_geneset": {"type": "integer", "default": 30,
+                              "minimum": 10, "maximum": 100,
+                              "description": "每 niche 自动取的上调基因数"
+                                             "（作 geneset）"},
+                "max_rings": {"type": "integer", "default": 1,
+                              "minimum": 1, "maximum": 5,
+                              "description": "sender 取 BFS 1..max_rings "
+                                             "环（1=仅接壤邻域）"},
+                "knn": {"type": "integer", "default": 6,
+                        "minimum": 4, "maximum": 20,
+                        "description": "空间 kNN 图近邻数"},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse", ""],
+                            "description": "先验网络物种；空=自动探测"},
+                "top_n_ligands": {"type": "integer", "default": 30,
+                                  "maximum": 100,
+                                  "description": "逐 niche 结果取 top N 配体"},
+                "min_expr": {"type": "number", "default": 0.1,
+                             "description": "sender spot 表达比例门控"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_niche_scan,
+        timeout_sec=_NICHE_SCAN_TIMEOUT,
     ))
