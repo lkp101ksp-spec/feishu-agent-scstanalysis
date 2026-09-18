@@ -240,6 +240,14 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
     && rm -rf /var/lib/apt/lists/* \
     && Rscript -e "suppressMessages(library(nichenetr)); cat('nichenetr', as.character(packageVersion('nichenetr')), 'ok\n'); lt_h <- readRDS('/opt/nichenet_prior/ligand_target_matrix_nsga2r_final.rds'); cat('lt_human', nrow(lt_h), 'x', ncol(lt_h), '; lt_mouse', nrow(readRDS('/opt/nichenet_prior/ligand_target_matrix_nsga2r_final_mouse.rds')), '; lr ok\n')"
 
+# Phase 69 整合引擎二：harmonypy（sc_integrate/st_integrate method=
+# 'harmony'，spec 2026-09-19-st-integrate-design.md）。2.x 为重写版
+# （Z_corr=(cells,pcs) 不转置；清华源无 0.3/0.4 线），sc_integrate/
+# st_integrate 直调 run_harmony 并按形状自适应，不依赖 scanpy 包装。
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple harmonypy \
+    && python -c "import harmonypy, importlib.metadata as im; print('harmonypy', im.version('harmonypy'), 'ok')"
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

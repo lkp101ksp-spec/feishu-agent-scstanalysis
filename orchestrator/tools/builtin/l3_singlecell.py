@@ -1085,12 +1085,13 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_integrate",
         description=(
-            "批次整合（Phase 33，对齐 server_batch_correction）：多样本合并"
-            "去除批次效应（bbknn）。输入与 sc_process 相同（filtered/raw），"
-            "obs 需含批次列（如 sample/batch）。输出**新 dataset_ref**"
-            "（形如 {原id}_bbknn）与双联 UMAP 图（左按批次着色看混合程度、"
-            "右按新 leiden）——下游工具直接传新 ref。批次列不存在时错误消息"
-            "列出可用列。"
+            "批次整合（Phase 33/69，对齐 server_batch_correction）：多样本"
+            "合并去除批次效应，method 双引擎——bbknn（批次感知 kNN，快）/"
+            "harmony（harmonypy 强势引擎，批间差异大时更优）。输入与 "
+            "sc_process 相同（filtered/raw），obs 需含批次列（如 "
+            "sample/batch）。输出**新 dataset_ref**（形如 {原id}_{method}）"
+            "与双联 UMAP 图（左按批次着色看混合程度、右按新 leiden）——"
+            "下游工具直接传新 ref。批次列不存在时错误消息列出可用列。"
         ),
         parameters={
             "type": "object",
@@ -1100,7 +1101,9 @@ def register_l3_singlecell(
                 "batch": {"type": "string",
                           "description": "obs 批次列名（如 sample/batch）"},
                 "method": {"type": "string", "default": "bbknn",
-                           "enum": ["bbknn"]},
+                           "enum": ["bbknn", "harmony"],
+                           "description": "bbknn=批次感知 kNN；"
+                                          "harmony=harmonypy"},
                 "n_top_hvg": {"type": "integer", "default": 2000},
                 "n_pcs": {"type": "integer", "default": 50},
                 "n_neighbors": {"type": "integer", "default": 15},

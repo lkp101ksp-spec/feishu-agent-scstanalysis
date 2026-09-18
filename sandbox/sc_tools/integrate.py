@@ -1,10 +1,13 @@
-"""sc_integrate：批次整合（Phase 33，对齐 toolsv1 server_batch_correction）。
+"""sc_integrate：批次整合（Phase 33 bbknn / Phase 69 harmony 双引擎）。
 
-stdin: {"dataset_id": ..., "batch": "sample", "method": "bbknn",
+stdin: {"dataset_id": ..., "batch": "sample", "method": "bbknn|harmony",
         "n_top_hvg": 2000, "n_pcs": 50, "n_neighbors": 15, "resolution": 1.0}
 input 链与 sc_process 一致（filtered.h5ad → raw.h5ad 默认过滤）。
-bbknn（镜像 pip 层安装）：normalize→HVG→scale→PCA→bbknn 邻居→UMAP→Leiden。
-产物落 WS/{new_id}/processed.h5ad（new_id = {父id}_bbknn），
+bbknn：normalize→HVG→scale→PCA→bbknn 批次感知邻居→UMAP→Leiden。
+harmony：同预处理→PCA→直调 harmonypy run_harmony 校正 PC
+（X_pca_harmony，形状自适应 0.4/2.x）→按校正表示建邻居→UMAP→Leiden
+（spec 2026-09-19-st-integrate-design.md）。
+产物落 WS/{new_id}/processed.h5ad（new_id = {父id}_{method}），
 返回新 dataset_ref，下游工具零改动可链。
 """
 from __future__ import annotations
@@ -12,6 +15,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import numpy as np
 from common import WS_ROOT, emit, load_adata, read_args, run
 
 
@@ -26,21 +30,18 @@ def _cat_cols(adata: Any) -> str:
 
 
 def main() -> None:
-    """主流程：标准预处理到 PCA → bbknn 批次感知邻居 → UMAP/Leiden。"""
+    """主流程：预处理到 PCA → 按引擎去批次（bbknn/harmony）→ UMAP/Leiden。"""
     import matplotlib.pyplot as plt
     import scanpy as sc
-
-    try:
-        import bbknn
-    except ImportError as e:
-        raise RuntimeError(
-            "bbknn not installed in image; rebuild bio image with "
-            "bbknn pip layer") from e
 
     args = read_args()
     batch = str(args.get("batch", "")).strip()
     if not batch:
         raise ValueError("batch column is required, e.g. 'sample' or 'batch'")
+    method = str(args.get("method", "bbknn")).strip().lower()
+    if method not in ("bbknn", "harmony"):
+        raise ValueError(
+            f"unknown method {method!r}; expected 'bbknn' or 'harmony'")
     n_top_hvg = int(args.get("n_top_hvg", 2000))
     n_pcs = int(args.get("n_pcs", 50))
     n_neighbors = int(args.get("n_neighbors", 15))
@@ -73,14 +74,45 @@ def main() -> None:
     n_comps = min(n_pcs, adata.n_vars - 1, adata.n_obs - 1)
     sc.tl.pca(adata, n_comps=n_comps, svd_solver="arpack")
 
-    # bbknn：每批取 n_neighbors/批数 个邻居（保总量近似，防小批被淹没）
-    nwb = max(3, round(n_neighbors / n_batch))
-    bbknn.bbknn(adata, batch_key=batch, neighbors_within_batch=nwb)
+    # 双引擎分支：产出均收敛到 adata 上的 neighbors 图（下游 UMAP/Leiden
+    # 共用）；engine_out 承载各引擎 emit 差异键（bbknn 口径逐字节不变）。
+    engine_out: dict[str, Any] = {}
+    if method == "bbknn":
+        try:
+            import bbknn
+        except ImportError as e:
+            raise RuntimeError(
+                "bbknn not installed in image; rebuild bio image with "
+                "bbknn pip layer") from e
+        # bbknn：每批取 n_neighbors/批数 个邻居（保总量近似，防小批被淹没）
+        nwb = max(3, round(n_neighbors / n_batch))
+        bbknn.bbknn(adata, batch_key=batch, neighbors_within_batch=nwb)
+        engine_out["neighbors_within_batch"] = nwb
+    else:
+        try:
+            import harmonypy
+        except ImportError as e:
+            raise RuntimeError(
+                "harmonypy not installed in image; rebuild bio image with "
+                "harmonypy pip layer") from e
+        # 直调 harmonypy（scanpy 1.12 的 harmony_integrate 包装未适配
+        # 2.x 的不转置约定，实测写 obsm 形状错）；Z_corr 按行数对齐
+        # n_obs——2.x 为 (cells, pcs)，0.4.x 为 (pcs, cells) 需转置
+        ho = harmonypy.run_harmony(
+            np.asarray(adata.obsm["X_pca"], dtype=np.float64),
+            adata.obs, batch, verbose=False)
+        z = np.asarray(ho.Z_corr, dtype=np.float64)
+        if z.shape[0] != adata.n_obs:
+            z = z.T
+        adata.obsm["X_pca_harmony"] = z
+        sc.pp.neighbors(adata, n_neighbors=n_neighbors,
+                        use_rep="X_pca_harmony")
+        engine_out["representation"] = "X_pca_harmony"
     sc.tl.umap(adata)
     sc.tl.leiden(adata, resolution=resolution, flavor="igraph",
                  n_iterations=2, directed=False)
 
-    new_id = re.sub(r"\W+", "_", f"{parent}_bbknn")
+    new_id = re.sub(r"\W+", "_", f"{parent}_{method}")
     ds_dir = WS_ROOT / new_id
     ds_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,10 +133,10 @@ def main() -> None:
         "ok": True,
         "dataset_ref": new_id,
         "parent_ref": parent,
-        "method": "bbknn",
+        "method": method,
         "batch": batch,
         "n_batches": int(n_batch),
-        "neighbors_within_batch": nwb,
+        **engine_out,
         "n_cells": int(adata.n_obs),
         "n_clusters": int(adata.obs["leiden"].nunique()),
         "cluster_sizes": {str(k): int(v) for k, v in sizes.items()},

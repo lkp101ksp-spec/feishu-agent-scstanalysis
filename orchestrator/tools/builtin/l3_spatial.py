@@ -27,6 +27,7 @@ _ST_SCRIPT_DIR = "/opt/st_tools"
 _SC_SCRIPT_DIR = "/opt/sc_tools"
 # Phase 68：st_niche_scan 全 niche 批量（串行多 niche，档位 ×2 于单 niche）
 _NICHE_SCAN_TIMEOUT = 3600
+_ST_INTEGRATE_TIMEOUT = 1800
 
 
 def _err(exc: BioRunError) -> dict[str, str]:
@@ -392,6 +393,34 @@ def register_l3_spatial(
                     "min_expr": min_expr,
                 }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
                 timeout_sec=_NICHE_SCAN_TIMEOUT)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_integrate(*, dataset_refs: list[str], method: str = "harmony",
+                     n_top_hvg: int = 2000, n_pcs: int = 30,
+                     n_neighbors: int = 15, resolution: float = 1.0,
+                     slice_col: str = "slice",
+                     spatial_offset: bool = False) -> dict[str, Any]:
+        """多切片空间数据整合（Phase 69）：≥2 个 st 数据集 merge →
+        全局预处理 → harmony/bbknn 去批次 → UMAP + leiden **表达域**。
+        bio 镜像跨镜像分发（harmonypy 单点安装），st 镜像零增重；
+        不做空间邻域图（跨切片坐标无意义），下游空间分析按切片回
+        各原始数据集。"""
+        try:
+            out = runner.run(
+                "st_integrate", {
+                    "dataset_refs": dataset_refs,
+                    "method": method,
+                    "n_top_hvg": n_top_hvg,
+                    "n_pcs": n_pcs,
+                    "n_neighbors": n_neighbors,
+                    "resolution": resolution,
+                    "slice_col": slice_col,
+                    "spatial_offset": spatial_offset,
+                }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
+                timeout_sec=_ST_INTEGRATE_TIMEOUT)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -941,4 +970,46 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_niche_scan,
         timeout_sec=_NICHE_SCAN_TIMEOUT,
+    ))
+    registry.register(ToolSpec(
+        name="st_integrate",
+        description=(
+            "多切片空间数据整合（Phase 69）：≥2 个 st 数据集合并为一张"
+            "图——全局 normalize→HVG→PCA 后 harmony（默认）/bbknn 去批次"
+            "效应，UMAP + leiden **表达域**聚类（跨切片坐标无意义，不做"
+            "空间邻域图；下游空间分析按切片回各原始数据集）。输入走各片 "
+            "filtered/raw（counts 形态统一重预处理），建议先对各片 st_qc。"
+            "输出新 dataset_ref、双联 UMAP 与按切片空间分布图"
+            "（spatial_offset=true 时坐标平移并排，仅展示用，勿再喂给"
+            "空间 kNN 工具）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_refs": {"type": "array", "items": {"type": "string"},
+                                 "minItems": 2,
+                                 "description": "≥2 个 st 数据集 ref"
+                                                "（st_load 输出）"},
+                "method": {"type": "string", "default": "harmony",
+                           "enum": ["harmony", "bbknn"],
+                           "description": "harmony=harmonypy；"
+                                          "bbknn=批次感知 kNN"},
+                "n_top_hvg": {"type": "integer", "default": 2000,
+                              "minimum": 100},
+                "n_pcs": {"type": "integer", "default": 30,
+                          "minimum": 5, "maximum": 100},
+                "n_neighbors": {"type": "integer", "default": 15,
+                                "minimum": 5, "maximum": 100},
+                "resolution": {"type": "number", "default": 1.0},
+                "slice_col": {"type": "string", "default": "slice",
+                              "description": "合并后批次列名"},
+                "spatial_offset": {"type": "boolean", "default": False,
+                                   "description": "切片空间坐标平移并排"
+                                                  "（仅展示用）"},
+            },
+            "required": ["dataset_refs"],
+        },
+        risk_level="L1_compute",
+        handler=st_integrate,
+        timeout_sec=_ST_INTEGRATE_TIMEOUT,
     ))

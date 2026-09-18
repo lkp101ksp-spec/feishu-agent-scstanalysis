@@ -579,7 +579,7 @@ def test_sc_subcluster_forwards_params(tmp_path):
 
 
 def test_sc_integrate_forwards_params(tmp_path):
-    """handler 转发 integrate 参数（batch 列 + bbknn 锁定）。"""
+    """handler 转发 integrate 参数（batch 列 + method 双引擎枚举锁定）。"""
     reg, runner = _registry(tmp_path)
     runner.run.return_value = {
         "ok": True, "dataset_ref": "d_bbknn", "n_batches": 4,
@@ -590,8 +590,12 @@ def test_sc_integrate_forwards_params(tmp_path):
     assert args[1]["batch"] == "sample"
     assert args[1]["method"] == "bbknn"
     assert out["dataset_ref"] == "d_bbknn"
+    out_h = reg.get("sc_integrate").handler(
+        dataset_ref="d", batch="sample", method="harmony")
+    assert runner.run.call_args.args[1]["method"] == "harmony"
+    assert out_h["dataset_ref"] == "d_bbknn"
     props = reg.get("sc_integrate").parameters["properties"]
-    assert props["method"]["enum"] == ["bbknn"]
+    assert props["method"]["enum"] == ["bbknn", "harmony"]
 
 
 def test_sc_cellfreq_forwards_params(tmp_path):
