@@ -29,13 +29,14 @@ def reg(runner):
 
 
 def test_st_registers_fourteen_tools(reg):
-    """st_* 15 工具全部注册为 L1_compute（Phase 51 +st_trajectory、
-    Phase 57 +st_cellchat_v2）。"""
+    """st_* 16 工具全部注册为 L1_compute（Phase 51 +st_trajectory、
+    Phase 57 +st_cellchat_v2、Phase 65 +st_nichenet）。"""
     names = sorted(t.name for t in reg.list())
     assert names == ["st_cellchat_v2", "st_cnv", "st_commot",
                      "st_deconvolve", "st_domains", "st_load", "st_markers",
-                     "st_misty", "st_niche", "st_plot", "st_process",
-                     "st_qc", "st_stats", "st_trajectory", "st_vicinity"]
+                     "st_misty", "st_niche", "st_nichenet", "st_plot",
+                     "st_process", "st_qc", "st_stats", "st_trajectory",
+                     "st_vicinity"]
     for t in reg.list():
         assert t.risk_level == "L1_compute"
 
@@ -158,13 +159,13 @@ def test_st_plot_genes_plain_string_wraps_list(runner, reg):
 
 
 def test_register_fourteen_st_tools(reg):
-    """Phase 57 后 st_* 共 15 工具（14 + st_cellchat_v2）。"""
+    """Phase 65 后 st_* 共 16 工具（15 + st_nichenet）。"""
     names = sorted(t.name for t in reg.list() if t.name.startswith("st_"))
     assert names == [
         "st_cellchat_v2", "st_cnv", "st_commot", "st_deconvolve",
         "st_domains", "st_load", "st_markers", "st_misty", "st_niche",
-        "st_plot", "st_process", "st_qc", "st_stats", "st_trajectory",
-        "st_vicinity"]
+        "st_nichenet", "st_plot", "st_process", "st_qc", "st_stats",
+        "st_trajectory", "st_vicinity"]
 
 
 def test_st_domains_forwards_params(runner, reg):

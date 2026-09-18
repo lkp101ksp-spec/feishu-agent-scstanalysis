@@ -55,6 +55,7 @@ SECTION_TITLES: dict[str, str] = {
     "st_domains": "空间结构域识别",
     "st_commot": "空间细胞通讯（COMMOT）",
     "st_cellchat_v2": "空间细胞通讯（CellChat v2）",
+    "st_nichenet": "空间配体活性优先级（NicheNet）",
     "st_deconvolve": "空间反卷积",
     "st_stats": "空间统计分析",
     "st_cnv": "空间CNV推断",

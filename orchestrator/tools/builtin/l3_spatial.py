@@ -334,6 +334,36 @@ def register_l3_spatial(
         out.pop("ok", None)
         return out
 
+    def st_nichenet(*, dataset_ref: str, geneset: list[str],
+                    receiver_niche: str,
+                    groupby: str = "spatial_domain", max_rings: int = 1,
+                    species: str = "", top_n_ligands: int = 30,
+                    min_expr: float = 0.1, knn: int = 6) -> dict[str, Any]:
+        """空间配体活性优先级（Phase 65）：NicheNet + kNN BFS 分环——
+        sender 收窄为 receiver niche 的接壤邻域（r1..max_rings），
+        min_expr 门控在 sender 侧实现邻近约束；bio 镜像跨镜像分发
+        （nichenetr R 桥单点安装），KB 轻量桥零改动复用。"""
+        try:
+            out = runner.run(
+                "st_nichenet", {
+                    "dataset_id": dataset_ref,
+                    "geneset": geneset,
+                    "receiver_niche": receiver_niche,
+                    "groupby": groupby,
+                    "max_rings": max_rings,
+                    "species": resolve_species(
+                        getattr(runner, "workspace_root", ""),
+                        dataset_ref, species),
+                    "top_n_ligands": top_n_ligands,
+                    "min_expr": min_expr,
+                    "knn": knn,
+                }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
+                timeout_sec=1800)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     registry.register(ToolSpec(
         name="st_load",
         description=(
@@ -766,4 +796,61 @@ def register_l3_spatial(
         handler=st_cellchat_v2,
         timeout_sec=3600,
         memory="32g",
+    ))
+    registry.register(ToolSpec(
+        name="st_nichenet",
+        description=(
+            "空间配体活性优先级（Phase 65，NicheNet + 空间邻域约束）："
+            "回答『哪些配体最可能调控我指定空间 niche（receiver）中 "
+            "geneset 的表达』——sender 不再是任意群，而是与 receiver "
+            "niche 物理接壤的 spot 邻域（kNN 图 BFS 一环，max_rings 可"
+            "扩），min_expr 门控在 sender 侧过滤低表达 spot，实现『邻近"
+            "才通讯』。先验网络与活性排序逻辑同 sc_nichenet"
+            "（aupr_corrected 排序）。输出：ligand_activities.csv、"
+            "ligand_target_links.csv、活性条图、配体×靶基因热图、空间"
+            "分环 rings.png。适用：需要空间邻接证据的配体优先级（与 "
+            "st_commot/st_cellchat_v2 的 L-R 机制证据互补）。geneset 与"
+            "先验靶空间交集 <5 或可测配体 <3 时报错。需先跑 st_process"
+            "（obsm.spatial）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_process 输出的 dataset_ref"},
+                "geneset": {"type": "array", "items": {"type": "string"},
+                            "minItems": 5,
+                            "description": "receiver niche 侧目标基因集"
+                                           "（如该 niche 高表达基因/DE "
+                                           "上调，建议 ≥10）"},
+                "receiver_niche": {
+                    "type": "string",
+                    "description": "receiver 分组取值（obs[groupby]==该值"
+                                   " 的 spots 为 BFS core，如 "
+                                   "spatial_domain 列的某个域名）"},
+                "groupby": {"type": "string", "default": "spatial_domain",
+                            "description": "分组列名（receiver_niche 取值"
+                                           "来源）"},
+                "max_rings": {"type": "integer", "default": 1,
+                              "minimum": 1, "maximum": 5,
+                              "description": "sender 取 BFS 1..max_rings "
+                                             "环（1=仅接壤邻域）"},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse", ""],
+                            "description": "先验网络物种；空=自动探测"},
+                "top_n_ligands": {"type": "integer", "default": 30,
+                                  "maximum": 100,
+                                  "description": "调控边/图表取 top N 配体"},
+                "min_expr": {"type": "number", "default": 0.1,
+                             "description": "sender spot 表达比例门控"
+                                            "（邻近+表达双约束）"},
+                "knn": {"type": "integer", "default": 6,
+                        "minimum": 4, "maximum": 20,
+                        "description": "空间 kNN 图近邻数"},
+            },
+            "required": ["dataset_ref", "geneset", "receiver_niche"],
+        },
+        risk_level="L1_compute",
+        handler=st_nichenet,
+        timeout_sec=1800,
     ))
