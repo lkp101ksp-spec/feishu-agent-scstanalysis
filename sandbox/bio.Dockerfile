@@ -213,6 +213,33 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
     && rm -rf /var/lib/apt/lists/* \
     && Rscript -e "suppressMessages(library(CytoTRACE2)); cat('CytoTRACE2', as.character(packageVersion('CytoTRACE2')), 'ok\n')"
 
+# NicheNet 配体活性优先级（独立工具 sc_nichenet，2026-09-18 八补记
+# q2 探针终判落地）：nichenetr GitHub 源（master 硬依赖带 mlrMBO——
+# CRAN 已下架，须 remotes::install_version 装 archive 组 BBmisc/
+# ParamHelpers/mlr/mlrMBO；探针三轮钉注见 build_nnprobe.sh）。
+# gdtools 编译链 cairo/fontconfig/xt/freetype（monocle3 层 purge 过
+# -dev，此处构建期重装再 purge，运行库自然留存）。Zenodo 7074291
+# 先验四件构建期烘焙 /opt/nichenet_prior/（human lt 250MB/mouse
+# lt 182MB/lr 各 20-30KB，探针容器直连 148s 实证；离线审计零运行
+# 期下载——断网自证 A2M rank 1/68 aupr 0.985）。
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update -qq -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
+    && apt-get install -y -qq --no-install-recommends \
+       -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
+       build-essential pkg-config gfortran \
+       libcairo2-dev libxt-dev libfontconfig1-dev libfreetype6-dev \
+    && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); install.packages(c('gdtools','shadowtext','fdrtool','Hmisc','caret','randomForest','DiagrammeR','parallelMap','emoa','DiceKriging','ggnewscale','remotes'))" \
+    && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); for (p in c('BBmisc','ParamHelpers','mlr','mlrMBO')) { if (!requireNamespace(p, quietly=TRUE)) remotes::install_version(p, upgrade='never', quiet=TRUE) }" \
+    && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} http_proxy=${PROXY} https_proxy=${PROXY} \
+       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), timeout=1800); download.file('https://api.github.com/repos/saeyslab/nichenetr/tarball/master', '/tmp/nn.tar.gz', mode='wb'); untar('/tmp/nn.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('nichenetr', basename(d))][1]; install.packages(d, repos=NULL, type='source', dependencies=FALSE); unlink(c('/tmp/nn.tar.gz', d), recursive=TRUE)" \
+    && mkdir -p /opt/nichenet_prior \
+    && Rscript -e "options(timeout=3600); for (f in c('ligand_target_matrix_nsga2r_final.rds','lr_network_human_21122021.rds','ligand_target_matrix_nsga2r_final_mouse.rds','lr_network_mouse_21122021.rds')) { download.file(paste0('https://zenodo.org/records/7074291/files/', f), file.path('/opt/nichenet_prior', f), mode='wb') }" \
+    && apt-get purge -y --no-install-recommends \
+       build-essential g++ gfortran pkg-config \
+       libcairo2-dev libxt-dev libfontconfig1-dev libfreetype6-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && Rscript -e "suppressMessages(library(nichenetr)); cat('nichenetr', as.character(packageVersion('nichenetr')), 'ok\n'); lt_h <- readRDS('/opt/nichenet_prior/ligand_target_matrix_nsga2r_final.rds'); cat('lt_human', nrow(lt_h), 'x', ncol(lt_h), '; lt_mouse', nrow(readRDS('/opt/nichenet_prior/ligand_target_matrix_nsga2r_final_mouse.rds')), '; lr ok\n')"
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \

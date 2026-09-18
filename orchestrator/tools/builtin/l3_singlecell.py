@@ -222,6 +222,26 @@ def register_l3_singlecell(
         out.pop("ok", None)
         return out
 
+    def sc_nichenet(*, dataset_ref: str, geneset: list[str],
+                    groupby: str, sender_groups: list[str],
+                    receiver_groups: list[str] | None = None,
+                    species: str = "", top_n_ligands: int = 20,
+                    min_expr: float = 0.05) -> dict[str, Any]:
+        """NicheNet 配体活性优先级（Browaeys 2020）：哪些配体最可能
+        调控 receiver 目标基因集（aupr_corrected 排序）。"""
+        try:
+            out = runner.run("nichenet", {
+                "dataset_id": dataset_ref, "geneset": geneset,
+                "groupby": groupby, "sender_groups": sender_groups,
+                "receiver_groups": receiver_groups or [],
+                "species": species, "top_n_ligands": top_n_ligands,
+                "min_expr": min_expr,
+            }, timeout_sec=1200)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
     def sc_de(*, dataset_ref: str, groupby: str, group_a: str,
               group_b: str, method: str = "wilcoxon", top_n: int = 20,
               donor_col: str = "") -> dict[str, Any]:
@@ -927,6 +947,69 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_cytotrace2,
         timeout_sec=1800,
+    ))
+    registry.register(ToolSpec(
+        name="sc_nichenet",
+        description=(
+            "NicheNet 配体活性优先级分析（Browaeys et al. Nature "
+            "Methods 2020，nichenetr v2 先验网络）：回答『哪些配体最"
+            "可能调控 receiver 细胞中我感兴趣的基因集』——对候选配体"
+            "逐一计算先验调控评分 aupr_corrected 并排序（跨配体可比），"
+            "再给出 top 配体→靶基因的调控边。与 CellChat 互补：CellChat"
+            " 基于 L-R 机制证据库（表达+共表达），NicheNet 基于先验"
+            "配体-靶基因调控网络（能推断未共表达但具调控潜力的配体）。"
+            "典型用法：receiver 群的差异/标志基因作 geneset，sender 群"
+            "（如 CAF/髓系/基质）提供候选配体表达。输出："
+            "ligand_activities.csv（全量排序）、ligand_target_links.csv"
+            "（top 配体调控边）、配体 aupr 条图与配体×靶基因热图。"
+            "species 默认空=自动探测（Title-case→mouse/全大写→human）。"
+            "geneset 与先验靶空间交集 <5 或可测配体 <3 时报错（典型："
+            "species 与符号风格不符/geneset 不在先验空间/sender 无表达）。"
+            "需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "数据集 ref（需 "
+                                               "processed.h5ad）"},
+                "geneset": {"type": "array", "items": {"type": "string"},
+                            "minItems": 5,
+                            "description": "receiver 侧目标基因集（如 "
+                                           "DE 上调/感兴趣通路基因，"
+                                           "建议 ≥10）"},
+                "groupby": {"type": "string",
+                            "description": "obs 分组列（sender/receiver "
+                                           "群取值来源，如 celltype/"
+                                           "leiden）"},
+                "sender_groups": {"type": "array",
+                                  "items": {"type": "string"},
+                                  "minItems": 1,
+                                  "description": "发送者群（候选配体在"
+                                                 "这些群的表达进入排序）"},
+                "receiver_groups": {"type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "接收者群（background "
+                                                   "表达基因来源）；"
+                                                   "空=全部细胞"},
+                "species": {"type": "string", "default": "",
+                            "description": "human/mouse；空=自动探测"
+                                           "（Title-case→mouse/全大写"
+                                           "→human）"},
+                "top_n_ligands": {"type": "integer", "default": 20,
+                                  "description": "调控边/图表取 top N "
+                                                 "配体"},
+                "min_expr": {"type": "number", "default": 0.05,
+                             "description": "基因表达比例阈值（配体"
+                                            "进入候选/background 基因"
+                                            "筛选）"},
+            },
+            "required": ["dataset_ref", "geneset", "groupby",
+                         "sender_groups"],
+        },
+        risk_level="L1_compute",
+        handler=sc_nichenet,
+        timeout_sec=1200,
     ))
     registry.register(ToolSpec(
         name="sc_de",

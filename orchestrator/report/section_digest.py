@@ -33,6 +33,7 @@ SECTION_TITLES: dict[str, str] = {
     "sc_metabolism": "代谢活性分析",
     "sc_pseudotime": "拟时序分析",
     "sc_cytotrace2": "绝对干性打分（CytoTRACE2）",
+    "sc_nichenet": "配体活性优先级（NicheNet）",
     "sc_de": "差异表达分析",
     "sc_subcluster": "亚群细分",
     "sc_integrate": "多样本整合",
