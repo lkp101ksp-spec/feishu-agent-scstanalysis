@@ -24,6 +24,10 @@ _SC_TCR_TIMEOUT = 1200
 # 千级细胞一次调用，宽裕帽）
 _SC_CYTOSIG_TIMEOUT = 1800
 
+# Phase 72 sc_genescore 超时档（附录 A 1800；MLM 全细胞一次回归，
+# 14 通路×top500 靶基因，宽裕帽）
+_SC_GENESCORE_TIMEOUT = 1800
+
 
 def _err(exc: BioRunError) -> dict[str, str]:
     """BioRunError → 工具错误输出（ToolHandler 透传 error_code）。"""
@@ -409,6 +413,20 @@ def register_l3_singlecell(
                 "dataset_id": dataset_ref, "groupby": groupby,
                 "mode": mode, "nrand": nrand,
             }, timeout_sec=_SC_CYTOSIG_TIMEOUT)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_genescore(*, dataset_ref: str, groupby: str = "leiden",
+                     top_n: int = 14) -> dict[str, Any]:
+        """PROGENy 通路活性打分（Phase 72）：decoupler MLM 加权回归
+        → 14 通路逐细胞活性 + 组均值热图/UMAP。"""
+        try:
+            out = runner.run("genescore", {
+                "dataset_id": dataset_ref, "groupby": groupby,
+                "top_n": top_n,
+            }, timeout_sec=_SC_GENESCORE_TIMEOUT)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -1393,6 +1411,39 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_cytosig,
         timeout_sec=_SC_CYTOSIG_TIMEOUT,
+    ))
+    registry.register(ToolSpec(
+        name="sc_genescore",
+        description=(
+            "PROGENy 通路活性打分（Phase 72，decoupler MLM 加权回归）："
+            "14 条经典信号通路（EGFR/MAPK/NFkB/JAK-STAT/PI3K/TGFb/TNFa/"
+            "Trail/VEGF/Androgen/Estrogen/WNT/p53/Hypoxia）逐细胞活性"
+            "（PROGENy top500 权重模型，构建期快照断网可用）。权重=多变量"
+            "回归系数（比均值差打分更抗通路间共线），适合分群的信号通路"
+            "解读，可与 sc_cytosig 细胞因子活性交叉验证（如 CAF 群 "
+            "TGFb×TGFB 应同向）。仅支持 human symbol。输出逐细胞活性 "
+            "csv、组×通路均值表、组间方差 top 通路热图与 UMAP。"
+            "需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 "
+                                               "dataset_ref"},
+                "groupby": {"type": "string", "default": "leiden",
+                            "description": "obs 分组列（均值聚合维度），"
+                                           "如 celltype/leiden"},
+                "top_n": {"type": "integer", "default": 14,
+                          "minimum": 3, "maximum": 14,
+                          "description": "热图/JSON 展示的组间方差 top "
+                                         "通路数"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=sc_genescore,
+        timeout_sec=_SC_GENESCORE_TIMEOUT,
     ))
     registry.register(ToolSpec(
         name="sc_milo",

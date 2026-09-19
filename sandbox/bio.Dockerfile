@@ -220,10 +220,11 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
 # gdtools 编译链 cairo/fontconfig/xt/freetype（monocle3 层 purge 过
 # -dev，此处构建期重装再 purge，运行库自然留存）。Zenodo 7074291
 # 先验四件构建期烘焙 /opt/nichenet_prior/（human lt 250MB/mouse
-# lt 182MB/lr 各 20-30KB，探针容器直连 148s 实证；离线审计零运行
-# 期下载——断网自证 A2M rank 1/68 aupr 0.985）。外网下载统一走
-# dl() 五次重试+20s 退避（2026-09-19 CI 首撞 zenodo 504 钉档：
-# runner 无层缓存每次裸连，单次抖动即整层报废）。
+# lt 182MB/lr 各 20-30KB；离线审计零运行期下载——断网自证 A2M rank
+# 1/68 aupr 0.985）。外网下载统一走 dl() 五次重试+20s 退避+构建代理
+# （2026-09-19 CI 首撞 zenodo 504 钉档：runner 无层缓存每次裸连，单次
+# 抖动即整层报废；同日本地重建 zenodo 直连 5 连败——"直连实证"已过
+# 期，GitHub/Zenodo 两段统一走 ${PROXY}，dl() 只防抖不救路由）。
 RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update -qq -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
     && apt-get install -y -qq --no-install-recommends \
@@ -235,7 +236,8 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
     && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} http_proxy=${PROXY} https_proxy=${PROXY} \
        Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), timeout=1800); dl <- function(u, d, tries=5) { for (i in seq_len(tries)) { ok <- tryCatch({ download.file(u, d, mode='wb'); file.exists(d) && file.size(d) > 0 }, error=function(e) FALSE); if (isTRUE(ok)) return(invisible(TRUE)); Sys.sleep(20) }; stop('download failed: ', u) }; dl('https://api.github.com/repos/saeyslab/nichenetr/tarball/master', '/tmp/nn.tar.gz'); untar('/tmp/nn.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('nichenetr', basename(d))][1]; install.packages(d, repos=NULL, type='source', dependencies=FALSE); unlink(c('/tmp/nn.tar.gz', d), recursive=TRUE)" \
     && mkdir -p /opt/nichenet_prior \
-    && Rscript -e "options(timeout=3600); dl <- function(u, d, tries=5) { for (i in seq_len(tries)) { ok <- tryCatch({ download.file(u, d, mode='wb'); file.exists(d) && file.size(d) > 0 }, error=function(e) FALSE); if (isTRUE(ok)) return(invisible(TRUE)); Sys.sleep(20) }; stop('download failed: ', u) }; for (f in c('ligand_target_matrix_nsga2r_final.rds','lr_network_human_21122021.rds','ligand_target_matrix_nsga2r_final_mouse.rds','lr_network_mouse_21122021.rds')) { dl(paste0('https://zenodo.org/records/7074291/files/', f), file.path('/opt/nichenet_prior', f)) }" \
+    && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} http_proxy=${PROXY} https_proxy=${PROXY} \
+       Rscript -e "options(timeout=3600); dl <- function(u, d, tries=5) { for (i in seq_len(tries)) { ok <- tryCatch({ download.file(u, d, mode='wb'); file.exists(d) && file.size(d) > 0 }, error=function(e) FALSE); if (isTRUE(ok)) return(invisible(TRUE)); Sys.sleep(20) }; stop('download failed: ', u) }; for (f in c('ligand_target_matrix_nsga2r_final.rds','lr_network_human_21122021.rds','ligand_target_matrix_nsga2r_final_mouse.rds','lr_network_mouse_21122021.rds')) { dl(paste0('https://zenodo.org/records/7074291/files/', f), file.path('/opt/nichenet_prior', f)) }" \
     && apt-get purge -y --no-install-recommends \
        build-essential g++ gfortran pkg-config \
        libcairo2-dev libxt-dev libfontconfig1-dev libfreetype6-dev \
@@ -265,6 +267,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && /opt/cytosig_env/bin/pip install --no-cache-dir --no-build-isolation \
         -i https://pypi.tuna.tsinghua.edu.cn/simple "numpy<2" CytoSig \
     && /opt/cytosig_env/bin/python -c "import CytoSig, numpy; print('cytosig venv ok, numpy', numpy.__version__)"
+
+# Phase 72 sc_genescore 通路活性：decoupler + PROGENy 模型快照
+# （st 镜像 Phase 50 同款两层分离——改快照脚本不重装 pip；快照需构建期
+#   网络（omnipathdb.org），运行期断网读 TSV；fetch_progeny 与 st 共用）
+RUN pip install --no-cache-dir \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple decoupler==2.2.0 \
+    && python -c "import decoupler; print('decoupler', decoupler.__version__)"
+COPY fetch_progeny.py /tmp/fetch_progeny.py
+RUN python /tmp/fetch_progeny.py && rm /tmp/fetch_progeny.py
 
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
