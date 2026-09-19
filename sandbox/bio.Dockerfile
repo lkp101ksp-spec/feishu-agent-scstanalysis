@@ -221,7 +221,9 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
 # -dev，此处构建期重装再 purge，运行库自然留存）。Zenodo 7074291
 # 先验四件构建期烘焙 /opt/nichenet_prior/（human lt 250MB/mouse
 # lt 182MB/lr 各 20-30KB，探针容器直连 148s 实证；离线审计零运行
-# 期下载——断网自证 A2M rank 1/68 aupr 0.985）。
+# 期下载——断网自证 A2M rank 1/68 aupr 0.985）。外网下载统一走
+# dl() 五次重试+20s 退避（2026-09-19 CI 首撞 zenodo 504 钉档：
+# runner 无层缓存每次裸连，单次抖动即整层报废）。
 RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update -qq -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
     && apt-get install -y -qq --no-install-recommends \
@@ -231,9 +233,9 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
     && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); install.packages(c('gdtools','shadowtext','fdrtool','Hmisc','caret','randomForest','DiagrammeR','parallelMap','emoa','DiceKriging','ggnewscale','remotes'))" \
     && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); for (p in c('BBmisc','ParamHelpers','mlr','mlrMBO')) { if (!requireNamespace(p, quietly=TRUE)) remotes::install_version(p, upgrade='never', quiet=TRUE) }" \
     && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} http_proxy=${PROXY} https_proxy=${PROXY} \
-       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), timeout=1800); download.file('https://api.github.com/repos/saeyslab/nichenetr/tarball/master', '/tmp/nn.tar.gz', mode='wb'); untar('/tmp/nn.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('nichenetr', basename(d))][1]; install.packages(d, repos=NULL, type='source', dependencies=FALSE); unlink(c('/tmp/nn.tar.gz', d), recursive=TRUE)" \
+       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), timeout=1800); dl <- function(u, d, tries=5) { for (i in seq_len(tries)) { ok <- tryCatch({ download.file(u, d, mode='wb'); file.exists(d) && file.size(d) > 0 }, error=function(e) FALSE); if (isTRUE(ok)) return(invisible(TRUE)); Sys.sleep(20) }; stop('download failed: ', u) }; dl('https://api.github.com/repos/saeyslab/nichenetr/tarball/master', '/tmp/nn.tar.gz'); untar('/tmp/nn.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('nichenetr', basename(d))][1]; install.packages(d, repos=NULL, type='source', dependencies=FALSE); unlink(c('/tmp/nn.tar.gz', d), recursive=TRUE)" \
     && mkdir -p /opt/nichenet_prior \
-    && Rscript -e "options(timeout=3600); for (f in c('ligand_target_matrix_nsga2r_final.rds','lr_network_human_21122021.rds','ligand_target_matrix_nsga2r_final_mouse.rds','lr_network_mouse_21122021.rds')) { download.file(paste0('https://zenodo.org/records/7074291/files/', f), file.path('/opt/nichenet_prior', f), mode='wb') }" \
+    && Rscript -e "options(timeout=3600); dl <- function(u, d, tries=5) { for (i in seq_len(tries)) { ok <- tryCatch({ download.file(u, d, mode='wb'); file.exists(d) && file.size(d) > 0 }, error=function(e) FALSE); if (isTRUE(ok)) return(invisible(TRUE)); Sys.sleep(20) }; stop('download failed: ', u) }; for (f in c('ligand_target_matrix_nsga2r_final.rds','lr_network_human_21122021.rds','ligand_target_matrix_nsga2r_final_mouse.rds','lr_network_mouse_21122021.rds')) { dl(paste0('https://zenodo.org/records/7074291/files/', f), file.path('/opt/nichenet_prior', f)) }" \
     && apt-get purge -y --no-install-recommends \
        build-essential g++ gfortran pkg-config \
        libcairo2-dev libxt-dev libfontconfig1-dev libfreetype6-dev \
