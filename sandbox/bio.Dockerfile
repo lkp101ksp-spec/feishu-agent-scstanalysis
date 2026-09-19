@@ -145,6 +145,13 @@ RUN apt-get update \
 # 末尾 library(CellChat) 全量自检兜底，so 链断则 build 失败。
 # CellChatDB v2（3233 互作）随包离线内置，运行期容器断网可用。
 ARG PROXY=http://host.docker.internal:17891
+# 2026-09-19 CI run 35454576706 实证：remotes::install_github 走 GitHub
+# API 匿名配额（60/h，按出口 IP 计），CI runner Azure 共享出口 IP 被
+# 其它租户耗光（403 rate limit 0/60）→ CellChat 层 38s 秒挂。修法 =
+# CI 传 secrets.GITHUB_TOKEN 作 GITHUB_PAT（认证请求 5000/h 且按
+# token 计不按 IP 计），remotes 自动读取；ARG 仅构建期存在不进镜像
+# 配置，ephemeral token 无持久化泄漏面。本地默认空值走代理不受影响。
+ARG GH_PAT=
 RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update -qq -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
     && apt-get install -y -qq --no-install-recommends \
@@ -154,8 +161,8 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
        libharfbuzz-dev libfribidi-dev libgit2-dev libpng-dev \
        libfreetype6-dev libudunits2-dev libtiff5-dev libjpeg-dev libwebp-dev \
     && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} \
-       http_proxy=${PROXY} https_proxy=${PROXY} \
-       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN', Bioc='https://bioconductor.org/packages/3.21/bioc'), Ncpus=4, timeout=1800); install.packages('remotes'); remotes::install_github('jinworks/CellChat', upgrade='never', dependencies=TRUE)" \
+       http_proxy=${PROXY} https_proxy=${PROXY} GITHUB_PAT=${GH_PAT} \
+       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN', Bioc='https://bioconductor.org/packages/3.21/bioc'), Ncpus=4, timeout=1800); install.packages('remotes'); for(j in 1:3){if(requireNamespace('CellChat',quietly=TRUE))break;cat('[CellChat try',j,']\n');remotes::install_github('jinworks/CellChat',upgrade='never',dependencies=TRUE)}; if(!requireNamespace('CellChat',quietly=TRUE)) stop('CellChat missing after retries')" \
     && apt-get purge -y --no-install-recommends \
        build-essential g++ gfortran cmake pkg-config r-base-dev \
        libxml2-dev libuv1-dev libfontconfig1-dev libcairo2-dev \
@@ -187,7 +194,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
        libharfbuzz-dev libfribidi-dev libgit2-dev libpng-dev \
        libfreetype6-dev libudunits2-dev libtiff5-dev libjpeg-dev libwebp-dev \
     && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} \
-       http_proxy=${PROXY} https_proxy=${PROXY} \
+       http_proxy=${PROXY} https_proxy=${PROXY} GITHUB_PAT=${GH_PAT} \
        Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN', Bioc='https://bioconductor.org/packages/3.21/bioc'), Ncpus=4, timeout=1800); ir <- function(p,n=6){for(i in 1:n){m<-p[!vapply(p,function(x) requireNamespace(x,quietly=TRUE),logical(1))];if(!length(m))return(invisible(0));cat('[ir wave',i,'] installing:',paste(m,collapse=','),'\n');install.packages(m);Sys.sleep(15)};stop('deps missing after retries: ',paste(p[!vapply(p,function(x) requireNamespace(x,quietly=TRUE),logical(1))],collapse=','))}; ir('sf'); for(j in 1:3){if(requireNamespace('monocle3',quietly=TRUE))break;cat('[monocle3 try',j,']\n');remotes::install_github('cole-trapnell-lab/monocle3',upgrade='never')}; if(!requireNamespace('monocle3',quietly=TRUE)) stop('monocle3 missing after retries')" \
     && apt-get purge -y --no-install-recommends \
        build-essential g++ gfortran cmake pkg-config r-base-dev \
@@ -213,7 +220,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
     && apt-get install -y -qq --no-install-recommends \
        -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
        build-essential pkg-config gfortran cmake r-base-dev libnetcdf-dev \
-    && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); install.packages(c('HiClimR','Rfast')); options(timeout=900); download.file('https://api.github.com/repos/digitalcytometry/cytotrace2/tarball/main', '/tmp/c2.tar.gz', mode='wb'); untar('/tmp/c2.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('cytotrace2', basename(d))][1]; install.packages(file.path(d, 'cytotrace2_r'), repos=NULL, type='source'); unlink(c('/tmp/c2.tar.gz', d), recursive=TRUE)" \
+    && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); install.packages(c('HiClimR','Rfast')); options(timeout=900); pat <- Sys.getenv('GITHUB_PAT'); hd <- if (nzchar(pat)) c(Authorization=paste('token',pat)) else NULL; for (k in 1:3) { ok <- tryCatch({ download.file('https://api.github.com/repos/digitalcytometry/cytotrace2/tarball/main', '/tmp/c2.tar.gz', mode='wb', headers=hd); file.exists('/tmp/c2.tar.gz') && file.size('/tmp/c2.tar.gz') > 1000 }, error=function(e) FALSE); if (isTRUE(ok)) break; Sys.sleep(15) }; if (!file.exists('/tmp/c2.tar.gz') || file.size('/tmp/c2.tar.gz') <= 1000) stop('cytotrace2 tarball download failed'); untar('/tmp/c2.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('cytotrace2', basename(d))][1]; install.packages(file.path(d, 'cytotrace2_r'), repos=NULL, type='source'); unlink(c('/tmp/c2.tar.gz', d), recursive=TRUE)" \
     && apt-get purge -y --no-install-recommends \
        build-essential g++ gfortran cmake pkg-config r-base-dev libnetcdf-dev \
     && rm -rf /var/lib/apt/lists/* \
@@ -239,8 +246,8 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
        libcairo2-dev libxt-dev libfontconfig1-dev libfreetype6-dev \
     && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); install.packages(c('gdtools','shadowtext','fdrtool','Hmisc','caret','randomForest','DiagrammeR','parallelMap','emoa','DiceKriging','ggnewscale','remotes'))" \
     && Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), Ncpus=4, timeout=1800); for (p in c('BBmisc','ParamHelpers','mlr','mlrMBO')) { if (!requireNamespace(p, quietly=TRUE)) remotes::install_version(p, upgrade='never', quiet=TRUE) }" \
-    && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} http_proxy=${PROXY} https_proxy=${PROXY} \
-       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), timeout=1800); dl <- function(u, d, tries=5) { for (i in seq_len(tries)) { ok <- tryCatch({ download.file(u, d, mode='wb'); file.exists(d) && file.size(d) > 0 }, error=function(e) FALSE); if (isTRUE(ok)) return(invisible(TRUE)); Sys.sleep(20) }; stop('download failed: ', u) }; dl('https://api.github.com/repos/saeyslab/nichenetr/tarball/master', '/tmp/nn.tar.gz'); untar('/tmp/nn.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('nichenetr', basename(d))][1]; install.packages(d, repos=NULL, type='source', dependencies=FALSE); unlink(c('/tmp/nn.tar.gz', d), recursive=TRUE)" \
+    && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} http_proxy=${PROXY} https_proxy=${PROXY} GITHUB_PAT=${GH_PAT} \
+       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN/'), timeout=1800); pat <- Sys.getenv('GITHUB_PAT'); hd <- if (nzchar(pat)) c(Authorization=paste('token',pat)) else NULL; dl <- function(u, d, tries=5) { for (i in seq_len(tries)) { ok <- tryCatch({ download.file(u, d, mode='wb', headers=hd); file.exists(d) && file.size(d) > 1000 }, error=function(e) FALSE); if (isTRUE(ok)) return(invisible(TRUE)); Sys.sleep(20) }; stop('download failed: ', u) }; dl('https://api.github.com/repos/saeyslab/nichenetr/tarball/master', '/tmp/nn.tar.gz'); untar('/tmp/nn.tar.gz', exdir='/tmp'); d <- list.dirs('/tmp', recursive=FALSE); d <- d[grepl('nichenetr', basename(d))][1]; install.packages(d, repos=NULL, type='source', dependencies=FALSE); unlink(c('/tmp/nn.tar.gz', d), recursive=TRUE)" \
     && mkdir -p /opt/nichenet_prior \
     && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} http_proxy=${PROXY} https_proxy=${PROXY} \
        Rscript -e "options(timeout=3600); dl <- function(u, d, tries=5) { for (i in seq_len(tries)) { ok <- tryCatch({ download.file(u, d, mode='wb'); file.exists(d) && file.size(d) > 0 }, error=function(e) FALSE); if (isTRUE(ok)) return(invisible(TRUE)); Sys.sleep(20) }; stop('download failed: ', u) }; for (f in c('ligand_target_matrix_nsga2r_final.rds','lr_network_human_21122021.rds','ligand_target_matrix_nsga2r_final_mouse.rds','lr_network_mouse_21122021.rds')) { dl(paste0('https://zenodo.org/records/7074291/files/', f), file.path('/opt/nichenet_prior', f)) }" \

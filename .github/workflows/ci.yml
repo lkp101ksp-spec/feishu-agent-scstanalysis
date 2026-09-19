@@ -110,7 +110,7 @@ jobs:
 
       - name: 构建 bio 镜像（PROXY 置空走直连）
         run: >-
-          docker build --build-arg PROXY=
+          docker build --build-arg PROXY= --build-arg GH_PAT=${{ secrets.GITHUB_TOKEN }}
           -t feishu-research-agent/bio:cpu-latest
           sandbox -f sandbox/bio.Dockerfile
 
