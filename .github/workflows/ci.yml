@@ -105,8 +105,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: 冒烟脚本宿主侧依赖（pandas/anndata 宿主造数与产物断言）
-        run: pip install pandas anndata
+      - name: 冒烟脚本宿主侧依赖（pandas/anndata/scanpy 宿主造数与产物断言）
+        run: pip install pandas anndata scanpy numpy
 
       - name: 构建 bio 镜像（PROXY 置空走直连）
         run: >-
@@ -170,6 +170,11 @@ jobs:
         env:
           BIO_WORKSPACE_ROOT: ${{ runner.temp }}/bio_ws
         run: python scripts/_smoke_sc_metabolism.py
+
+      - name: sc_cellfreq 合成冒烟（已知偏向 Fisher/Ro-e+三值降级+6 样本共现网络真值+off-switch 静默断网端到端）
+        env:
+          BIO_WORKSPACE_ROOT: ${{ runner.temp }}/bio_ws
+        run: python scripts/_smoke_sc_cellfreq.py
 
   # st 镜像冒烟（仅手动触发，与 bio-image-smoke 同规）：st.Dockerfile 无
   # GitHub 源/代理 ARG（纯 PyPI+CRAN 层），直连构建即可；冒烟跑最轻量的

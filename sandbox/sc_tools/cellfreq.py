@@ -13,6 +13,11 @@ group >2 值时仅卡方 + note 降级。
 donor_col 给定时附加供体级组成检验（2026-09-16）：每供体簇占比 →
 组间供体 MW-U + BH + Cliff's delta（donor_level 字段并列输出）——
 细胞级卡方把供体内细胞当独立样本，伪重复夸大显著性。
+2026-09-19 Phase 74 共现网络（cooccurrence=true 默认）：by 样本数 ≥5
+时对 props 逐簇对 Spearman → BH → |rho|>=min_rho 且 q<0.05 边集 →
+igraph authority_score + community_edge_betweenness 社区 + circular
+网络图（红正蓝负、边宽∝|rho|、无边孤立节点灰圈）。注意 props 行和
+为 1 的组成闭合效应：正边=共享丰度模式，负边（互斥）慎读。
 """
 from __future__ import annotations
 
@@ -21,8 +26,98 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from common import WS_ROOT, emit, load_adata, read_args, run
-from scipy.stats import chi2_contingency, fisher_exact, mannwhitneyu
+from scipy.stats import chi2_contingency, fisher_exact, mannwhitneyu, spearmanr
 from statsmodels.stats.multitest import multipletests
+
+
+def _cooccurrence_network(props: pd.DataFrame, order: list[str],
+                          ds_dir: Any, min_rho: float) -> tuple[
+        pd.DataFrame, pd.DataFrame, Any, Any, Any]:
+    """样本级簇比例 Spearman 共现网络（Phase 74）。
+
+    逐簇对 spearmanr → BH 校正 → |rho|>=min_rho 且 q<0.05 边集；
+    igraph community_edge_betweenness（weights=1-|rho|，强共现先合并）
+    社区 + authority_score 中心性；circular 布局网络图（红正蓝负、
+    边宽∝|rho|、无边孤立节点灰圈）。返回 (edges, comm_df, 三产物路径)。
+    """
+    import igraph as ig
+    import matplotlib.pyplot as plt
+
+    n_s = props.shape[0]
+    rows = []
+    for i in range(len(order)):
+        for j in range(i + 1, len(order)):
+            rho, p = spearmanr(props[order[i]], props[order[j]])
+            rows.append({"source": order[i], "target": order[j],
+                         "rho": float(rho), "p": float(p)})
+    edf = pd.DataFrame(rows)
+    edf["q"] = multipletests(edf["p"].fillna(1.0), method="fdr_bh")[1]
+    keep = edf[(edf["rho"].abs() >= min_rho) & (edf["q"] < 0.05)].copy()
+    keep = keep.reindex(
+        keep["rho"].abs().sort_values(ascending=False).index)
+    keep["n_samples"] = n_s
+    keep = keep[["source", "target", "rho", "q", "n_samples"]]
+    edges_csv = ds_dir / "cooccurrence_edges.csv"
+    keep.to_csv(edges_csv, index=False)
+
+    membership: list[int]
+    auth: list[float]
+    if len(keep):
+        g = ig.Graph(
+            n=len(order),
+            edges=[(order.index(r["source"]), order.index(r["target"]))
+                   for _, r in keep.iterrows()])
+        # weights 是距离：|rho| 越大距离越小 → 先合并成同社区；
+        # |rho|=1（组成闭合完全共现/反转实证 2026-09-19）距离恰 0，
+        # igraph 要求严格正权重，截到 1e-6 不改排序语义
+        dist = [max(1.0 - abs(r), 1e-6) for r in keep["rho"]]
+        membership = list(g.community_edge_betweenness(
+            weights=dist).as_clustering().membership)
+        try:
+            auth = [round(float(a), 4)
+                    for a in g.authority_score(weights=keep["rho"].abs())]
+        except Exception:
+            auth = [0.0] * len(order)
+    else:
+        membership = list(range(len(order)))
+        auth = [0.0] * len(order)
+    comm_df = pd.DataFrame({"celltype": order, "community": membership,
+                            "authority": auth})
+    comm_csv = ds_dir / "cooccurrence_communities.csv"
+    comm_df.to_csv(comm_csv, index=False)
+
+    # circular 网络图：节点按社区着色、边宽∝|rho|、红正蓝负
+    ang = np.linspace(0, 2 * np.pi, len(order), endpoint=False)
+    pos = {c: (np.cos(a), np.sin(a)) for c, a in zip(order, ang)}
+    fig, ax = plt.subplots(figsize=(6, 6), dpi=150)
+    for _, r in keep.iterrows():
+        (x1, y1), (x2, y2) = pos[r["source"]], pos[r["target"]]
+        ax.plot([x1, x2], [y1, y2],
+                color="#d62728" if r["rho"] > 0 else "#1f77b4",
+                lw=1 + 4 * abs(r["rho"]), alpha=0.7, zorder=1,
+                solid_capstyle="round")
+    cmap = plt.get_cmap("tab10")
+    deg = {c: 0 for c in order}
+    for _, r in keep.iterrows():
+        deg[r["source"]] += 1
+        deg[r["target"]] += 1
+    for k, c in enumerate(order):
+        fc = "0.85" if deg[c] == 0 else cmap(membership[k] % 10)
+        ax.scatter(*pos[c], s=900, c=fc, edgecolors="black",
+                   linewidths=0.8, zorder=2)
+        ax.annotate(c, pos[c], ha="center", va="center", fontsize=8,
+                    zorder=3)
+    ax.set_title(f"Co-occurrence network (|rho|>={min_rho}, q<0.05, "
+                 f"n={n_s} samples)", fontsize=9)
+    ax.set_xlim(-1.5, 1.5)
+    ax.set_ylim(-1.5, 1.5)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    fig.tight_layout()
+    network_png = ds_dir / "cooccurrence_network.png"
+    fig.savefig(network_png, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return keep, comm_df, edges_csv, comm_csv, network_png
 
 
 def _cat_cols(adata: Any) -> str:
@@ -257,11 +352,48 @@ def main() -> None:
                      "不显著≠无差异"),
         }
 
+    # 共现网络（Phase 74）：Spearman 功效线要求 by 样本数 ≥5
+    cooc: dict[str, Any] | None = None
+    cooc_note: str | None = None
+    cooc_on = bool(args.get("cooccurrence", True))
+    min_rho = float(args.get("min_rho", 0.6))
+    if not 0 <= min_rho <= 1:
+        raise ValueError(f"min_rho must be in [0,1]; got {min_rho}")
+    if not cooc_on:
+        pass  # 显式关闭，不提示
+    elif len(by_order) < 5:
+        cooc_note = (f"cooccurrence needs >=5 {by} levels for Spearman "
+                     f"power, got {len(by_order)}; network skipped")
+    else:
+        edges_df, comm_df, edges_csv, comm_csv, network_png = (
+            _cooccurrence_network(props, order, ds_dir, min_rho))
+        cooc = {
+            "n_samples": len(by_order),
+            "min_rho": min_rho,
+            "n_edges": int(len(edges_df)),
+            "n_communities": int(comm_df["community"].nunique()),
+            "top_edges": [
+                {"source": r["source"], "target": r["target"],
+                 "rho": round(float(r["rho"]), 3),
+                 "q": float(f"{r['q']:.3e}")}
+                for _, r in edges_df.head(3).iterrows()],
+            "communities": {r["celltype"]: int(r["community"])
+                            for _, r in comm_df.iterrows()},
+            "edges_csv": str(edges_csv),
+            "communities_csv": str(comm_csv),
+            "network_png": str(network_png),
+            "note": ("样本级簇比例 Spearman 共现网络（|rho|>=阈值且 BH "
+                     "q<0.05）；props 行和为 1 的组成闭合效应：正边=共享"
+                     "丰度模式，负边（互斥）慎读"),
+        }
+
     emit({
         "ok": True,
         "dataset_ref": args["dataset_id"],
         "by": by,
         "celltype_col": celltype_col,
+        "cooccurrence": cooc,
+        "cooccurrence_note": cooc_note,
         "n_levels": len(by_order),
         "overall": {c: {"n_cells": int(overall[c]),
                         "pct": round(float(overall_pct[c]), 4)}

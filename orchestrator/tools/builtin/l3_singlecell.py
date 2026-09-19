@@ -312,13 +312,17 @@ def register_l3_singlecell(
 
     def sc_cellfreq(*, dataset_ref: str, by: str, group: str = "",
                     celltype_col: str = "leiden",
-                    donor_col: str = "") -> dict[str, Any]:
-        """组成比较（Phase 33）：比例表+卡方 → csv+堆叠图。
-        donor_col 供体级组成检验并列输出（MW-U+BH，伪重复修正）。"""
+                    donor_col: str = "",
+                    cooccurrence: bool = True,
+                    min_rho: float = 0.6) -> dict[str, Any]:
+        """组成比较（Phase 33/74）：比例表+卡方 → csv+堆叠图。
+        donor_col 供体级检验并列输出；cooccurrence 样本级 Spearman
+        共现网络（by 样本数≥5 触发，|rho|>=min_rho 且 BH q<0.05）。"""
         try:
             payload: dict[str, Any] = {
                 "dataset_id": dataset_ref, "by": by, "group": group,
                 "celltype_col": celltype_col,
+                "cooccurrence": cooccurrence, "min_rho": min_rho,
             }
             if donor_col:
                 payload["donor_col"] = donor_col
@@ -1234,6 +1238,17 @@ def register_l3_singlecell(
                                    "字段并列输出）——修正细胞级卡方的"
                                    "伪重复（同供体细胞相关）；跨供体"
                                    "比较建议传，与 by 可同列"},
+                "cooccurrence": {
+                    "type": "boolean", "default": True,
+                    "description": "样本级簇比例 Spearman 共现网络"
+                                   "（Phase 74）：by 样本数≥5 时触发，"
+                                   "输出共现边表+社区+圆形网络图；"
+                                   "false 关闭"},
+                "min_rho": {
+                    "type": "number", "default": 0.6, "minimum": 0,
+                    "maximum": 1,
+                    "description": "共现边强度阈值（|Spearman rho|"
+                                   ">=min_rho 且 BH q<0.05 才连边）"},
             },
             "required": ["dataset_ref", "by"],
         },

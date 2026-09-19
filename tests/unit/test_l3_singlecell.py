@@ -600,7 +600,7 @@ def test_sc_integrate_forwards_params(tmp_path):
 
 
 def test_sc_cellfreq_forwards_params(tmp_path):
-    """handler 转发 cellfreq 参数（by 必填 + group 可选）。"""
+    """handler 转发 cellfreq 参数（by 必填 + group/cooccurrence 可选）。"""
     reg, runner = _registry(tmp_path)
     runner.run.return_value = {
         "ok": True, "dataset_ref": "d", "chi2_tests": [
@@ -611,8 +611,14 @@ def test_sc_cellfreq_forwards_params(tmp_path):
     assert args[0] == "cellfreq"
     assert args[1]["by"] == "sample"
     assert args[1]["group"] == "condition"
+    assert args[1]["cooccurrence"] is True  # Phase 74 默认开
+    assert args[1]["min_rho"] == 0.6
     assert "donor_col" not in args[1]  # 默认不传：payload 零变化
     assert out["chi2_tests"][0]["cluster"] == "3"
+    props = reg.get("sc_cellfreq").parameters["properties"]
+    assert props["cooccurrence"]["type"] == "boolean"
+    assert props["cooccurrence"]["default"] is True
+    assert props["min_rho"]["default"] == 0.6
     assert reg.get("sc_cellfreq").timeout_sec == 600
 
 
