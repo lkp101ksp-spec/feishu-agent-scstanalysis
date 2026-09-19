@@ -171,6 +171,12 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
 # 本层 Ncpus=4 更慢，CI manual job 预算 50→71min）。purge 同
 # cellchat 纪律：只 purge 显式清单、不 autoremove——sf/units/
 # ggrastr 的运行 so 链（gdal/geos/proj/cairo 运行库）自然留存。
+# 2026-09-19 CI 冷构建实证（run 35448479226）：TUNA CRAN 并行
+# 下载抖动——44 包同波下载，statmod/futile.logger/snow 同秒 4.6s
+# 失败→limma/BiocParallel 链式缺依赖→monocle3 R CMD INSTALL 崩。
+# install 改 R 级重试封装 ir()（每波只补缺、波间 sleep 15s、
+# 6 波兜底 stop），monocle3 本体同样 3 次重试——对齐 zenodo 504
+# 教训：层内下载必须自带重试，构建期网络调用不赌单次成功。
 RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
     && apt-get update -qq -o Acquire::http::Proxy=false -o Acquire::https::Proxy=false \
     && apt-get install -y -qq --no-install-recommends \
@@ -182,7 +188,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.li
        libfreetype6-dev libudunits2-dev libtiff5-dev libjpeg-dev libwebp-dev \
     && HTTP_PROXY=${PROXY} HTTPS_PROXY=${PROXY} \
        http_proxy=${PROXY} https_proxy=${PROXY} \
-       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN', Bioc='https://bioconductor.org/packages/3.21/bioc'), Ncpus=4, timeout=1800); install.packages('sf'); remotes::install_github('cole-trapnell-lab/monocle3', upgrade='never')" \
+       Rscript -e "options(repos=c(CRAN='https://mirrors.tuna.tsinghua.edu.cn/CRAN', Bioc='https://bioconductor.org/packages/3.21/bioc'), Ncpus=4, timeout=1800); ir <- function(p,n=6){for(i in 1:n){m<-p[!vapply(p,function(x) requireNamespace(x,quietly=TRUE),logical(1))];if(!length(m))return(invisible(0));cat('[ir wave',i,'] installing:',paste(m,collapse=','),'\n');install.packages(m);Sys.sleep(15)};stop('deps missing after retries: ',paste(p[!vapply(p,function(x) requireNamespace(x,quietly=TRUE),logical(1))],collapse=','))}; ir('sf'); for(j in 1:3){if(requireNamespace('monocle3',quietly=TRUE))break;cat('[monocle3 try',j,']\n');remotes::install_github('cole-trapnell-lab/monocle3',upgrade='never')}; if(!requireNamespace('monocle3',quietly=TRUE)) stop('monocle3 missing after retries')" \
     && apt-get purge -y --no-install-recommends \
        build-essential g++ gfortran cmake pkg-config r-base-dev \
        libgdal-dev libgeos-dev libproj-dev \
