@@ -44,6 +44,7 @@ SECTION_TITLES: dict[str, str] = {
     "sc_cnv": "CNV 恶性判定与亚克隆",
     "sc_cellchat": "细胞通讯分析",
     "sc_cellchat_v2": "细胞通讯分析（CellChat v2）",
+    "sc_tcr": "免疫组库重建（TCR）",
     "sc_deconv": "空间反卷积",
     "sc_scenic": "转录调控网络",
     "sc_knockout": "基因敲除模拟",

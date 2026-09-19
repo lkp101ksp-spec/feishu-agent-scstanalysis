@@ -17,6 +17,9 @@ from orchestrator.tools.bio.bio_runner import (
 from orchestrator.tools.bio.dataset_profile import resolve_species
 from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 
+# Phase 70 sc_tcr 超时档（附录 A 1200；秒级统计运算，宽裕帽）
+_SC_TCR_TIMEOUT = 1200
+
 
 def _err(exc: BioRunError) -> dict[str, str]:
     """BioRunError → 工具错误输出（ToolHandler 透传 error_code）。"""
@@ -352,6 +355,42 @@ def register_l3_singlecell(
                 "top_n": top_n, "max_cells_per_group": max_cells_per_group,
                 "interaction_range": interaction_range,
             }, timeout_sec=3600, memory="32g")
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_tcr(*, contig_files: list[dict[str, str]], tissue1: str = "",
+               tissue2: str = "", dataset_ref: str = "") -> dict[str, Any]:
+        """免疫组库重建（Phase 70）：Cell Ranger contig 六重过滤 →
+        跨组织 clonotype（patient::canonical cdr3s_nt）→ 克隆分级 →
+        Startrac expa/migr → 逐细胞克隆表+指数+三联图；可选写回。"""
+        try:
+            mounts: list[tuple[str, str]] = []
+            entries: list[dict[str, str]] = []
+            for f in contig_files:
+                if not isinstance(f, dict) or not all(
+                        k in f for k in ("file", "patient", "tissue")):
+                    raise BioRunError(
+                        "INVALID_INPUT",
+                        "contig_files elements must be "
+                        "{file, patient, tissue} objects")
+                root, rel, _host = runner.resolve_data_path(
+                    str(f["file"]))
+                if (root, "/data") not in mounts:
+                    mounts.append((root, "/data"))
+                entries.append({"file": rel,
+                                "patient": str(f["patient"]).strip(),
+                                "tissue": str(f["tissue"]).strip()})
+            if len(mounts) > 1:
+                raise BioRunError(
+                    "INVALID_INPUT",
+                    "contig files span multiple data roots; place them "
+                    "under one allowed data root")
+            out = runner.run("tcr", {
+                "contig_files": entries, "tissue1": tissue1,
+                "tissue2": tissue2, "dataset_ref": dataset_ref,
+            }, mounts=mounts, timeout_sec=_SC_TCR_TIMEOUT)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -1242,6 +1281,61 @@ def register_l3_singlecell(
         handler=sc_cellchat_v2,
         timeout_sec=3600,
         memory="32g",
+    ))
+    registry.register(ToolSpec(
+        name="sc_tcr",
+        description=(
+            "免疫组库重建（Phase 70，对齐 tool-tcr-startrac 口径）：读"
+            " Cell Ranger filtered_contig_annotations.csv(.gz)（每文件"
+            " 标注患者/组织），六重过滤（is_cell/high_confidence/"
+            "productive/TRA+TRB 双链齐/barcode 单 clonotype）→ 跨组织"
+            " clonotype（patient::canonical cdr3s_nt，同患者跨组织同"
+            "序列可追踪）→ 克隆分级 n>=3/n=2/n=1 → Startrac 扩张指数"
+            " expa（患者×组织）与迁移指数 migr（tissue1↔tissue2）。"
+            "输出逐细胞克隆表 csv、指数 csv 与三联总览图；dataset_ref"
+            " 给出时按 barcode 对齐写回 processed.h5ad obs 三列"
+            "（tcr_clonotype/tcr_clone_size/tcr_size_class，对齐率"
+            "<50% 拒收），此后 sc_plot 着色/sc_cellfreq 分组即可复用。"
+            "纯 pandas/scipy 实现，无 R 依赖。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "contig_files": {
+                    "type": "array", "minItems": 1,
+                    "items": {"type": "object",
+                              "properties": {
+                                  "file": {"type": "string",
+                                           "description": "contig csv"
+                                           "路径（管理员允许的数据"
+                                           "目录内）"},
+                                  "patient": {"type": "string",
+                                              "description": "该文件"
+                                              "所属患者标识"},
+                                  "tissue": {"type": "string",
+                                             "description": "该文件"
+                                             "所属组织（如 Tumor/"
+                                             "PBMC）"}},
+                              "required": ["file", "patient", "tissue"]},
+                    "description": "逐文件三元组 {file, patient, "
+                                   "tissue}——Cell Ranger 输出是逐样本"
+                                   "独立 csv，患者/组织由调用方标注",
+                },
+                "tissue1": {"type": "string", "default": "",
+                            "description": "迁移指数组织对之一；空=取"
+                                           "组织值域排序前两"},
+                "tissue2": {"type": "string", "default": "",
+                            "description": "迁移指数组织对之二；空=同上"},
+                "dataset_ref": {"type": "string", "default": "",
+                                "description": "可选：GEX 数据集 ref，"
+                                               "给出时克隆三列写回其"
+                                               "processed.h5ad obs"},
+            },
+            "required": ["contig_files"],
+        },
+        risk_level="L1_compute",
+        handler=sc_tcr,
+        timeout_sec=_SC_TCR_TIMEOUT,
     ))
     registry.register(ToolSpec(
         name="sc_milo",

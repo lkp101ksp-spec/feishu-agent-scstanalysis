@@ -51,6 +51,18 @@ def _synth_args(spec: ToolSpec) -> dict[str, Any]:
             out[name] = "/data/x.h5ad"
         elif name == "genes":
             out[name] = ["GENE1"]
+        elif p.get("type") == "array":
+            items: dict[str, Any] = p.get("items", {})
+            if items.get("type") == "object":
+                # array of object（Phase 70 sc_tcr contig_files 首例）：
+                # 按 items.required 合成最小元素，file 类子字段给 /data 路径
+                sub: dict[str, Any] = {}
+                for sub_name in items.get("required", []):
+                    sub[sub_name] = ("/data/x.csv" if sub_name in
+                                     ("file", "path") else "x")
+                out[name] = [sub]
+            else:
+                out[name] = ["x"]
         elif p.get("type") == "object":
             out[name] = {"set1": ["GENE1"]}
         elif p.get("type") == "integer":
