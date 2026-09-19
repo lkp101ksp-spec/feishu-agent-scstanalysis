@@ -20,6 +20,10 @@ from orchestrator.tools.tool_registry import ToolRegistry, ToolSpec
 # Phase 70 sc_tcr 超时档（附录 A 1200；秒级统计运算，宽裕帽）
 _SC_TCR_TIMEOUT = 1200
 
+# Phase 71 sc_cytosig 超时档（附录 A 1800；ridge+置换 C 实现，nrand=1000
+# 千级细胞一次调用，宽裕帽）
+_SC_CYTOSIG_TIMEOUT = 1800
+
 
 def _err(exc: BioRunError) -> dict[str, str]:
     """BioRunError → 工具错误输出（ToolHandler 透传 error_code）。"""
@@ -391,6 +395,20 @@ def register_l3_singlecell(
                 "contig_files": entries, "tissue1": tissue1,
                 "tissue2": tissue2, "dataset_ref": dataset_ref,
             }, mounts=mounts, timeout_sec=_SC_TCR_TIMEOUT)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_cytosig(*, dataset_ref: str, groupby: str, mode: str = "diff",
+                   nrand: int = 1000) -> dict[str, Any]:
+        """细胞因子信号预测（Phase 71）：CytoSig ridge+置换（venv 桥）
+        → 43 因子 beta/zscore 谱 + 热图/top 条形。"""
+        try:
+            out = runner.run("cytosig", {
+                "dataset_id": dataset_ref, "groupby": groupby,
+                "mode": mode, "nrand": nrand,
+            }, timeout_sec=_SC_CYTOSIG_TIMEOUT)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -1336,6 +1354,45 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_tcr,
         timeout_sec=_SC_TCR_TIMEOUT,
+    ))
+    registry.register(ToolSpec(
+        name="sc_cytosig",
+        description=(
+            "细胞因子信号预测（Phase 71，CytoSig ridge+置换检验）：从"
+            "表达谱预测 43 种细胞因子（TGFB1/IFNG/TNFA/IL6/VEGFA...）"
+            "的信号强度 beta 与置换显著性 zscore，4881 基因签名。"
+            "mode=diff（默认）逐群差分谱输入（论文展示口径）；"
+            "mode=per_cell 逐细胞预测后按群汇总。输出因子×样本得分表"
+            "csv、热图与逐样本 top5 因子条形。注意 beta=信号强度"
+            "（CytoSig 网站排名口径）、zscore=置换显著性，两口径排名"
+            "可能不同，解读时注明。需先跑 sc_process。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "sc_process 输出的 "
+                                               "dataset_ref"},
+                "groupby": {"type": "string",
+                            "description": "obs 分组列（diff 分群 / "
+                                           "per_cell 汇总），如 "
+                                           "celltype/leiden"},
+                "mode": {"type": "string", "default": "diff",
+                         "enum": ["diff", "per_cell"],
+                         "description": "diff=逐群差分谱（论文口径，"
+                                        "信号对比锐利）；per_cell=逐"
+                                        "细胞预测后按群汇总（保群内"
+                                        "异质性面）"},
+                "nrand": {"type": "integer", "default": 1000,
+                          "minimum": 100, "maximum": 5000,
+                          "description": "置换次数（显著性精度与耗时"
+                                         "的权衡；快速验证可降 200）"},
+            },
+            "required": ["dataset_ref", "groupby"],
+        },
+        risk_level="L1_compute",
+        handler=sc_cytosig,
+        timeout_sec=_SC_CYTOSIG_TIMEOUT,
     ))
     registry.register(ToolSpec(
         name="sc_milo",

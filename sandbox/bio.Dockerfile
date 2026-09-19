@@ -251,6 +251,21 @@ RUN pip install --no-cache-dir \
     -i https://pypi.tuna.tsinghua.edu.cn/simple "harmonypy>=2" \
     && python -c "import harmonypy, importlib.metadata as im; print('harmonypy', im.version('harmonypy'), 'ok')"
 
+# Phase 71 细胞因子信号：CytoSig ridge + data_significance（GSL C
+# 扩展，numpy 1.x 编译期硬约束）→ 独立 venv，主环境零污染。numpy<2
+# 与 CytoSig 同命令约束：--no-build-isolation 只管构建期，安装期 pip
+# 仍会把 venv numpy 升到 2.x（C 扩展编译于 1.x，运行时 ABI 崩）。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgsl-dev build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m venv /opt/cytosig_env \
+    && /opt/cytosig_env/bin/pip install --no-cache-dir \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple \
+        "numpy<2" pandas setuptools wheel \
+    && /opt/cytosig_env/bin/pip install --no-cache-dir --no-build-isolation \
+        -i https://pypi.tuna.tsinghua.edu.cn/simple "numpy<2" CytoSig \
+    && /opt/cytosig_env/bin/python -c "import CytoSig, numpy; print('cytosig venv ok, numpy', numpy.__version__)"
+
 # 非 root 用户 + 可写目录（与 kernel 镜像惯例一致）
 RUN useradd -u 1000 -m bio \
     && mkdir -p /ws /data /tmp/mpl \
