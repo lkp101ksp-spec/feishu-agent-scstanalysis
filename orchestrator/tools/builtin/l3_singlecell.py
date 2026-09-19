@@ -175,14 +175,19 @@ def register_l3_singlecell(
         return out
 
     def sc_metabolism(*, dataset_ref: str, top_n: int = 30,
-                      species: str = "") -> dict[str, Any]:
-        """代谢通路活性（Phase 32）：KEGG 逐通路打分 → 簇均值+热图。"""
+                      species: str = "",
+                      method: str = "aucell",
+                      groupby: str = "leiden") -> dict[str, Any]:
+        """代谢通路活性（Phase 32/73）：KEGG 逐通路打分 → 簇均值+热图；
+        method=aucell 排名 AUC（默认，skill 口径前 10% 特征）/
+        mean 均值差（Phase 32 回归口径）；groupby 可换自定义 obs 分组列。"""
         try:
             out = runner.run("metabolism", {
                 "dataset_id": dataset_ref, "top_n": top_n,
                 "species": resolve_species(
                     getattr(runner, "workspace_root", ""),
                     dataset_ref, species),
+                "method": method, "groupby": groupby,
             }, timeout_sec=1800)
         except BioRunError as e:
             return _err(e)
@@ -849,10 +854,12 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_metabolism",
         description=(
-            "代谢通路活性分析（Phase 32，对齐 scMetabolism）：基于 KEGG "
+            "代谢通路活性分析（Phase 32/73，对齐 scMetabolism）：基于 KEGG "
             "通路库（镜像内置，离线）逐通路单细胞打分，输出代谢活性全矩阵 csv、"
             "簇×通路均值 csv、簇间方差 top_n 通路热图与 top 通路 UMAP 图。"
             "比较各簇代谢重编程（糖酵解/OXPHOS 等）首选。需先跑 sc_process。"
+            "method=aucell 排名 AUC 打分（Phase 73 默认，前 10% 特征窗口）"
+            "或 mean 均值差（Phase 32 口径）。"
             "物种经 species 选择：human→KEGG_2021_Human / "
             "mouse→KEGG_2019_Mouse（基因符号按数据物种对应）。"
         ),
@@ -867,6 +874,15 @@ def register_l3_singlecell(
                             "enum": ["human", "mouse", ""],
                             "description": "物种（选 KEGG 人/小鼠通路库）；"
                                            "留空按基因符号风格自动检测"},
+                "method": {
+                    "type": "string", "enum": ["aucell", "mean"],
+                    "default": "aucell",
+                    "description": "打分方法：aucell=AUCell 排名 AUC"
+                                   "（默认，top 10% 特征）；mean=通路基因"
+                                   "均值差（Phase 32 回归口径）"},
+                "groupby": {"type": "string", "default": "leiden",
+                            "description": "簇分组 obs 列名（默认 leiden；"
+                                           "可换病理注释等自定义列）"},
             },
             "required": ["dataset_ref"],
         },

@@ -279,7 +279,7 @@ def test_sc_score_genes_schema_limits(tmp_path):
 
 
 def test_sc_metabolism_forwards_params(tmp_path):
-    """handler 转发 metabolism 脚本参数（top_n 降维输出数）。"""
+    """handler 转发 metabolism 脚本参数（top_n 降维输出数+method 打分法）。"""
     reg, runner = _registry(tmp_path)
     runner.run.return_value = {
         "ok": True, "dataset_ref": "d", "n_pathways_scored": 280,
@@ -288,6 +288,7 @@ def test_sc_metabolism_forwards_params(tmp_path):
     args = runner.run.call_args.args
     assert args[0] == "metabolism"
     assert args[1]["top_n"] == 50
+    assert args[1]["method"] == "aucell"  # Phase 73 默认
     assert "ok" not in out
     assert out["n_pathways_scored"] == 280
 
@@ -1088,6 +1089,8 @@ def test_sc_metabolism_forwards_species_mouse(tmp_path):
     assert out["species"] == "mouse"
     props = reg.get("sc_metabolism").parameters["properties"]
     assert props["species"]["enum"] == ["human", "mouse", ""]
+    assert props["method"]["enum"] == ["aucell", "mean"]  # Phase 73
+    assert props["method"]["default"] == "aucell"
     assert "default" not in props["species"]  # 留空=handler 记忆库自动检测
 
 
