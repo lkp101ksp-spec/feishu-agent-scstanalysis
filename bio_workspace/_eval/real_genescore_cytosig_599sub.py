@@ -9,8 +9,9 @@ spec 2026-09-20-phase75 §2：PROGENy 通路活性（MLM）× CytoSig beta 的
   宿主构建大写影子 599sub_gs_up（var/raw 双层 upper，撞名保首）；
 ③容器断网补跑 genescore（影子 → 产物拷回 599sub_bbknn/genescore/）；
 ④簇级对齐：scores 按 leiden 求均值（簇×14）vs cytosig beta pivot；
-⑤三层联读：TGFb×TGFB 容差族逐对 / 14×43 全景 |rho|>=0.8 / CAF 叙事；
-⑥产物 _eval/ 四件套 + C1/C2/C3 预注册判据（不过不阻塞，如实记录）。
+⑤三层联读：TGFb×TGFB 容差族逐对 / 14×43 全景 |rho|>=0.8（BH/FDR 校正）
+  / CAF 叙事；
+⑥产物 _eval/ 五件套（含 qval）+ C1/C2/C3 预注册判据（不过不阻塞，如实记录）。
 """
 import json
 import shutil
@@ -24,7 +25,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-from scipy.stats import spearmanr  # noqa: E402
+from scipy.stats import false_discovery_control, spearmanr  # noqa: E402
 
 WS = Path("bio_workspace").resolve()
 EVAL = WS / "_eval"
@@ -119,22 +120,32 @@ for pw in P.columns:
         rho, p = spearmanr(P[pw], B[f])
         rho_mat.loc[pw, f] = rho
         p_mat.loc[pw, f] = p
+# BH/FDR 校正：对全部有效 p 值统一校正（#20 挂账"43 对强相关未校正"收尾）
+p_arr = p_mat.to_numpy(dtype=float)
+q_arr = np.full(p_arr.shape, np.nan)
+mask = ~np.isnan(p_arr)
+if mask.any():
+    q_arr[mask] = false_discovery_control(p_arr[mask], method="bh")
+q_mat = pd.DataFrame(q_arr, index=list(P.columns), columns=list(B.columns))
 strong = [
     {"pathway": pw, "factor": f,
      "rho": round(float(rho_mat.loc[pw, f]), 4),
-     "p": round(float(p_mat.loc[pw, f]), 4)}
+     "p": round(float(p_mat.loc[pw, f]), 4),
+     "q": round(float(q_mat.loc[pw, f]), 4)}
     for pw in P.columns for f in B.columns
     if abs(float(rho_mat.loc[pw, f])) >= 0.8
 ]
-print(f"[全景] |rho|>=0.8 对数: {len(strong)}")
+n_fdr = sum(1 for s in strong if s["q"] < 0.05)
+print(f"[全景] |rho|>=0.8 对数: {len(strong)}（其中 BH q<0.05: {n_fdr}）")
 for s in strong[:10]:
     print(f"  {s['pathway']} × {s['factor']}: "
-          f"rho={s['rho']:+.3f} (p={s['p']:.3f})")
+          f"rho={s['rho']:+.3f} (p={s['p']:.3f}, q={s['q']:.3f})")
 
 # ── ⑤c CAF 叙事：TGFb 域排名 + TGFB 家族 beta 并列 ───────────────────
-caf = [c for c in clusters if ident.get(c) in CAF_MARKERS]
+# ident 键为 str（L48 astype(str)）而 clusters 为 int（CSV 读入）——统一 str 查键（#20 挂账修复）
+caf = [c for c in clusters if ident.get(str(c)) in CAF_MARKERS]
 tgfb_rank = P["TGFb"].rank(ascending=False)
-print(f"[CAF] 粗注命中簇: {[(c, ident[c]) for c in caf] or '无（C2 记 not-pass）'}")
+print(f"[CAF] 粗注命中簇: {[(c, ident[str(c)]) for c in caf] or '无（C2 记 not-pass）'}")
 for c in caf:
     fam = {f: float(B.loc[c, f]) for f in TGF_CORE if f in B.columns}
     print(f"[CAF {c}] TGFb 排名={int(tgfb_rank[c])}/{len(clusters)}  "
@@ -177,6 +188,7 @@ summary = {
             "detail": {c: int(tgfb_rank[c]) for c in caf}},
         "C3_any_pair_|rho|>=0.8": {
             "pass": len(strong) >= 1, "n_strong": len(strong),
+            "n_strong_fdr005": n_fdr,
             "top": strong[:10]},
     },
     "focus_family": focus,
@@ -186,7 +198,8 @@ summary = {
 EVAL.mkdir(parents=True, exist_ok=True)
 rho_mat.to_csv(EVAL / "crossread_pathway_factor_rho.csv")
 p_mat.to_csv(EVAL / "crossread_pathway_factor_pval.csv")
+q_mat.to_csv(EVAL / "crossread_pathway_factor_qval.csv")
 (EVAL / "real_crossread_summary.json").write_text(
     json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 print(json.dumps(summary["criteria"], ensure_ascii=False, indent=2))
-print("\nREAL CROSSREAD OK: 四件套落盘 _eval/，判据逐条记录如上")
+print("\nREAL CROSSREAD OK: 五件套落盘 _eval/（含 qval），判据逐条记录如上")
