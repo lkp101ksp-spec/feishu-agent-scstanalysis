@@ -31,6 +31,8 @@ _ST_INTEGRATE_TIMEOUT = 1800
 # Phase 75：st 侧通路/代谢（bio 镜像 sc_tools 跨镜像分发，st_integrate 先例）
 _ST_GENESCORE_TIMEOUT = 1800
 _ST_METABOLISM_TIMEOUT = 1800
+# Phase 76：反卷积加权打分（纯矩阵乘，远轻于打分 1800）
+_ST_SCORE_WEIGHT_TIMEOUT = 600
 
 
 def _err(exc: BioRunError) -> dict[str, str]:
@@ -463,6 +465,25 @@ def register_l3_spatial(
                     "species": species,
                 }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
                 timeout_sec=_ST_METABOLISM_TIMEOUT)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_score_weight(*, dataset_ref: str,
+                        source: str = "st_genescore") -> dict[str, Any]:
+        """反卷积加权打分（Phase 76）：读 {ds}/deconv.h5ad 的 q05 丰度
+        与 source 指定的 st_genescore/st_metabolism scores csv，产出
+        细胞型×通路丰度加权活性矩阵（W = AᵀS/总丰度）；bio 镜像跨镜像
+        分发，产物落 {ds}/st_score_weight/。缺 deconv 报
+        ST_WEIGHT_NO_DECONV 引导先跑 st_deconvolve。"""
+        try:
+            out = runner.run(
+                "st_score_weight", {
+                    "dataset_id": dataset_ref,
+                    "source": source,
+                }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
+                timeout_sec=_ST_SCORE_WEIGHT_TIMEOUT)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -1123,4 +1144,34 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_metabolism,
         timeout_sec=_ST_METABOLISM_TIMEOUT,
+    ))
+    registry.register(ToolSpec(
+        name="st_score_weight",
+        description=(
+            "反卷积加权打分（Phase 76）：cell2location q05 丰度 × "
+            "st_genescore/st_metabolism 的 spot 级通路分，产出细胞型 × "
+            "通路丰度加权活性矩阵（W=AᵀS/总丰度，细胞型间可比）。前置需"
+            "先跑 st_deconvolve 与对应打分工具；缺 deconv.h5ad 报 "
+            "ST_WEIGHT_NO_DECONV，spot 索引重合率 <80% 拒收。产物落 "
+            "{ds}/st_score_weight/（csv 全量+方差 top30 热图）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "含 deconv.h5ad 与 "
+                                               "st_genescore/"
+                                               "st_metabolism 产物的 "
+                                               "dataset_ref"},
+                "source": {"type": "string", "default": "st_genescore",
+                           "enum": ["st_genescore", "st_metabolism"],
+                           "description": "打分产物来源（决定读取 "
+                                          "st_progeny_scores.csv 或 "
+                                          "st_metabolism_scores.csv）"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_score_weight,
+        timeout_sec=_ST_SCORE_WEIGHT_TIMEOUT,
     ))
