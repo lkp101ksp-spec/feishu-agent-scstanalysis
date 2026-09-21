@@ -1,6 +1,6 @@
 # Phase 75 实施计划：genescore×cytosig 联读 + st_genescore / st_metabolism
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 兑现两条挂账——①真机联读脚本 `real_genescore_cytosig_599sub.py`（PROGENy 通路活性 × CytoSig beta 簇级 Spearman）；②两个 spot 级空间容器工具 `st_genescore.py` / `st_metabolism.py` 并完成 L3 注册与 CI 冒烟。
 
@@ -43,7 +43,7 @@
 - Create: `sandbox/sc_tools/st_genescore.py`
 - Create: `scripts/_smoke_st_genescore.py`
 
-- [ ] **Step 1.1: 写容器工具 `sandbox/sc_tools/st_genescore.py`**
+- [x] **Step 1.1: 写容器工具 `sandbox/sc_tools/st_genescore.py`**
 
 逐行复用 `genescore.py`（sc 版），仅加三处 st 语义（obsm.spatial 校验 / 空间着色主图 / 默认 spatial_domain + 域数 ≥2）：
 
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     run(main)
 ```
 
-- [ ] **Step 1.2: 写冒烟脚本 `scripts/_smoke_st_genescore.py`**
+- [x] **Step 1.2: 写冒烟脚本 `scripts/_smoke_st_genescore.py`**
 
 照抄 `_smoke_sc_genescore.py` 骨架，合成数据换 8×5 空间网格（左半 D1 注入 TGFb、右半 D2 纯噪声），加 ⑤无 spatial / ⑥单域 两个 st 专属拒收场景：
 
@@ -394,17 +394,17 @@ print("⑥ 单域 INVALID_INPUT + 换列引导 OK")
 print("\nSMOKE OK: st_genescore 6 场景全绿")
 ```
 
-- [ ] **Step 1.3: 本地跑冒烟**
+- [x] **Step 1.3: 本地跑冒烟**
 
 Run: `python scripts/_smoke_st_genescore.py`
 Expected: 六行场景 OK + `SMOKE OK: st_genescore 6 场景全绿`（需本机 docker + bio:cpu-latest 镜像）
 
-- [ ] **Step 1.4: lint 冒烟脚本（sandbox 无独立测试，ruff 即门禁）**
+- [x] **Step 1.4: lint 冒烟脚本（sandbox 无独立测试，ruff 即门禁）**
 
 Run: `ruff check sandbox/sc_tools/st_genescore.py scripts/_smoke_st_genescore.py`
 Expected: 无输出（全绿）
 
-- [ ] **Step 1.5: Commit**
+- [x] **Step 1.5: Commit**
 
 ```bash
 git add sandbox/sc_tools/st_genescore.py scripts/_smoke_st_genescore.py
@@ -419,7 +419,7 @@ git commit -m "feat: st_genescore 容器工具+断网冒烟（Phase 75 spot 级 
 - Create: `sandbox/sc_tools/st_metabolism.py`
 - Create: `scripts/_smoke_st_metabolism.py`
 
-- [ ] **Step 2.1: 写容器工具 `sandbox/sc_tools/st_metabolism.py`**
+- [x] **Step 2.1: 写容器工具 `sandbox/sc_tools/st_metabolism.py`**
 
 复用 `metabolism.py`（sc 版）的 AUCell/mean 双口径与 `_matched` 闭包；参数校验统一 `fail("INVALID_INPUT")`（sc 版部分走 ValueError→SCRIPT_ERROR，st 版收敛为显式 INVALID_INPUT，spec §3.4"错误码透传"）；产物目录 `{ds}/st_metabolism/`：
 
@@ -655,7 +655,7 @@ if __name__ == "__main__":
     run(main)
 ```
 
-- [ ] **Step 2.2: 写冒烟脚本 `scripts/_smoke_st_metabolism.py`**
+- [x] **Step 2.2: 写冒烟脚本 `scripts/_smoke_st_metabolism.py`**
 
 照抄 `_smoke_sc_metabolism.py` 骨架，80 spot 8×10 网格（左半 D1 糖酵解 +2.5）。**注意注入必须用 `np.ix_`**（`x[mask][:, idx] += v` 是副本写入会静默丢失，sc 版单掩码无此坑、st 版双索引有）：
 
@@ -818,17 +818,17 @@ print("⑥ 单域 INVALID_INPUT + 换列引导 OK")
 print("\nSMOKE OK: st_metabolism 6 场景全绿")
 ```
 
-- [ ] **Step 2.3: 本地跑冒烟**
+- [x] **Step 2.3: 本地跑冒烟**
 
 Run: `python scripts/_smoke_st_metabolism.py`
 Expected: 六行场景 OK + `SMOKE OK: st_metabolism 6 场景全绿`
 
-- [ ] **Step 2.4: lint**
+- [x] **Step 2.4: lint**
 
 Run: `ruff check sandbox/sc_tools/st_metabolism.py scripts/_smoke_st_metabolism.py`
 Expected: 无输出
 
-- [ ] **Step 2.5: Commit**
+- [x] **Step 2.5: Commit**
 
 ```bash
 git add sandbox/sc_tools/st_metabolism.py scripts/_smoke_st_metabolism.py
@@ -849,7 +849,7 @@ git commit -m "feat: st_metabolism 容器工具+断网冒烟（Phase 75 spot 级
 
 **为什么单 commit:** 注册后 `test_l3_dispatch_contract.py`（附录 A 双向表）、`test_report_digest.py` L195/212（SECTION_TITLES 守护）、`test_l3_spatial.py` 两清单会立即红——六处改动必须同 commit 才绿。
 
-- [ ] **Step 3.1: 写失败契约测试 `tests/unit/test_l3_st_genescore.py`**
+- [x] **Step 3.1: 写失败契约测试 `tests/unit/test_l3_st_genescore.py`**
 
 （模板：`tests/unit/test_l3_sc_genescore.py` 76 行裸 mock 模式）
 
@@ -945,7 +945,7 @@ def test_st_genescore_error_passthrough(runner, reg):
                    "error_message": "缺 obsm['spatial']"}
 ```
 
-- [ ] **Step 3.2: 写失败契约测试 `tests/unit/test_l3_st_metabolism.py`**
+- [x] **Step 3.2: 写失败契约测试 `tests/unit/test_l3_st_metabolism.py`**
 
 ```python
 """st_metabolism 注册测试（mock BioRunner，不发 docker）。"""
@@ -1043,12 +1043,12 @@ def test_st_metabolism_error_passthrough(runner, reg):
                    "error_message": "groupby 'x' 仅 1 个域（<2）"}
 ```
 
-- [ ] **Step 3.3: 跑两文件验证失败**
+- [x] **Step 3.3: 跑两文件验证失败**
 
 Run: `python -m pytest tests/unit/test_l3_st_genescore.py tests/unit/test_l3_st_metabolism.py -q`
 Expected: 收集期 `ImportError: cannot import name '_ST_GENESCORE_TIMEOUT'`（红）
 
-- [ ] **Step 3.4: l3_spatial.py 四处编辑**
+- [x] **Step 3.4: l3_spatial.py 四处编辑**
 
 **4a. 常量区**——`_ST_INTEGRATE_TIMEOUT = 1800` 后追加：
 
@@ -1176,7 +1176,7 @@ _ST_METABOLISM_TIMEOUT = 1800
     ))
 ```
 
-- [ ] **Step 3.5: test_l3_spatial.py 两处清单 18→20**
+- [x] **Step 3.5: test_l3_spatial.py 两处清单 18→20**
 
 **3.5a.** `test_st_registers_fourteen_tools`（L31-43）——docstring 加"Phase 75 +st_genescore/st_metabolism"，清单改为：
 
@@ -1201,7 +1201,7 @@ _ST_METABOLISM_TIMEOUT = 1800
         "st_qc", "st_stats", "st_trajectory", "st_vicinity"]
 ```
 
-- [ ] **Step 3.6: section_digest.py SECTION_TITLES +2**
+- [x] **Step 3.6: section_digest.py SECTION_TITLES +2**
 
 `"st_domains": "空间结构域识别",` 行后插入两行：
 
@@ -1211,7 +1211,7 @@ _ST_METABOLISM_TIMEOUT = 1800
     "st_metabolism": "空间代谢活性分析",
 ```
 
-- [ ] **Step 3.7: 附录 A 1800 档行 +2 工具名**
+- [x] **Step 3.7: 附录 A 1800 档行 +2 工具名**
 
 `docs/superpowers/specs/2026-09-17-execution-plane-unification-design.md` L111 整行替换为：
 
@@ -1219,12 +1219,12 @@ _ST_METABOLISM_TIMEOUT = 1800
 | 1800 | sc_process, sc_enrichment, sc_score_genes, sc_metabolism, sc_subcluster, sc_integrate, sc_annotate, sc_cytotrace2, sc_cytosig, sc_genescore, st_process, st_commot, st_stats, st_misty, st_nichenet, st_integrate, st_genescore, st_metabolism |
 ```
 
-- [ ] **Step 3.8: 跑全部受影响测试验证通过**
+- [x] **Step 3.8: 跑全部受影响测试验证通过**
 
 Run: `python -m pytest tests/unit/test_l3_st_genescore.py tests/unit/test_l3_st_metabolism.py tests/unit/test_l3_spatial.py tests/unit/test_l3_dispatch_contract.py tests/unit/test_report_digest.py -q`
 Expected: 全 PASS（新 8 用例 + 附录 A/SECTION_TITLES 两守护同步绿）
 
-- [ ] **Step 3.9: Commit**
+- [x] **Step 3.9: Commit**
 
 ```bash
 git add tests/unit/test_l3_st_genescore.py tests/unit/test_l3_st_metabolism.py orchestrator/tools/builtin/l3_spatial.py tests/unit/test_l3_spatial.py orchestrator/report/section_digest.py docs/superpowers/specs/2026-09-17-execution-plane-unification-design.md
@@ -1238,7 +1238,7 @@ git commit -m "feat: l3_spatial 注册 st_genescore/st_metabolism（双契约测
 **Files:**
 - Modify: `.github/workflows/ci.yml`（docker-smoke job，sc_cellfreq 步 L174-177 之后）
 
-- [ ] **Step 4.1: 加两冒烟步**
+- [x] **Step 4.1: 加两冒烟步**
 
 在 `sc_cellfreq 合成冒烟` 步之后（同 job 同缩进）追加：
 
@@ -1254,7 +1254,7 @@ git commit -m "feat: l3_spatial 注册 st_genescore/st_metabolism（双契约测
         run: python scripts/_smoke_st_metabolism.py
 ```
 
-- [ ] **Step 4.2: 全门禁（三连）**
+- [x] **Step 4.2: 全门禁（三连）**
 
 Run: `ruff check .`
 Expected: 无输出
@@ -1265,7 +1265,7 @@ Expected: `Success: no issues found`（sandbox 在 mypy 包内，st 双工具过
 Run: `python -m pytest -m "not pg" -q`
 Expected: 全 PASS 零回归（基线 + 新 8 用例：test_l3_st_genescore 4 + test_l3_st_metabolism 4）
 
-- [ ] **Step 4.3: Commit + push + CI 验收**
+- [x] **Step 4.3: Commit + push + CI 验收**
 
 ```bash
 git add .github/workflows/ci.yml
@@ -1284,7 +1284,7 @@ Expected: CI 四 job 全绿；docker-smoke 两个新步 step 级 success。若 C
 
 **关键陷阱（已预判）:** 599sub_bbknn 为鼠源 Titlecase 符号，`sc_genescore` 的 `species_style_guard("human", ...)` 会在 load 后毫秒级拦截（title≠upper）。解法：宿主侧构建大写影子数据集 `599sub_gs_up`（var/raw 双层 upper、撞名保首），PROGENy 靶基因全大写、upper 对齐即标准大小写桥接；产物拷回 `599sub_bbknn/genescore/` 保证幂等复跑。
 
-- [ ] **Step 5.1: 写真机脚本 `bio_workspace/_eval/real_genescore_cytosig_599sub.py`**
+- [x] **Step 5.1: 写真机脚本 `bio_workspace/_eval/real_genescore_cytosig_599sub.py`**
 
 ```python
 """genescore×cytosig 联读真机验证（Phase 75 工作项 A）：599sub_bbknn。
@@ -1481,12 +1481,12 @@ print(json.dumps(summary["criteria"], ensure_ascii=False, indent=2))
 print("\nREAL CROSSREAD OK: 四件套落盘 _eval/，判据逐条记录如上")
 ```
 
-- [ ] **Step 5.2: 跑真机联读**
+- [x] **Step 5.2: 跑真机联读**
 
 Run: `python bio_workspace/_eval/real_genescore_cytosig_599sub.py`
 Expected: `REAL CROSSREAD OK`；重点核对 C1（TGFB 家族至少一员 rho≥0.6 且正向）/ C2（CAF 簇 TGFb 排名≤3）/ C3（≥1 对 |rho|≥0.8）逐条输出；判据不过不阻塞，把实际值抄入 Task 7 测试总结。
 
-- [ ] **Step 5.3: lint + Commit**
+- [x] **Step 5.3: lint + Commit**
 
 Run: `ruff check bio_workspace/_eval/real_genescore_cytosig_599sub.py`
 Expected: 无输出
@@ -1503,7 +1503,7 @@ git commit -m "feat: genescore×cytosig 联读真机脚本（599sub 大写影子
 **Files:**
 - Create: `bio_workspace/_eval/real_st_gm_oscc.py`
 
-- [ ] **Step 6.1: 写验收脚本 `bio_workspace/_eval/real_st_gm_oscc.py`**
+- [x] **Step 6.1: 写验收脚本 `bio_workspace/_eval/real_st_gm_oscc.py`**
 
 ```python
 """st_genescore / st_metabolism 真机验收（Phase 75 工作项 B）：oscc。
@@ -1587,12 +1587,12 @@ print("\nREAL OK: st_genescore/st_metabolism oscc 真机验收全绿"
       "（两口径对照结论记录于测试总结 #20）")
 ```
 
-- [ ] **Step 6.2: 跑真机验收**
+- [x] **Step 6.2: 跑真机验收**
 
 Run: `python bio_workspace/_eval/real_st_gm_oscc.py`
 Expected: `REAL OK`；记录：①st_genescore 域数/每域 top3；②TGFb、JAK-STAT 在 st（spatial_domain）vs sc（cluster_annotations）两口径的 top 域方向是否一致；③st_metabolism top 通路。
 
-- [ ] **Step 6.3: lint + Commit**
+- [x] **Step 6.3: lint + Commit**
 
 Run: `ruff check bio_workspace/_eval/real_st_gm_oscc.py`
 Expected: 无输出
@@ -1610,7 +1610,7 @@ git commit -m "test: oscc 真机验收脚本（st 双工具 spatial_domain 口�
 - Modify: `测试总结+2026-09-19T00-12-54.md`
 - Modify: 本计划文件（勾选全部 checkbox）
 
-- [ ] **Step 7.1: 回填测试总结表**
+- [x] **Step 7.1: 回填测试总结表**
 
 在 `测试总结+2026-09-19T00-12-54.md` 测试情况表追加 #20 行（编号顺延现状），格式对齐既有行——一行压缩五段：
 
@@ -1622,7 +1622,7 @@ git commit -m "test: oscc 真机验收脚本（st 双工具 spatial_domain 口�
 - 反卷积加权打分（Cell2Location q05 权重）仍挂账——需先在 oscc 跑 deconvolve（spec §6 非目标 1）；
 - 联读如需复用为工具，待更多数据集验证后另立 Phase（spec §0 原则 4）。
 
-- [ ] **Step 7.2: 勾选本计划全部 checkbox + 最终 push**
+- [x] **Step 7.2: 勾选本计划全部 checkbox + 最终 push**
 
 ```bash
 git add "测试总结+2026-09-19T00-12-54.md" docs/superpowers/plans/2026-09-20-phase75-crossread-stgenescore-stmetabolism.md
