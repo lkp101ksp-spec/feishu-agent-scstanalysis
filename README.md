@@ -32,6 +32,7 @@
 | 报告生成 | 章节骨架 + LLM 逐节中文解读（数字禁编造）→ 飞书文档 + 进度卡 + Base 投影 |
 | 飞书协作 | 审批卡（高风险写操作人工放行）/ 评论闭环 / 模板系统 / 意图识别自动转研究任务 |
 | Coding Agent | `/code` 指令进入自研 function-calling 循环，支持 skill 热加载与失败自诊断 |
+| 自进化（RSI-L1） | 失败自动诊断写回 skill（Phase 27-29）+ 成功复盘沉淀新 skill（Phase 77）；双入口：自动复盘 + `/skill install` zip 即装；全程 human-in-loop 审批 |
 
 ## 架构
 
@@ -99,6 +100,8 @@
 | 其他分析 | `st_cnv` `st_trajectory` `st_genescore` `st_metabolism` |
 
 另有 `/code` 链路 6 个 coding 原语（read/write/edit/list/search/run_cmd）+ 可热加载 skill 系统。
+
+系统的自进化能力：`/code` 失败时 SkillDiagnoser 自动分析轨迹生成改进卡（审批后写回 skill）；成功时 SkillDistiller 复盘重复模式提议沉淀新 skill；也可 `/skill install` 附 zip 手动安装。所有写回均经审批卡 + .bak 兜底 + 审计（skill_improve_id 全链可追溯）。
 
 ## 沙箱镜像
 
