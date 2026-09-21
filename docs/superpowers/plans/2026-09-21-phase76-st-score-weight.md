@@ -1,6 +1,6 @@
 # Phase 76 实施计划：st_score_weight 反卷积加权打分（细胞型 × 通路矩阵）
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 兑现挂账"反卷积权重（Cell2Location q05）加权打分"——新独立容器工具 `st_score_weight`，消费 st_deconvolve 的 `deconv.h5ad` 与 st_genescore/st_metabolism 的 scores csv，产出细胞型 × 通路丰度加权活性矩阵，完成 L3 注册、CI 冒烟与 oscc 真机闭环。
 
@@ -40,7 +40,7 @@
 - Create: `sandbox/sc_tools/st_score_weight.py`
 - Create: `scripts/_smoke_st_score_weight.py`
 
-- [ ] **Step 1.1: 写容器工具 `sandbox/sc_tools/st_score_weight.py`**
+- [x] **Step 1.1: 写容器工具 `sandbox/sc_tools/st_score_weight.py`**
 
 ```python
 """st_score_weight：反卷积加权打分（Phase 76，spec 2026-09-21 §2-§4）。
@@ -187,7 +187,7 @@ if __name__ == "__main__":
     run(main)
 ```
 
-- [ ] **Step 1.2: 写冒烟脚本 `scripts/_smoke_st_score_weight.py`**
+- [x] **Step 1.2: 写冒烟脚本 `scripts/_smoke_st_score_weight.py`**
 
 无需 PROGENy 模型（纯矩阵乘），合成 deconv.h5ad + scores csv 即可；真值注入：CellA 丰度集中左半、左半 TGFb 高分 → W 中 CellA×TGFb 全局最高；CellC 全零 → dropped：
 
@@ -323,17 +323,17 @@ print("④ 索引错位 INVALID_INPUT + 重合率报数 OK")
 print("\nSMOKE OK: st_score_weight 4 场景全绿")
 ```
 
-- [ ] **Step 1.3: 跑冒烟**
+- [x] **Step 1.3: 跑冒烟**
 
 Run: `python scripts/_smoke_st_score_weight.py`
 Expected: 末尾输出 `SMOKE OK: st_score_weight 4 场景全绿`（①中 CellA×TGFb≈4.9 为全局最高）
 
-- [ ] **Step 1.4: ruff**
+- [x] **Step 1.4: ruff**
 
 Run: `ruff check sandbox/sc_tools/st_score_weight.py scripts/_smoke_st_score_weight.py`
 Expected: `All checks passed!`
 
-- [ ] **Step 1.5: Commit**
+- [x] **Step 1.5: Commit**
 
 ```bash
 git add sandbox/sc_tools/st_score_weight.py scripts/_smoke_st_score_weight.py
@@ -351,7 +351,7 @@ git commit -m "feat: st_score_weight 容器工具+断网冒烟（Phase 76 q05 �
 - Modify: `orchestrator/report/section_digest.py`（L60 后）
 - Modify: `docs/superpowers/specs/2026-09-17-execution-plane-unification-design.md`（附录 A L110 整行替换）
 
-- [ ] **Step 2.1: 先写契约测试（TDD 红）——`tests/unit/test_l3_st_score_weight.py`**
+- [x] **Step 2.1: 先写契约测试（TDD 红）——`tests/unit/test_l3_st_score_weight.py`**
 
 ```python
 """st_score_weight 注册测试（mock BioRunner，不发 docker）。"""
@@ -441,12 +441,12 @@ def test_st_score_weight_error_passthrough(runner, reg):
                    "error_message": "deconv.h5ad 缺失：请先运行 st_deconvolve"}
 ```
 
-- [ ] **Step 2.2: 跑测试确认红（ImportError）**
+- [x] **Step 2.2: 跑测试确认红（ImportError）**
 
 Run: `python -m pytest tests/unit/test_l3_st_score_weight.py -q`
 Expected: collection error——`ImportError: cannot import name '_ST_SCORE_WEIGHT_TIMEOUT' from 'orchestrator.tools.builtin.l3_spatial'`
 
-- [ ] **Step 2.3: 接线 `l3_spatial.py`（3 处）**
+- [x] **Step 2.3: 接线 `l3_spatial.py`（3 处）**
 
 ① L33 后追加常量：
 
@@ -514,7 +514,7 @@ _ST_SCORE_WEIGHT_TIMEOUT = 600
     ))
 ```
 
-- [ ] **Step 2.4: 名单 20→21（`tests/unit/test_l3_spatial.py` 两处）**
+- [x] **Step 2.4: 名单 20→21（`tests/unit/test_l3_spatial.py` 两处）**
 
 ① `test_st_registers_fourteen_tools`（L31-45）：docstring 与名单整段替换：
 
@@ -551,7 +551,7 @@ def test_register_fourteen_st_tools(reg):
         "st_vicinity"]
 ```
 
-- [ ] **Step 2.5: SECTION_TITLES（`section_digest.py`）**
+- [x] **Step 2.5: SECTION_TITLES（`section_digest.py`）**
 
 L60 `"st_metabolism": "空间代谢活性分析",` 行后插入：
 
@@ -559,7 +559,7 @@ L60 `"st_metabolism": "空间代谢活性分析",` 行后插入：
     "st_score_weight": "细胞型加权活性分析",
 ```
 
-- [ ] **Step 2.6: 附录 A 超时表 600 档追加（`2026-09-17-execution-plane-unification-design.md` L110 整行替换）**
+- [x] **Step 2.6: 附录 A 超时表 600 档追加（`2026-09-17-execution-plane-unification-design.md` L110 整行替换）**
 
 旧行：
 
@@ -573,17 +573,17 @@ L60 `"st_metabolism": "空间代谢活性分析",` 行后插入：
 | 600 | sc_load, sc_qc, sc_plot, sc_cellfreq, sc_meta, sc_cellcycle, st_load, st_qc, st_plot, st_niche, st_vicinity, st_trajectory, st_score_weight |
 ```
 
-- [ ] **Step 2.7: 契约测试转绿 + 三守卫全绿**
+- [x] **Step 2.7: 契约测试转绿 + 三守卫全绿**
 
 Run: `python -m pytest tests/unit/test_l3_st_score_weight.py tests/unit/test_l3_spatial.py tests/unit/test_l3_dispatch_contract.py tests/unit/test_report_digest.py -q`
 Expected: 全绿（4 新用例 + 三守卫，合计约 37 passed）
 
-- [ ] **Step 2.8: 门禁 + 全量**
+- [x] **Step 2.8: 门禁 + 全量**
 
 Run: `ruff check .` → `python -m mypy` → `python -m pytest -m "not pg" -q`
 Expected: ruff 零告警；mypy 204 files 零 issue；pytest **1366 passed**（基线 1362+4）
 
-- [ ] **Step 2.9: 单 commit 提交全部接线**
+- [x] **Step 2.9: 单 commit 提交全部接线**
 
 ```bash
 git add tests/unit/test_l3_st_score_weight.py orchestrator/tools/builtin/l3_spatial.py tests/unit/test_l3_spatial.py orchestrator/report/section_digest.py docs/superpowers/specs/2026-09-17-execution-plane-unification-design.md
@@ -597,7 +597,7 @@ git commit -m "feat: st_score_weight L3 接线（契约测试+三守卫联动单
 **Files:**
 - Modify: `.github/workflows/ci.yml`（st_metabolism 冒烟步 L183-186 之后）
 
-- [ ] **Step 3.1: ci.yml 追加冒烟步**
+- [x] **Step 3.1: ci.yml 追加冒烟步**
 
 st_metabolism 冒烟步（L183-186）之后插入：
 
@@ -608,12 +608,12 @@ st_metabolism 冒烟步（L183-186）之后插入：
         run: python scripts/_smoke_st_score_weight.py
 ```
 
-- [ ] **Step 3.2: 三重门禁**
+- [x] **Step 3.2: 三重门禁**
 
 Run: `ruff check .` → `python -m mypy` → `python -m pytest -m "not pg" -q`
 Expected: 全绿，pytest 1366 passed 零回归
 
-- [ ] **Step 3.3: Commit + push + CI 验证**
+- [x] **Step 3.3: Commit + push + CI 验证**
 
 ```bash
 git add .github/workflows/ci.yml
@@ -630,7 +630,7 @@ Expected: pre-push 四连门全绿；push 后仓库已转 public（Actions 免�
 **Files:**
 - Create: `bio_workspace/_eval/real_st_deconvolve_oscc.py`（bio_workspace 被 .gitignore，提交需 `git add -f`）
 
-- [ ] **Step 4.1: 写 deconvolve 驱动脚本**
+- [x] **Step 4.1: 写 deconvolve 驱动脚本**
 
 参数全部沿用 2026-09-12 真实 Visium 验收定型口径（`_validate_st_real_chain.py` L145-148 + 测试总结 L847-876）；容器侧 payload 键名按 `l3_spatial.py` st_deconvolve handler L197-205 的 `sc_ref_path` 分支（bio_test_data 目录挂载 /data）；st 镜像 + /opt/st_tools（注意与 Task 1 工具的 bio 镜像不同）：
 
@@ -685,13 +685,13 @@ assert out_h5ad.exists()
 print("REAL DECONV OK: oscc deconv.h5ad 落盘")
 ```
 
-- [ ] **Step 4.2: 后台跑长任务**
+- [x] **Step 4.2: 后台跑长任务**
 
 Run（非阻塞后台，轮询查状态）: `python bio_workspace/_eval/real_st_deconvolve_oscc.py`
 Expected: 输出 `REAL DECONV OK: oscc deconv.h5ad 落盘`（耗时约 2h；ref 训练阶段无 stdout 属正常，cell2location 进度在 stderr）。
 若超时/失败：如实记录报错尾部（stderr 最后 600 字符），不阻塞 Task 5 之外的交付；历史教训（三次超时+僵尸容器）见测试总结 L863-876。
 
-- [ ] **Step 4.3: ruff + Commit**
+- [x] **Step 4.3: ruff + Commit**
 
 ```bash
 ruff check bio_workspace/_eval/real_st_deconvolve_oscc.py
@@ -706,7 +706,7 @@ git commit -m "feat: oscc deconvolve 前置驱动（Phase 76，历史定型参�
 **Files:**
 - Create: `bio_workspace/_eval/real_st_score_weight_oscc.py`（git add -f）
 
-- [ ] **Step 5.1: 写验收脚本**
+- [x] **Step 5.1: 写验收脚本**
 
 前置：Task 4 已落 `bio_workspace/oscc/deconv.h5ad`。S1/S2/S3 判据按 spec §6.3 预注册，不过不阻塞、如实记录：
 
@@ -817,12 +817,12 @@ print("\nREAL OK: st_score_weight oscc 双 source 验收完成"
       "（判据如实记录于测试总结 #21）")
 ```
 
-- [ ] **Step 5.2: 跑真机验收**
+- [x] **Step 5.2: 跑真机验收**
 
 Run: `python bio_workspace/_eval/real_st_score_weight_oscc.py`
 Expected: 末尾输出 `REAL OK`；记录：①两 source 的 n_celltypes/n_pathways/dropped；②Epithelial top3 与 S1/S2/S3 判定值；③各细胞型 top3（gs/mb 两口径）。
 
-- [ ] **Step 5.3: ruff + Commit**
+- [x] **Step 5.3: ruff + Commit**
 
 ```bash
 ruff check bio_workspace/_eval/real_st_score_weight_oscc.py
@@ -838,7 +838,7 @@ git commit -m "feat: st_score_weight oscc 真机验收（双 source+S1/S2/S3 预
 - Modify: `测试总结+2026-09-09T01-55-00.md`（文末追加 #21 段落）
 - Modify: 本计划文件（勾选全部 checkbox）
 
-- [ ] **Step 6.1: 回填测试总结**
+- [x] **Step 6.1: 回填测试总结**
 
 在 `测试总结+2026-09-09T01-55-00.md` 文末追加 `## 2026-09-2X Phase 76 收口回填（#21 …）` 段落，沿用该文件既有"日期+Phase 段落"压缩文体，须涵盖：
 
@@ -849,7 +849,7 @@ git commit -m "feat: st_score_weight oscc 真机验收（双 source+S1/S2/S3 预
 - ⑤ 真机验收：双 source n_celltypes/n_pathways、Epithelial top3、S1/S2/S3 判定值、summary json 路径，commit hash
 - 后续建议/挂账：如 deconvolve 长任务失败则挂账；生物学解读深化（如 CAF×TGFb 与联读结论交叉）另立
 
-- [ ] **Step 6.2: 勾选本计划全部 checkbox + 最终 push**
+- [x] **Step 6.2: 勾选本计划全部 checkbox + 最终 push**
 
 ```bash
 git add "测试总结+2026-09-09T01-55-00.md" docs/superpowers/plans/2026-09-21-phase76-st-score-weight.md
