@@ -56,6 +56,8 @@ SECTION_TITLES: dict[str, str] = {
     "st_markers": "空间标志基因分析",
     "st_plot": "空间可视化",
     "st_domains": "空间结构域识别",
+    "st_genescore": "空间通路活性分析（PROGENy）",
+    "st_metabolism": "空间代谢活性分析",
     "st_commot": "空间细胞通讯（COMMOT）",
     "st_cellchat_v2": "空间细胞通讯（CellChat v2）",
     "st_nichenet": "空间配体活性优先级（NicheNet）",

@@ -28,6 +28,9 @@ _SC_SCRIPT_DIR = "/opt/sc_tools"
 # Phase 68：st_niche_scan 全 niche 批量（串行多 niche，档位 ×2 于单 niche）
 _NICHE_SCAN_TIMEOUT = 3600
 _ST_INTEGRATE_TIMEOUT = 1800
+# Phase 75：st 侧通路/代谢（bio 镜像 sc_tools 跨镜像分发，st_integrate 先例）
+_ST_GENESCORE_TIMEOUT = 1800
+_ST_METABOLISM_TIMEOUT = 1800
 
 
 def _err(exc: BioRunError) -> dict[str, str]:
@@ -421,6 +424,45 @@ def register_l3_spatial(
                     "spatial_offset": spatial_offset,
                 }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
                 timeout_sec=_ST_INTEGRATE_TIMEOUT)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_genescore(*, dataset_ref: str, groupby: str = "spatial_domain",
+                     top_n: int = 14) -> dict[str, Any]:
+        """spot 级 PROGENy 通路活性（Phase 75）：要求 obsm.spatial
+        （st_process 产物），dc.mt.mlm 逐 spot 计算（无空间平滑），
+        groupby 默认 spatial_domain；bio 镜像跨镜像分发，产物落
+        {ds}/st_genescore/（与 sc 版 genescore/ 目录互不覆盖）。"""
+        try:
+            out = runner.run(
+                "st_genescore", {
+                    "dataset_id": dataset_ref,
+                    "groupby": groupby,
+                    "top_n": top_n,
+                }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
+                timeout_sec=_ST_GENESCORE_TIMEOUT)
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def st_metabolism(*, dataset_ref: str, method: str = "aucell",
+                      groupby: str = "spatial_domain",
+                      species: str = "human") -> dict[str, Any]:
+        """spot 级 KEGG 代谢活性（Phase 75）：AUCell（默认）/score_genes
+        双口径与 sc_metabolism 一致，要求 obsm.spatial，groupby 默认
+        spatial_domain；产物落 {ds}/st_metabolism/。"""
+        try:
+            out = runner.run(
+                "st_metabolism", {
+                    "dataset_id": dataset_ref,
+                    "method": method,
+                    "groupby": groupby,
+                    "species": species,
+                }, image=bio_image, script_dir=_SC_SCRIPT_DIR,
+                timeout_sec=_ST_METABOLISM_TIMEOUT)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -1012,4 +1054,73 @@ def register_l3_spatial(
         risk_level="L1_compute",
         handler=st_integrate,
         timeout_sec=_ST_INTEGRATE_TIMEOUT,
+    ))
+    registry.register(ToolSpec(
+        name="st_genescore",
+        description=(
+            "spot 级空间版本 PROGENy 14 通路活性打分（Phase 75）：要求"
+            " obsm['spatial']（st_load/st_process 产物），dc.mt.mlm 逐"
+            " spot 计算（无空间平滑），groupby 默认 spatial_domain。"
+            "产物落 {ds}/st_genescore/（scores/group_mean/heatmap/"
+            "spatial 四件套+可选 umap），与 sc_genescore（细胞级、"
+            "leiden 默认）目录互不覆盖。仅支持 human（PROGENy 无 "
+            "mouse 模型）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_process 输出的 "
+                                               "dataset_ref（含 "
+                                               "obsm.spatial）"},
+                "groupby": {"type": "string",
+                            "default": "spatial_domain",
+                            "description": "分组 obs 列（空间域）；"
+                                           "域数 <2 拒收引导换列"},
+                "top_n": {"type": "integer", "default": 14,
+                          "minimum": 3, "maximum": 14,
+                          "description": "方差排序取前 N 通路"
+                                         "（热图/空间图）"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_genescore,
+        timeout_sec=_ST_GENESCORE_TIMEOUT,
+    ))
+    registry.register(ToolSpec(
+        name="st_metabolism",
+        description=(
+            "spot 级空间版本 KEGG 代谢通路活性（Phase 75）：要求 "
+            "obsm['spatial']，AUCell（默认）/score_genes 双口径与 "
+            "sc_metabolism 一致，groupby 默认 spatial_domain，species "
+            "human|mouse（默认 human）。产物落 {ds}/st_metabolism/"
+            "（scores/group_mean/heatmap/spatial 四件套+可选 umap）。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_ref": {"type": "string",
+                                "description": "st_process 输出的 "
+                                               "dataset_ref（含 "
+                                               "obsm.spatial）"},
+                "method": {"type": "string", "default": "aucell",
+                           "enum": ["aucell", "mean"],
+                           "description": "aucell=排名 AUC（默认，"
+                                          "对齐 scMetabolism）；"
+                                          "mean=score_genes 均值差"},
+                "groupby": {"type": "string",
+                            "default": "spatial_domain",
+                            "description": "分组 obs 列（空间域）"},
+                "species": {"type": "string",
+                            "enum": ["human", "mouse"],
+                            "default": "human",
+                            "description": "KEGG 库（kegg.json / "
+                                           "kegg_mouse.json）"},
+            },
+            "required": ["dataset_ref"],
+        },
+        risk_level="L1_compute",
+        handler=st_metabolism,
+        timeout_sec=_ST_METABOLISM_TIMEOUT,
     ))
