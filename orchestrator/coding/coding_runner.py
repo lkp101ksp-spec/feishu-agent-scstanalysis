@@ -346,6 +346,10 @@ class CodingRunner:
         # create 型完整 suggestion 进程内暂存（improve_id → suggestion），
         # 回调按 id 取回（不落库，进程重启卡片失效点不动——code_approval 同款口径）
         self._pending_create: dict[str, dict[str, Any]] = {}
+        # /skill install 前置暂存（chat_id → (message_id, file_key)）：
+        # zip 附件消息先到达缓存，用户再发 /skill install 触发校验发卡
+        # （飞书单消息单类型，附件与文字无法同条——进程内暂存，重启即失效）
+        self._pending_zip: dict[str, tuple[str, str]] = {}
         s = settings
         self.ws = WorkspaceManager(Path(getattr(s, "code_workspace_root", "./code_workspace")))
         self.skills_dir = Path(getattr(s, "code_skills_dir", "./skills"))

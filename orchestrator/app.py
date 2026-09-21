@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -57,6 +59,21 @@ if TYPE_CHECKING:
 SYSTEM_PROMPT = "你是飞书科研助手。请用简洁中文回答，不超过 200 字。"
 
 logger = logging.getLogger(__name__)
+
+
+def _frontmatter_name(skill_md: str) -> str:
+    """从 SKILL.md frontmatter 解析 name 字段（与 skill_loader 同语义）。
+
+    缺 frontmatter / 未闭合 / 无 name 字段均返回空串（调用方兜底）。
+    """
+    text = skill_md.lstrip()
+    if not text.startswith("---"):
+        return ""
+    end = text.find("\n---", 3)
+    if end < 0:
+        return ""
+    m = re.search(r"^\s*name\s*:\s*(.+)$", text[3:end], re.MULTILINE)
+    return m.group(1).strip() if m else ""
 
 
 class Orchestrator:
@@ -279,6 +296,16 @@ class Orchestrator:
             coding_result: dict[str, Any] = runner.handle(incoming)
             return coding_result
 
+        # 1.681 文件附件到达（Phase 77 /skill install 前置）：zip 暂存待确认。
+        # 飞书单消息单类型——附件与 /skill install 文字必为两条消息，
+        # 故附件先存 coding_runner._pending_zip，文字命令到达时再消费。
+        if incoming.file_key:
+            return self._handle_skill_zip_attachment(incoming)
+
+        # 1.682 /skill install 指令：手动安装 zip skill（Phase 77 手动入口）
+        if stripped == "/skill install" or stripped.startswith("/skill install "):
+            return self._handle_skill_install(incoming)
+
         # 1.69 /model 指令：模型切换状态卡（Phase 30，admin 限定）
         if stripped == "/model" or stripped.startswith("/model "):
             svc = getattr(self, "model_switch_service", None)
@@ -304,7 +331,8 @@ class Orchestrator:
                 incoming.chat_id,
                 f"[未知命令] {stripped.split()[0]}\n"
                 "可用命令：/research <任务>（研究分析）· /code <任务>（代码任务）· "
-                "/code clear（清空工作区）· /model（模型切换，管理员）· "
+                "/code clear（清空工作区）· /skill install（安装 zip skill）· "
+                "/model（模型切换，管理员）· "
                 "/bind-doc <doc_id>（绑定文档）· /clear（清空会话记忆）· /template-list（我的模板）\n"
                 "或直接发自然语言，我会自动判断任务意图。",
             )
@@ -412,6 +440,81 @@ class Orchestrator:
             "doc_id": doc_id,
             "warning": warning,
         }
+
+    def _handle_skill_zip_attachment(
+            self, incoming: IncomingMessage) -> dict[str, Any]:
+        """zip 附件到达（Phase 77 /skill install 前置）：暂存 file_key 并引导。
+
+        仅当 coding_runner 装配了 installer 且附件为 .zip 时响应；
+        其余文件消息静默跳过（与 Phase 77 前非文本消息被拒的体感一致，
+        不打扰正常发文件的场景）。暂存为进程内 dict（重启即失效，
+        与 _pending_create 同款口径）。
+        """
+        runner = getattr(self, "coding_runner", None)
+        installer = getattr(runner, "installer", None) if runner else None
+        fname = (incoming.file_name or "").lower()
+        if runner is None or installer is None or not fname.endswith(".zip"):
+            return {"status": "skipped", "reason": "file_ignored"}
+        runner._pending_zip[incoming.chat_id] = (
+            incoming.message_id, incoming.file_key or "")
+        self.im.reply(
+            incoming.chat_id,
+            f"[已收到] {incoming.file_name or 'skill.zip'}\n"
+            "发送 /skill install 校验并安装（审批卡确认后落盘，同名覆盖自动备份）",
+        )
+        return {"status": "skill_zip_received",
+                "file_name": incoming.file_name or ""}
+
+    def _handle_skill_install(self, incoming: IncomingMessage) -> dict[str, Any]:
+        """/skill install 手动入口（Phase 77）：取暂存 zip → 下载 → 校验 →
+        create 审批卡（source=manual，overwrite=True 允许覆盖同名 skill）。
+
+        批准后由 gateway 回调 create 分支走 installer.install 落盘
+        skills/<name>/（整目录 .bak 兜底），与自动复盘共用同一审批链。
+        """
+        from orchestrator.coding.coding_runner import _skill_improve_card
+        from shared.ulid_ import new_ulid
+
+        runner = getattr(self, "coding_runner", None)
+        installer = getattr(runner, "installer", None) if runner else None
+        if runner is None or installer is None:
+            self.im.reply(incoming.chat_id, "[错误] skill 安装器未配置")
+            return {"status": "skill_install_unavailable"}
+        item = runner._pending_zip.pop(incoming.chat_id, None)
+        if item is None:
+            self.im.reply(
+                incoming.chat_id,
+                "「/skill install」用法：先发送 skill zip 压缩包"
+                "（含 SKILL.md/tools.yaml/*.py），再发 /skill install",
+            )
+            return {"status": "skill_install_no_zip"}
+        message_id, file_key = item
+        tmp_dir = Path(tempfile.mkdtemp(prefix="skill_install_"))
+        zip_path = tmp_dir / f"{new_ulid()}.zip"
+        try:
+            self.im.download_message_file(message_id, file_key, zip_path)
+        except Exception as exc:  # noqa: BLE001 —— 下载失败转文本回执，不崩主流程
+            logger.warning("skill install zip download failed: %s", exc)
+            self.im.reply(incoming.chat_id, f"[错误] zip 下载失败：{exc}")
+            return {"status": "skill_install_download_failed",
+                    "error": str(exc)}
+        validated = installer.validate_zip(zip_path)
+        if not validated.get("ok"):
+            self.im.reply(incoming.chat_id,
+                          f"[拒绝] zip 校验未通过：{validated['error']}")
+            return {"status": "skill_install_rejected",
+                    "reason": str(validated["error"])}
+        files = validated["files"]
+        name = _frontmatter_name(files["SKILL.md"]) or "unnamed"
+        suggestion = {"ok": True, "kind": "create", "skill": name,
+                      "issue": "手动 install（用户上传 zip）",
+                      "fix": "用户显式安装", "files": files,
+                      "source": "manual", "overwrite": True}
+        card = _skill_improve_card(incoming.sender_open_id, suggestion)
+        improve_id = card["elements"][1]["actions"][0]["value"]["skill_improve_id"]
+        runner._pending_create[improve_id] = suggestion
+        self.im.send_card(incoming.chat_id, card)
+        return {"status": "skill_install_card_sent", "skill": name}
 
     def _handle_bind(self, incoming: IncomingMessage) -> dict[str, Any]:
         """处理 /bind-doc <doc_id> 指令。"""

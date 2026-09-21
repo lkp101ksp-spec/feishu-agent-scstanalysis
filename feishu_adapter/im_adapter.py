@@ -127,6 +127,30 @@ class IMAdapter:
             raise LarkCLIError(
                 f"im patch failed: code={resp.code} msg={resp.msg}")
 
+    def download_message_file(self, message_id: str, file_key: str,
+                              dest_path: Any) -> None:
+        """下载消息中的文件附件到本地路径（Phase 77：/skill install zip 拉取）。
+
+        GET /open-apis/im/v1/messages/:message_id/resources/:file_key?type=file；
+        仅 SDK 路径（CLI 无对应子命令），失败抛 LarkCLIError。
+        """
+        import lark_oapi as lark
+
+        if self.sdk_client is None:
+            raise NotImplementedError(
+                "download_message_file requires sdk_client")
+        request = (lark.im.v1.GetMessageResourceRequest.builder()
+                   .message_id(message_id)
+                   .file_key(file_key)
+                   .type("file")
+                   .build())
+        resp = self.sdk_client.im.v1.message_resource.get(request)
+        if not resp.success():
+            raise LarkCLIError(
+                f"file download failed: code={resp.code} msg={resp.msg}")
+        with open(dest_path, "wb") as f:
+            f.write(resp.file.read())
+
     @staticmethod
     def _card_json(card: dict[str, Any]) -> str:
         """简化卡片结构 → 合法卡片 JSON 串（header 字符串/dict 双形态归一）。"""

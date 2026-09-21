@@ -89,6 +89,25 @@ def normalize_im_event(payload: dict[str, Any]) -> IncomingMessage:
     except (KeyError, TypeError) as e:
         raise NormalizeError(f"missing required field: {e}") from e
 
+    # Phase 77：file 消息放行（/skill install 的 zip 附件通道）——
+    # content 为 {"file_key": ..., "file_name": ...}，text 置空串，
+    # 由 Orchestrator 的附件分支消费；其余非文本类型仍拒绝。
+    if msg_type == "file":
+        try:
+            fcontent = json.loads(message["content"])
+            file_key = fcontent["file_key"]
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            raise NormalizeError(f"invalid file content: {e}") from e
+        return IncomingMessage(
+            message_id=message_id,
+            chat_id=chat_id,
+            sender_open_id=sender_open_id,
+            text="",
+            chat_type=message.get("chat_type", "") or "",
+            file_key=file_key,
+            file_name=str(fcontent.get("file_name", "") or ""),
+        )
+
     if msg_type != "text":
         raise NormalizeError(f"skip non-text message_type={msg_type}")
 

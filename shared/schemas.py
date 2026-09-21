@@ -19,6 +19,10 @@ class IncomingMessage(BaseModel):
     # 消息级临时写入锚点（#写到 语法）：仅影响本条消息的写入位置，
     # 优先于会话级 bind_anchor
     write_anchor: Optional[str] = None
+    # 文件附件（Phase 77 /skill install）：msg_type=file 时由 normalizer 提取，
+    # text 为空串；非文件消息均为 None
+    file_key: Optional[str] = None
+    file_name: Optional[str] = None
 
 
 class ChatMessage(BaseModel):

@@ -280,8 +280,12 @@ def process_card_payload(app: FastAPI, payload: dict[str, Any]) -> dict[str, Any
                 if full is None:
                     return {"ok": False, "status": "apply_failed",
                             "reason": "suggestion expired (restart?)"}
+                # Phase 77 Task 4：手动 install（source=manual）带
+                # overwrite=True——允许覆盖同名 skill（整目录 .bak 兜底）；
+                # 自动复盘 create 不带该标志，保持拒覆盖语义
                 applied = installer.install(str(full.get("skill", "")),
-                                            full.get("files") or {})
+                                            full.get("files") or {},
+                                            overwrite=bool(full.get("overwrite")))
             else:
                 diagnoser = getattr(runner, "diagnoser", None)
                 if diagnoser is None:
