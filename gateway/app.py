@@ -254,12 +254,6 @@ def process_card_payload(app: FastAPI, payload: dict[str, Any]) -> dict[str, Any
             return {"ok": False, "status": "already_handled", "decision": ""}
         if decision != "approve":
             return {"ok": True, "status": "decided", "decision": decision}
-        diagnoser = getattr(
-            getattr(ctx.orchestrator, "coding_runner", None), "diagnoser", None)
-        if diagnoser is None:
-            logger.warning("skill_improve approved but diagnoser not configured")
-            return {"ok": False, "status": "decided", "decision": decision,
-                    "reason": "skill diagnoser not configured"}
         try:
             suggestion = json.loads(payload.get("suggestion", "") or "{}")
         except ValueError:
@@ -270,8 +264,32 @@ def process_card_payload(app: FastAPI, payload: dict[str, Any]) -> dict[str, Any
                 detail={"skill": "", "reason": "bad suggestion json"})
             return {"ok": False, "status": "apply_failed",
                     "reason": "bad suggestion json"}
+        # Phase 77：按 kind 分派——create 走 installer.install（完整 suggestion
+        # 经 coding_runner._pending_create 按 improve_id 取回），patch 走原
+        # diagnoser.apply。diagnoser 判空移入 patch 分支（create 不需要）。
+        kind = payload.get("kind") or suggestion.get("kind", "patch")
+        runner = getattr(ctx.orchestrator, "coding_runner", None)
         try:
-            applied = diagnoser.apply(suggestion)
+            if kind == "create":
+                installer = getattr(runner, "installer", None)
+                pending = getattr(runner, "_pending_create", {})
+                full = pending.pop(payload.get("skill_improve_id", ""), None)
+                if installer is None:
+                    return {"ok": False, "status": "decided", "decision": decision,
+                            "reason": "skill installer not configured"}
+                if full is None:
+                    return {"ok": False, "status": "apply_failed",
+                            "reason": "suggestion expired (restart?)"}
+                applied = installer.install(str(full.get("skill", "")),
+                                            full.get("files") or {})
+            else:
+                diagnoser = getattr(runner, "diagnoser", None)
+                if diagnoser is None:
+                    logger.warning(
+                        "skill_improve approved but diagnoser not configured")
+                    return {"ok": False, "status": "decided", "decision": decision,
+                            "reason": "skill diagnoser not configured"}
+                applied = diagnoser.apply(suggestion)
         except Exception as e:  # noqa: BLE001 —— 写回异常转为卡片可见错误
             logger.exception("skill_improve apply crashed")
             _audit_event(
@@ -290,15 +308,18 @@ def process_card_payload(app: FastAPI, payload: dict[str, Any]) -> dict[str, Any
                         "reason": applied.get("error", "")})
             return {"ok": False, "status": "apply_failed",
                     "reason": applied.get("error", "")}
+        # audit detail 兼容双 kind：create 用 dir 键（installer 返回），
+        # patch 用 file 键（diagnoser 返回）
         _audit_event(
             app, actor_type="system", actor_id="skill_diagnoser",
             action="skill_improve_applied", target_type="skill",
             target_id=payload.get("skill_improve_id", ""),
             detail={"skill": suggestion.get("skill", ""),
-                    "file": applied.get("file", ""),
+                    "kind": kind,
+                    "file": applied.get("file", applied.get("dir", "")),
                     "backup": applied.get("backup", "")})
-        return {"ok": True, "status": "applied",
-                "file": applied.get("file", ""),
+        return {"ok": True, "status": "applied", "kind": kind,
+                "file": applied.get("file", applied.get("dir", "")),
                 "backup": applied.get("backup", "")}
     # Phase 38：research_intent 分支（意图预判确认卡，research/code 双路由）。
     # owner 内嵌比对 + 内存幂等（同 code_approval 模式）；批准后按路由转

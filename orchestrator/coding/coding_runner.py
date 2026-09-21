@@ -32,6 +32,8 @@ from shared.ulid_ import new_ulid
 if TYPE_CHECKING:
     from orchestrator.approval_broker import ApprovalBroker
     from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+    from orchestrator.coding.skill_distiller import SkillDistiller
+    from orchestrator.coding.skill_installer import SkillInstaller
     from shared.schemas import IncomingMessage
 
 logger = logging.getLogger(__name__)
@@ -267,23 +269,48 @@ def _cap_suggestion(suggestion: dict[str, Any]) -> dict[str, Any]:
 
 
 def _skill_improve_card(owner: str, suggestion: dict[str, Any]) -> dict[str, Any]:
-    """skill 改进审批卡（Phase 27）：value 内嵌 owner + suggestion JSON（回调不查库）。"""
+    """skill 改进/沉淀审批卡（Phase 27 patch / Phase 77 create 双 kind）。
+
+    create 型 files 全文不内嵌按钮 value（长度限制）——卡片展示 files 键
+    清单，value 内嵌的 suggestion 只带 files 键 list；完整内容经
+    CodingRunner._pending_create[improve_id] 进程内暂存，回调按 id 取回。
+    """
     improve_id = new_ulid()
-    capped = _cap_suggestion(suggestion)
-    patch_preview = capped["patch"][:200] + ("…" if len(capped["patch"]) > 200 else "")
-    lines = "\n".join([
-        f"- skill：**{capped['skill']}**",
-        f"- 问题：{capped['issue']}",
-        f"- 建议：{capped['fix']}",
-        f"- 目标文件：{capped['file']}",
-        f"- patch 预览：{patch_preview or '（空）'}",
-    ])
+    kind = str(suggestion.get("kind", "patch"))
     base_value = {"action": "skill_improve", "skill_improve_id": improve_id,
-                  "owner": owner,
-                  "suggestion": json.dumps(capped, ensure_ascii=False)}
+                  "owner": owner, "kind": kind}
+    if kind == "create":
+        files = suggestion.get("files") or {}
+        file_keys = sorted(files) if isinstance(files, dict) else []
+        md_preview = str(files.get("SKILL.md", ""))[:300]
+        capped: dict[str, Any] = {"skill": str(suggestion.get("skill", ""))[:100],
+                  "issue": str(suggestion.get("issue", ""))[:300],
+                  "fix": str(suggestion.get("fix", ""))[:300],
+                  "kind": "create", "files": file_keys}
+        lines = "\n".join([
+            f"- 新 skill：**{capped['skill']}**（沉淀新建）",
+            f"- 重复模式：{capped['issue']}",
+            f"- 价值：{capped['fix']}",
+            f"- 文件：{', '.join(file_keys)}",
+            f"- SKILL.md 预览：{md_preview}{'…' if len(str(files.get('SKILL.md','')))>300 else ''}",
+        ])
+        title = "/code skill 沉淀审批（新建）"
+    else:
+        capped = _cap_suggestion(suggestion)
+        capped["kind"] = "patch"
+        patch_preview = capped["patch"][:200] + ("…" if len(capped["patch"]) > 200 else "")
+        lines = "\n".join([
+            f"- skill：**{capped['skill']}**",
+            f"- 问题：{capped['issue']}",
+            f"- 建议：{capped['fix']}",
+            f"- 目标文件：{capped['file']}",
+            f"- patch 预览：{patch_preview or '（空）'}",
+        ])
+        title = "/code skill 改进审批"
+    base_value["suggestion"] = json.dumps(capped, ensure_ascii=False)
     return {
         "config": {"wide_screen_mode": True},
-        "header": {"title": {"tag": "plain_text", "content": "/code skill 改进审批"}},
+        "header": {"title": {"tag": "plain_text", "content": title}},
         "elements": [
             {"tag": "div", "text": {"tag": "lark_md", "content": lines}},
             {"tag": "action", "actions": [
@@ -303,14 +330,22 @@ class CodingRunner:
 
     def __init__(self, *, llm: Any, im: Any, tool_handler: ToolHandler,
                  registry: ToolRegistry, broker: ApprovalBroker, settings: Any = None,
-                 diagnoser: "SkillDiagnoser | None" = None) -> None:
-        """diagnoser 为 Phase 27 SkillDiagnoser（可空，None 时跳过失败诊断）。"""
+                 diagnoser: "SkillDiagnoser | None" = None,
+                 distiller: "SkillDistiller | None" = None,
+                 installer: "SkillInstaller | None" = None) -> None:
+        """diagnoser 为 Phase 27 SkillDiagnoser（可空，None 时跳过失败诊断）；
+        distiller/installer 为 Phase 77 复盘器/落盘层（可空，None 时跳过成功复盘）。"""
         self.llm = llm
         self.im = im
         self.tool_handler = tool_handler
         self.registry = registry
         self.broker = broker
         self.diagnoser = diagnoser
+        self.distiller = distiller
+        self.installer = installer
+        # create 型完整 suggestion 进程内暂存（improve_id → suggestion），
+        # 回调按 id 取回（不落库，进程重启卡片失效点不动——code_approval 同款口径）
+        self._pending_create: dict[str, dict[str, Any]] = {}
         s = settings
         self.ws = WorkspaceManager(Path(getattr(s, "code_workspace_root", "./code_workspace")))
         self.skills_dir = Path(getattr(s, "code_skills_dir", "./skills"))
@@ -405,6 +440,8 @@ class CodingRunner:
         self.im.reply(incoming.chat_id, _render_result(result))
         # Phase 27：任务失败时自动诊断 skill 并发出改进审批卡（纯增量，失败静默）
         self._maybe_diagnose_skill(incoming, result, task_text)
+        # Phase 77：任务成功时复盘沉淀新 skill（纯增量，失败静默）
+        self._maybe_distill_skill(incoming, result, task_text)
         return {"status": result.status, "steps": result.steps,
                 "final_text": result.final_text}
 
@@ -433,6 +470,31 @@ class CodingRunner:
                 _skill_improve_card(incoming.sender_open_id, suggestion))
         except Exception:  # noqa: BLE001 —— 诊断是附加能力，绝不影响主流程
             logger.exception("skill diagnose/card failed (ignored)")
+
+    # ------------------------------------------------------------------ #
+    def _maybe_distill_skill(self, incoming: IncomingMessage, result: LoopResult,
+                             task_text: str) -> None:
+        """成功轨迹 → SkillDistiller 复盘 → create 审批卡；任何异常只记日志。
+
+        触发条件（与诊断互补）：status == final 且无连败禁用（真正成功）。
+        复盘是附加能力，绝不影响主流程。
+        """
+        if self.distiller is None:
+            return
+        if result.status != "final" or result.tools_disabled:
+            return
+        try:
+            suggestion = self.distiller.distill(result, task_text)
+            if not (suggestion.get("ok") and suggestion.get("skill")):
+                logger.info("skill distill skipped: %s",
+                            suggestion.get("reason", "no suggestion"))
+                return
+            card = _skill_improve_card(incoming.sender_open_id, suggestion)
+            improve_id = card["elements"][1]["actions"][0]["value"]["skill_improve_id"]
+            self._pending_create[improve_id] = suggestion
+            self.im.send_card(incoming.chat_id, card)
+        except Exception:  # noqa: BLE001 —— 复盘是附加能力，绝不影响主流程
+            logger.exception("skill distill/card failed (ignored)")
 
     # ------------------------------------------------------------------ #
     def _make_reporter(self, incoming: IncomingMessage,
