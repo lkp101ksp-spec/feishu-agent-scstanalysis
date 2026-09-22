@@ -1,6 +1,7 @@
 """SkillDistiller 单测（Phase 77 Task 2，spec §5）。"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -63,6 +64,31 @@ class TestTriggerFilter:
         llm = _FakeLLM(WORTH_JSON)
         d = SkillDistiller(llm, skills_dir)
         assert not d.distill(_loop(events), "task")["ok"] and llm.calls == 0
+
+    def test_json_cmd_args_trigger(self, skills_dir: Path) -> None:
+        """真机形态：agent_loop 写入的 args 为 {"cmd": [...]} JSON 摘要
+        （100 字符截断，可能不是合法 JSON）——首词须从 cmd 数组首元素提取。"""
+        events = [{"step": i, "name": "run_cmd", "ok": True,
+                   "args": json.dumps({"cmd": ["python", "-c", f"print({i})"]},
+                                      ensure_ascii=False)[:100]}
+                  for i in range(3)]
+        llm = _FakeLLM(WORTH_JSON)
+        d = SkillDistiller(llm, skills_dir)
+        out = d.distill(_loop(events), "task")
+        assert llm.calls == 1 and out["ok"]
+
+    def test_json_cmd_args_distinct_no_trigger(self, skills_dir: Path) -> None:
+        """真机形态反例：三条不同解释器（python/Rscript/node）不构成重复，
+        不得触发——若退化为整串 split 取首词会误判为同一 token '{"cmd":'。"""
+        cmds = ["python", "Rscript", "node"]
+        events = [{"step": i, "name": "run_cmd", "ok": True,
+                   "args": json.dumps({"cmd": [c, f"s{i}.py"]},
+                                      ensure_ascii=False)[:100]}
+                  for i, c in enumerate(cmds)]
+        llm = _FakeLLM(WORTH_JSON)
+        d = SkillDistiller(llm, skills_dir)
+        out = d.distill(_loop(events), "task")
+        assert not out["ok"] and llm.calls == 0
 
 
 class TestSchema:

@@ -174,7 +174,8 @@ class TestErrorSummary:
         ]
         llm = FakeLLM(seq)
         r = _loop(llm, lambda n, a: {"ok": True, "value": 1}).run("sys", "任务")
-        assert r.tool_events[0] == {"step": 1, "name": "t1", "ok": True}
+        assert r.tool_events[0] == {"step": 1, "name": "t1", "ok": True,
+                                    "args": "{}"}
 
 
 class TestWorkingMemory:
@@ -375,4 +376,5 @@ class TestDetails:
         ]
         llm = FakeLLM(seq)
         r = _loop(llm, lambda n, a: {"ok": True, "n": 1}).run("sys", "任务")
-        assert r.tool_events == [{"step": 1, "name": "t1", "ok": True}]
+        assert r.tool_events == [{"step": 1, "name": "t1", "ok": True,
+                                  "args": "{}"}]

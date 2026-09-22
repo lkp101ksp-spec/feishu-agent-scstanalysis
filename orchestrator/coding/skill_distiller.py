@@ -27,6 +27,9 @@ MAX_EVENTS_IN_PROMPT = 30
 MIN_REPEAT_RUN_CMD = 2     # 触发阈值：≥2 次重复手写 run_cmd
 REQUIRED_FIELDS = ("skill", "issue", "fix", "files")
 JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
+# 真机事件 args 为 {"cmd": [...]} JSON 摘要（agent_loop 100 字符截断，
+# 可能截成非法 JSON）——用正则取 cmd 数组首元素，容忍截断
+CMD_FIRST_RE = re.compile(r'"cmd"\s*:\s*\[\s*"([^"]+)"')
 
 PROMPT_TEMPLATE = """你是 skill 沉淀专家。一个 /code 任务已成功完成，轨迹如下：
 - 任务：{task_text}
@@ -109,12 +112,20 @@ class SkillDistiller:
                     and e.get("name") not in skill_tools]
         if len(run_cmds) < MIN_REPEAT_RUN_CMD:
             return False
-        # 公共模式：命令首词（解释器/可执行）出现 ≥2 次即视为重复手写
+        # 公共模式：命令首词（解释器/可执行）出现 ≥2 次即视为重复手写。
+        # args 双形态：真机为 {"cmd": [...]} JSON 摘要（正则提取，容忍截断），
+        # 单测/旧轨迹为裸命令字符串（split 取首词）
         first_words: dict[str, int] = {}
         for e in run_cmds:
-            cmd = str(e.get("args", "")).strip().split()
-            if cmd:
-                first_words[cmd[0]] = first_words.get(cmd[0], 0) + 1
+            raw = str(e.get("args", "")).strip()
+            m = CMD_FIRST_RE.search(raw)
+            if m:
+                head = m.group(1)
+            else:
+                parts = raw.split()
+                head = parts[0] if parts else ""
+            if head:
+                first_words[head] = first_words.get(head, 0) + 1
         return any(c >= MIN_REPEAT_RUN_CMD for c in first_words.values())
 
     def _skill_tool_names(self) -> set[str]:

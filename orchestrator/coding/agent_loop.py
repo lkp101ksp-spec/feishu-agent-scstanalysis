@@ -32,7 +32,7 @@ class LoopResult:
     steps: int                        # 已消耗的 LLM 轮数
     approx_tokens: int
     abort_reason: str = ""
-    tool_events: list[dict[str, Any]] = field(default_factory=list)  # {step,name,ok}
+    tool_events: list[dict[str, Any]] = field(default_factory=list)  # {step,name,ok,args,error?}
     # 连败禁用是否触发过（Phase 27 真机修复）：禁用后模型按引导文字收尾
     # 会得到 final 状态，诊断链依赖该标记区分"实质失败的 final"
     tools_disabled: bool = False
@@ -153,6 +153,9 @@ class AgentLoop:
                 args_brief = json.dumps(
                     args_obj if isinstance(args_obj, (dict, list)) else args_obj,
                     ensure_ascii=False, default=str)[:100]
+                # 参数摘要入事件（Phase 77 修复：distiller 触发过滤依赖
+                # args 提取命令首词，此前只进 working memory 不落事件）
+                event["args"] = args_brief
                 if not ok:
                     # 失败观察摘要进 events（Phase 28 T1：诊断器可见真实报错）
                     event["error"] = self._error_summary(obs)
