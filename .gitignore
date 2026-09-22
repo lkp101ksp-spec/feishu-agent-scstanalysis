@@ -67,3 +67,6 @@ _commit_msg.txt
 .ws_client.pid
 # ws_guardian 守护进程单实例 pidfile（2026-09-09 运维加固轮 2）
 .ws_guardian.pid
+
+# skill 覆盖安装的旧版本备份（2026-09-22 挂账③，installer 运行时产物）
+.skill_backups/

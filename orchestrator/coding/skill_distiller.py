@@ -47,6 +47,15 @@ PROMPT_TEMPLATE = """你是 skill 沉淀专家。一个 /code 任务已成功完
    - tools.yaml 工具只支持字段 name/description/parameters/command/timeout_sec
    - *.py 为可被 command 调用的脚本
 
+tools.yaml 硬性约定（违反即装上即坏，2026-09-22 真机实锤）：
+   - command 必须是 argv 字符串列表，如 ["python", "run.py"]——禁止字符串
+     （执行器按列表展开，字符串会被拆成单字符导致 WinError 2）
+   - 子进程工作目录 = skill 目录，脚本用相对文件名即可
+   - 运行时不做任何占位符替换（禁 {{{{path}}}} 之类）；parameters 会以
+     --参数名 值 的旗标形式追加到 argv，脚本必须用 argparse 接收同名参数
+   - 本机模式没有 /skill/ 路径（那是配 image 的容器模式挂载点）；要处理
+     宿主文件时由调用方传入绝对路径参数
+
 若不值得沉淀（一次性操作/与既有 skill 重叠/过于任务特异），只返回
 {{"worth": false}}。
 

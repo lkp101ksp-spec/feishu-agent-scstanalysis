@@ -47,6 +47,31 @@ class TestValidateFiles:
         assert not inst.validate_files({"SKILL.md": md})["ok"]
 
 
+class TestToolsYamlShape:
+    """tools.yaml command 形态校验（2026-09-22 真机实锤：字符串 command 装上即坏）。"""
+
+    def _files(self, command_yaml: str) -> dict[str, str]:
+        return {"SKILL.md": VALID_MD,
+                "tools.yaml": f"tools:\n  - name: run_x\n    command: {command_yaml}\n"}
+
+    def test_string_command_rejected(self, inst: SkillInstaller) -> None:
+        out = inst.validate_files(self._files('"python run.py"'))
+        assert not out["ok"] and "argv" in out["error"]
+
+    def test_placeholder_command_rejected(self, inst: SkillInstaller) -> None:
+        out = inst.validate_files(self._files('["python", "run.py", "{path}"]'))
+        assert not out["ok"] and "占位符" in out["error"]
+
+    def test_list_command_ok(self, inst: SkillInstaller) -> None:
+        out = inst.validate_files(self._files('["python", "run.py"]'))
+        assert out["ok"], out.get("error")
+
+    def test_invalid_yaml_rejected(self, inst: SkillInstaller) -> None:
+        out = inst.validate_files({"SKILL.md": VALID_MD,
+                                   "tools.yaml": "tools: [unclosed"})
+        assert not out["ok"] and "YAML" in out["error"]
+
+
 class TestValidateZip:
     def _mkzip(self, tmp_path: Path, members: dict[str, str]) -> Path:
         zp = tmp_path / "s.zip"
@@ -85,3 +110,9 @@ class TestInstall:
         out = inst.install("demo", {"SKILL.md": VALID_MD}, overwrite=True)
         assert out["ok"] and out["backup"]
         assert (d / "SKILL.md").read_text() == VALID_MD
+        # 备份落在 skills/ 之外的 .skill_backups/（防扫描污染+门禁误伤）
+        bak = Path(out["backup"])
+        assert bak.parent.name == ".skill_backups"
+        assert bak.parent.parent == tmp_path
+        assert (bak / "SKILL.md").read_text() == "old"
+        assert not (tmp_path / "skills" / bak.name).exists()

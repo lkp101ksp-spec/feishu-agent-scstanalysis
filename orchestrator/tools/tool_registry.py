@@ -69,6 +69,10 @@ class ToolRegistry:
     def register(self, spec: ToolSpec) -> None:
         self._tools[spec.name] = spec
 
+    def unregister(self, name: str) -> bool:
+        """注销工具（skill 热刷新用）；不存在返回 False。"""
+        return self._tools.pop(name, None) is not None
+
     def get(self, name: str) -> ToolSpec:
         if name not in self._tools:
             raise ToolNotFoundError(f"tool {name!r} not registered")

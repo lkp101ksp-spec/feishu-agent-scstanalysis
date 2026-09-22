@@ -53,6 +53,10 @@ PROMPT_TEMPLATE = """你是 skill 诊断专家。任务失败轨迹如下：
 重要约束：tools.yaml 工具只支持以下字段：name / description / parameters /
 command / timeout_sec。patch 中不得出现其他字段（如 max_retries、retry_on、
 param_variants 均不支持，写了也会被丢弃）；重试策略类建议请改写到 SKILL.md。
+command 形态硬性约定（改 command 时必须遵守）：argv 字符串列表（禁字符串，
+执行器按列表展开）；子进程工作目录=skill 目录，脚本写相对文件名；运行时
+不做占位符替换（禁 {{path}} 类），parameters 以 --参数名 值 旗标追加，脚本
+须 argparse 接收；本机模式无 /skill/ 路径（那是配 image 的容器挂载点）。
 
 只以 JSON 返回：{{"skill": "...", "issue": "...", "fix": "...", "file": "SKILL.md|tools.yaml", "patch": "..."}}"""  # noqa: E501
 

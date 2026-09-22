@@ -120,3 +120,32 @@ def test_restart_captures_stderr_and_injects_utf8(tmp_path, monkeypatch):
     assert kw["stderr"] is kw["stdout"]  # 同一句柄合并落盘
     assert (tmp_path / "logs" / "ws_client_stderr.log").exists()
     assert kw["env"]["PYTHONUTF8"] == "1"
+
+def test_write_heartbeat(tmp_path, monkeypatch):
+    """heartbeat 落 ISO 时间戳（2026-09-22 僵尸双实例治理：外部可判假死）。"""
+    from datetime import datetime
+
+    from scripts import ws_guardian
+    hb = tmp_path / "logs" / "ws_guardian.heartbeat"
+    ws_guardian.write_heartbeat(hb)
+    assert hb.exists()
+    datetime.fromisoformat(hb.read_text(encoding="utf-8"))  # 非法格式即抛
+
+
+def test_kill_other_guardians_non_win32_noop(monkeypatch):
+    """非 Windows 平台安全返回 0（不发起任何子进程）。"""
+    from scripts import ws_guardian
+    monkeypatch.setattr(ws_guardian.sys, "platform", "linux")
+    assert ws_guardian.kill_other_guardians() == 0
+
+
+def test_kill_other_guardians_powershell_failure_safe(monkeypatch):
+    """Windows 下查询/清扫异常不影响本实例（返回 0 并记日志）。"""
+    from scripts import ws_guardian
+    monkeypatch.setattr(ws_guardian.sys, "platform", "win32")
+
+    def _boom(*a, **k):
+        raise OSError("no powershell")
+
+    monkeypatch.setattr(ws_guardian.subprocess, "run", _boom)
+    assert ws_guardian.kill_other_guardians() == 0

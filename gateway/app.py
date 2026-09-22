@@ -26,6 +26,7 @@ from gateway.idempotency import build_idempotency_key
 from gateway.normalizer import NormalizeError, normalize_im_event
 from gateway.rate_limit import TokenBucket
 from gateway.signature import verify_lark_signature
+from orchestrator.coding.skill_loader import SkillLoader
 from persistence.repositories.idempotency_repo import IdempotencyRepo
 from shared.errors import (
     FeishuAgentError,
@@ -312,6 +313,18 @@ def process_card_payload(app: FastAPI, payload: dict[str, Any]) -> dict[str, Any
                         "reason": applied.get("error", "")})
             return {"ok": False, "status": "apply_failed",
                     "reason": applied.get("error", "")}
+        # 2026-09-22 挂账②：写回成功后热刷新 registry（免重启生效）；
+        # 刷新失败仅记日志（下任务 scan 拾新增、重启全量），不回滚落盘
+        _skill = suggestion.get("skill", "")
+        if kind == "create":
+            _skill = str((full or {}).get("skill", "")) or _skill
+        if runner is not None and _skill:
+            try:
+                rel = SkillLoader(runner.skills_dir).reload_skill(
+                    runner.registry, str(_skill))
+                logger.info("skill hot reload after apply: %s %s", _skill, rel)
+            except Exception:  # noqa: BLE001
+                logger.exception("skill hot reload failed (effective next restart)")
         # audit detail 兼容双 kind：create 用 dir 键（installer 返回），
         # patch 用 file 键（diagnoser 返回）
         _audit_event(
@@ -324,7 +337,6 @@ def process_card_payload(app: FastAPI, payload: dict[str, Any]) -> dict[str, Any
                     "backup": applied.get("backup", "")})
         # 成功 toast 须给用户一句人话（结构化字段本身不可读）；
         # create/patch 文案分开，含 skill 名与备份提示
-        _skill = suggestion.get("skill", "")
         if kind == "create":
             _msg = f"✅ skill「{_skill}」已安装，下个 /code 任务即可使用"
         else:

@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PIDFILE = _REPO_ROOT / ".ws_client.pid"
 _GUARDIAN_PIDFILE = _REPO_ROOT / ".ws_guardian.pid"
+_HEARTBEAT = _REPO_ROOT / "logs" / "ws_guardian.heartbeat"
 
 
 def _pid_alive(pid: int) -> bool:
@@ -54,6 +56,44 @@ def _release_guardian_pidfile() -> None:
     try:
         if _GUARDIAN_PIDFILE.read_text().strip() == str(os.getpid()):
             _GUARDIAN_PIDFILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def kill_other_guardians() -> int:
+    """单实例加固（2026-09-22 僵尸双实例治理）：清理其它 ws_guardian 进程。
+
+    pidfile 守卫有盲区（两实例并存且均停止 tick 的真机事故）：启动后按
+    命令行特征（含 ws_guardian）清扫同族非本进程。仅 Windows 生产路径
+    生效，其余平台/查询失败均安全返回 0。
+    """
+    if sys.platform != "win32":
+        return 0
+    ps = ("$ps = Get-CimInstance Win32_Process -Filter \"Name like 'python%'\""
+          " | Where-Object { $_.CommandLine -match 'ws_guardian' -and"
+          f" $_.ProcessId -ne {os.getpid()} }}"
+          "; $ps | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+          "; @($ps).Count")
+    try:
+        out = subprocess.run(  # noqa: S603
+            ["powershell", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=30)
+        n = int((out.stdout or "").strip() or "0")
+    except Exception:  # noqa: BLE001 —— 清扫失败不影响本实例守护
+        logger.exception("kill_other_guardians failed")
+        return 0
+    if n:
+        logger.warning("killed %d zombie guardian(s)", n)
+    return n
+
+
+def write_heartbeat(path: Path = _HEARTBEAT) -> None:
+    """每 tick 落一次 ISO 时间戳——外部可据文件新旧判 guardian 是否假死
+    （2026-09-22 事故：双僵尸实例日志静默数小时无人察觉）。"""
+    try:
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(datetime.now().isoformat(timespec="seconds"),
+                        encoding="utf-8")
     except OSError:
         pass
 
@@ -137,10 +177,13 @@ def main(interval_sec: int = 60) -> None:
         handlers=[handler, logging.StreamHandler()],
     )
     acquire_guardian_singleton()
+    killed = kill_other_guardians()
     guardian = WsGuardian(is_alive=_ws_alive, restart=_restart)
-    logger.info("ws guardian started (interval=%ss)", interval_sec)
+    logger.info("ws guardian started (interval=%ss, zombies_killed=%d)",
+                interval_sec, killed)
     while True:
         guardian.tick()
+        write_heartbeat()
         time.sleep(interval_sec)
 
 

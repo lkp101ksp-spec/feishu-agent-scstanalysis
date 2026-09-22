@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 logger = logging.getLogger(__name__)
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,30}$")
@@ -77,6 +79,10 @@ class SkillInstaller:
         fm_err = self._check_frontmatter(clean["SKILL.md"])
         if fm_err:
             return {"ok": False, "error": fm_err}
+        if "tools.yaml" in clean:
+            ty_err = self._check_tools_yaml(clean["tools.yaml"])
+            if ty_err:
+                return {"ok": False, "error": ty_err}
         return {"ok": True, "files": clean, "dropped": dropped}
 
     def validate_zip(self, zip_path: Path) -> dict[str, Any]:
@@ -117,7 +123,12 @@ class SkillInstaller:
 
     def install(self, name: str, files: dict[str, str],
                 *, overwrite: bool = False) -> dict[str, Any]:
-        """审批通过后落盘 skills/<name>/；overwrite 时整目录 .bak.<ts> 兜底。"""
+        """审批通过后落盘 skills/<name>/；overwrite 时旧目录移 .skill_backups/ 兜底。
+
+        备份目录放 skills/ 之外（skills_dir 同级 .skill_backups/）——2026-09-22
+        挂账③：.bak 目录落在 skills/ 内会被 SkillLoader `*/SKILL.md` 扫描
+        （重名工具跳过告警刷屏）且被 ruff/mypy 门禁扫到（旧脚本必挂 pre-push）。
+        """
         if not overwrite:
             chk = self.validate_name(name)
             if not chk.get("ok"):
@@ -130,7 +141,9 @@ class SkillInstaller:
             self.skills_dir.mkdir(parents=True, exist_ok=True)
             if target.exists():
                 ts = datetime.now().strftime("%Y%m%d%H%M%S")
-                bak = self.skills_dir / f"{name}.bak.{ts}"
+                bak_root = self.skills_dir.parent / ".skill_backups"
+                bak_root.mkdir(parents=True, exist_ok=True)
+                bak = bak_root / f"{name}.bak.{ts}"
                 shutil.move(str(target), str(bak))
                 backup = str(bak)
                 logger.info("existing skill moved to backup: %s", bak)
@@ -144,6 +157,37 @@ class SkillInstaller:
                 "files": sorted(files)}
 
     # ------------------------------------------------------------------ #
+    def _check_tools_yaml(self, tools_yaml: str) -> str:
+        """tools.yaml 形态校验（2026-09-22 实锤驱动：LLM 产物字符串 command 装上即坏）。
+
+        执行器（skill_loader._make_handler）按 `list(command)` 展开 argv——
+        字符串会被拆成单字符（真机 WinError 2 根因），故 command 必须是
+        非空字符串列表；占位符（{path}/{{files}}）不做替换，参数一律以
+        --k v 旗标追加，脚本须自行 argparse 接收。
+        """
+        try:
+            data = yaml.safe_load(tools_yaml) or {}
+        except yaml.YAMLError as exc:
+            return f"tools.yaml 非法 YAML: {exc}"
+        tools = data.get("tools") or []
+        if not isinstance(tools, list):
+            return "tools.yaml 的 tools 字段须为列表"
+        for t in tools:
+            if not isinstance(t, dict) or not t.get("name"):
+                return "tools.yaml 存在缺 name 的工具条目"
+            cmd = t.get("command")
+            if isinstance(cmd, str):
+                return (f"工具 {t['name']} 的 command 是字符串——执行器按 argv "
+                        "列表展开，字符串会被拆成单字符；请改为列表，"
+                        '如 ["python", "run.py"]')
+            if (not isinstance(cmd, list) or not cmd
+                    or not all(isinstance(x, str) and x.strip() for x in cmd)):
+                return f"工具 {t.get('name')} 的 command 须为非空字符串列表"
+            if any(re.search(r"\{+\w+\}+", x) for x in cmd):
+                return (f"工具 {t['name']} 的 command 含占位符（如 {{path}}）——"
+                        "运行时不做替换，参数以 --k v 旗标追加，脚本须 argparse 接收")
+        return ""
+
     def _check_frontmatter(self, skill_md: str) -> str:
         """SKILL.md frontmatter 须含 name/description，缺则返回错误串（否则空串）。"""
         text = skill_md.lstrip()

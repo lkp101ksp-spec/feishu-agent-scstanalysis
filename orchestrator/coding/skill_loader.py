@@ -94,6 +94,9 @@ class SkillLoader:
         if not self.skills_dir.is_dir():
             return 0
         for md in sorted(self.skills_dir.glob("*/SKILL.md")):
+            # 防御性跳过隐藏/备份目录（.bak 已移出 skills/，此处兜历史残留）
+            if md.parent.name.startswith(".") or ".bak" in md.parent.name:
+                continue
             skill = self._parse_skill(md)
             if skill is None:
                 continue
@@ -148,20 +151,46 @@ class SkillLoader:
                     continue
                 except Exception:  # ToolNotFoundError —— 未注册，正常路径
                     pass
-                spec = ToolSpec(
-                    name=name,
-                    description=f"[skill:{skill.name}] {t.get('description', '')}",
-                    parameters=t.get("parameters") or {"type": "object", "properties": {}},
-                    risk_level="L2_side_effect",
-                    handler=_make_handler(list(t["command"]), skill.directory,
-                                          int(t.get("timeout_sec", 300)),
-                                          image=t.get("image")),
-                    requires_approval=False,   # 审批由 AgentLoop risk_map 统一把关
-                    timeout_sec=int(t.get("timeout_sec", 300)),
-                )
-                registry.register(spec)
+                registry.register(self._tool_spec(skill, t))
                 count += 1
         return count
+
+    def reload_skill(self, registry: ToolRegistry, name: str) -> dict[str, Any]:
+        """热刷新单个 skill 的工具注册（安装/写回后免重启生效）。
+
+        2026-09-22 挂账②：register_tools 重名跳过使已注册 skill 的
+        tools.yaml 变更在运行期不生效（需重启）。此处按 [skill:<name>]
+        描述前缀卸载旧工具（含新版已删除的工具），重扫该目录并强制
+        重注册（register 同名覆写）。返回 {"ok", "removed", "added"}。
+        """
+        prefix = f"[skill:{name}]"
+        removed = [t.name for t in registry.list()
+                   if t.description.startswith(prefix)]
+        for tn in removed:
+            registry.unregister(tn)
+        added: list[str] = []
+        skill = self._parse_skill(self.skills_dir / name / "SKILL.md")
+        if skill is not None:
+            for t in skill.tools:
+                registry.register(self._tool_spec(skill, t))
+                added.append(str(t["name"]))
+        logger.info("skill hot reload: %s removed=%s added=%s", name, removed, added)
+        return {"ok": True, "removed": removed, "added": added}
+
+    @staticmethod
+    def _tool_spec(skill: LoadedSkill, t: dict[str, Any]) -> ToolSpec:
+        """由 tools.yaml 条目构造 ToolSpec（register_tools/reload_skill 共用）。"""
+        return ToolSpec(
+            name=str(t["name"]),
+            description=f"[skill:{skill.name}] {t.get('description', '')}",
+            parameters=t.get("parameters") or {"type": "object", "properties": {}},
+            risk_level="L2_side_effect",
+            handler=_make_handler(list(t["command"]), skill.directory,
+                                  int(t.get("timeout_sec", 300)),
+                                  image=t.get("image")),
+            requires_approval=False,   # 审批由 AgentLoop risk_map 统一把关
+            timeout_sec=int(t.get("timeout_sec", 300)),
+        )
 
     # ------------------------------------------------------------------ #
     def build_system_knowledge(self, task_text: str, top: int = 3,

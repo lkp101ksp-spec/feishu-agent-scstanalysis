@@ -111,3 +111,26 @@ class TestSchema:
                ' "files": {"run_x.py": "print(1)"}}')  # 缺 SKILL.md
         d = SkillDistiller(_FakeLLM(bad), skills_dir)
         assert not d.distill(_loop(_run_cmd_events(3)), "t")["ok"]
+
+
+class TestCommandConvention:
+    """command 约定双保险（2026-09-22 挂账①）：prompt 教学 + installer 拦截。"""
+
+    def test_distiller_prompt_teaches_convention(self) -> None:
+        from orchestrator.coding.skill_distiller import PROMPT_TEMPLATE
+        assert "argv" in PROMPT_TEMPLATE and "argparse" in PROMPT_TEMPLATE
+
+    def test_diagnoser_prompt_teaches_convention(self) -> None:
+        from orchestrator.coding.skill_diagnoser import PROMPT_TEMPLATE as DP
+        assert "argv" in DP and "argparse" in DP
+
+    def test_string_command_suggestion_rejected(self, skills_dir: Path) -> None:
+        """LLM 仍产出字符串 command 时，installer 校验在发卡前拦截。"""
+        import json as _json
+        files = {"SKILL.md": "---\nname: okname\ndescription: d\n---\n",
+                 "tools.yaml": 'tools:\n  - name: run_x\n    command: "python run.py"\n'}
+        bad = _json.dumps({"worth": True, "skill": "okname", "issue": "i",
+                           "fix": "f", "files": files})
+        d = SkillDistiller(_FakeLLM(bad), skills_dir)
+        out = d.distill(_loop(_run_cmd_events(3)), "t")
+        assert not out["ok"] and "argv" in out["reason"]
