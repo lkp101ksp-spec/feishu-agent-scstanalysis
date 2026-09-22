@@ -51,6 +51,8 @@ markers = [
 # 110 覆盖项目自 Phase 1 以来的单行列定义既定风格（最长 108），不做大规模重排
 line-length = 110
 target-version = "py310"
+# 真机验收 scratch 目录（测试 zip 源文件非项目代码，不入门禁）
+extend-exclude = ["tmp_skill_accept"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

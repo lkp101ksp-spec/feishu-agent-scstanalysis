@@ -322,7 +322,17 @@ def process_card_payload(app: FastAPI, payload: dict[str, Any]) -> dict[str, Any
                     "kind": kind,
                     "file": applied.get("file", applied.get("dir", "")),
                     "backup": applied.get("backup", "")})
+        # 成功 toast 须给用户一句人话（结构化字段本身不可读）；
+        # create/patch 文案分开，含 skill 名与备份提示
+        _skill = suggestion.get("skill", "")
+        if kind == "create":
+            _msg = f"✅ skill「{_skill}」已安装，下个 /code 任务即可使用"
+        else:
+            _msg = f"✅ skill「{_skill}」改进已写回"
+        if applied.get("backup"):
+            _msg += "（旧版本已备份 .bak）"
         return {"ok": True, "status": "applied", "kind": kind,
+                "message": _msg,
                 "file": applied.get("file", applied.get("dir", "")),
                 "backup": applied.get("backup", "")}
     # Phase 38：research_intent 分支（意图预判确认卡，research/code 双路由）。

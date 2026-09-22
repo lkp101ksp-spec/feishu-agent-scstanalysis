@@ -336,6 +336,19 @@ def card_result_to_response(result: dict[str, Any]) -> P2CardActionTriggerRespon
         resp = P2CardActionTriggerResponse({})
         resp.toast = toast
         return resp
+    # Phase 77：skill 改进卡写回结果 toast（applied 文案由 app.py 组装，
+    # 区分 create/patch 并附带 .bak 备份提示；apply_failed 透传原因）
+    if status in ("applied", "apply_failed"):
+        toast = CallBackToast({})
+        if status == "applied":
+            toast.type = "success"
+            toast.content = result.get("message") or "✅ skill 已写回"
+        else:
+            toast.type = "error"
+            toast.content = f"❌ skill 写回失败：{result.get('reason', 'unknown')}"
+        resp = P2CardActionTriggerResponse({})
+        resp.toast = toast
+        return resp
     # Phase 30：模型切换 toast（成功即时生效；拒绝按 reason 提示）
     # 双卡片流程（ut-7）：model_pick/model_back 原地换卡面；切换成功
     # 附带最新状态卡把选模型卡刷回卡 1。
