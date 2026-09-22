@@ -133,19 +133,24 @@ def test_write_heartbeat(tmp_path, monkeypatch):
 
 
 def test_kill_other_guardians_non_win32_noop(monkeypatch):
-    """非 Windows 平台安全返回 0（不发起任何子进程）。"""
+    """非 Windows 平台安全跳过（不发起任何子进程）。"""
     from scripts import ws_guardian
     monkeypatch.setattr(ws_guardian.sys, "platform", "linux")
-    assert ws_guardian.kill_other_guardians() == 0
+
+    def _boom(*a, **k):
+        raise AssertionError("Popen should not be called")
+
+    monkeypatch.setattr(ws_guardian.subprocess, "Popen", _boom)
+    assert ws_guardian.kill_other_guardians() is None
 
 
-def test_kill_other_guardians_powershell_failure_safe(monkeypatch):
-    """Windows 下查询/清扫异常不影响本实例（返回 0 并记日志）。"""
+def test_kill_other_guardians_spawn_failure_safe(monkeypatch):
+    """Windows 下 spawn 失败仅记日志不抛出（异步清扫，fire-and-forget）。"""
     from scripts import ws_guardian
     monkeypatch.setattr(ws_guardian.sys, "platform", "win32")
 
     def _boom(*a, **k):
         raise OSError("no powershell")
 
-    monkeypatch.setattr(ws_guardian.subprocess, "run", _boom)
-    assert ws_guardian.kill_other_guardians() == 0
+    monkeypatch.setattr(ws_guardian.subprocess, "Popen", _boom)
+    assert ws_guardian.kill_other_guardians() is None

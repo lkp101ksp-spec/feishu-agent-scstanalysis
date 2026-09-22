@@ -60,31 +60,35 @@ def _release_guardian_pidfile() -> None:
         pass
 
 
-def kill_other_guardians() -> int:
-    """单实例加固（2026-09-22 僵尸双实例治理）：清理其它 ws_guardian 进程。
+_SWEEP_LOG = _REPO_ROOT / "logs" / "ws_guardian_sweep.log"
+
+
+def kill_other_guardians() -> None:
+    """单实例加固（2026-09-22 僵尸双实例治理）：异步清扫其它 ws_guardian 进程。
 
     pidfile 守卫有盲区（两实例并存且均停止 tick 的真机事故）：启动后按
-    命令行特征（含 ws_guardian）清扫同族非本进程。仅 Windows 生产路径
-    生效，其余平台/查询失败均安全返回 0。
+    命令行特征（含 ws_guardian）清扫同族非本进程。仅 Windows 生产路径。
+    fire-and-forget 独立进程组（DETACHED_PROCESS）：同步等待会被宿主
+    沙箱的作业对象连带击杀（真机实测 -1 无声死亡），且冷启动 CIM 查询
+    会阻塞守护启动 30s+。清扫数由 PS 自写 _SWEEP_LOG。
     """
     if sys.platform != "win32":
-        return 0
+        return
+    me = os.getpid()
     ps = ("$ps = Get-CimInstance Win32_Process -Filter \"Name like 'python%'\""
           " | Where-Object { $_.CommandLine -match 'ws_guardian' -and"
-          f" $_.ProcessId -ne {os.getpid()} }}"
+          f" $_.ProcessId -ne {me} }}"
           "; $ps | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
-          "; @($ps).Count")
+          f"; @($ps).Count | Out-File -Encoding utf8 '{_SWEEP_LOG}'")
     try:
-        out = subprocess.run(  # noqa: S603
+        subprocess.Popen(  # noqa: S603
             ["powershell", "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=30)
-        n = int((out.stdout or "").strip() or "0")
-    except Exception:  # noqa: BLE001 —— 清扫失败不影响本实例守护
-        logger.exception("kill_other_guardians failed")
-        return 0
-    if n:
-        logger.warning("killed %d zombie guardian(s)", n)
-    return n
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=(subprocess.DETACHED_PROCESS
+                           | subprocess.CREATE_NEW_PROCESS_GROUP
+                           | subprocess.CREATE_NO_WINDOW))
+    except OSError:
+        logger.exception("guardian sweep spawn failed")
 
 
 def write_heartbeat(path: Path = _HEARTBEAT) -> None:
@@ -177,10 +181,9 @@ def main(interval_sec: int = 60) -> None:
         handlers=[handler, logging.StreamHandler()],
     )
     acquire_guardian_singleton()
-    killed = kill_other_guardians()
+    kill_other_guardians()  # 异步清扫僵尸同族（fire-and-forget）
     guardian = WsGuardian(is_alive=_ws_alive, restart=_restart)
-    logger.info("ws guardian started (interval=%ss, zombies_killed=%d)",
-                interval_sec, killed)
+    logger.info("ws guardian started (interval=%ss)", interval_sec)
     while True:
         guardian.tick()
         write_heartbeat()
