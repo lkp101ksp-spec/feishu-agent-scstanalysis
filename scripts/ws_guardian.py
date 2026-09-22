@@ -33,11 +33,27 @@ def _pid_alive(pid: int) -> bool:
     return ws_pid_alive(pid)
 
 
+_HEARTBEAT_STALE_SEC = 180  # 3×60s tick：超过即视为旧实例假死
+
+
+def _heartbeat_stale() -> bool:
+    """心跳新旧交叉验证（2026-09-23 真机教训）：agent 沙箱会拦截
+    OpenProcess，死 pid 也能开出句柄→_pid_alive 恒真→单例守卫误判。
+    心跳文件缺失（旧版实例）→保守按不 stale 拒绝接管；存在且超过
+    _HEARTBEAT_STALE_SEC 未更新→旧实例假死，允许接管。"""
+    try:
+        mtime = _HEARTBEAT.stat().st_mtime
+    except OSError:
+        return False
+    return time.time() - mtime > _HEARTBEAT_STALE_SEC
+
+
 def acquire_guardian_singleton() -> None:
     """guardian 单实例守卫：活实例拒绝（SystemExit），stale 接管写本进程 pid。
 
     计划任务随登录启动 + 人工手动启动可能双开；双 guardian 会竞争拉起
     ws_client（虽有 ws_client 侧单实例兜底，但日志会充满误判）。
+    pid 探活被沙箱拦截恒真时，以心跳新旧兜底（见 _heartbeat_stale）。
     """
     if _GUARDIAN_PIDFILE.exists():
         try:
@@ -45,8 +61,12 @@ def acquire_guardian_singleton() -> None:
         except (ValueError, OSError):
             old_pid = 0
         if old_pid and old_pid != os.getpid() and _pid_alive(old_pid):
-            logger.error("ws_guardian already running (pid=%s)", old_pid)
-            raise SystemExit(1)
+            if not _heartbeat_stale():
+                logger.error("ws_guardian already running (pid=%s)", old_pid)
+                raise SystemExit(1)
+            logger.warning(
+                "guardian pid=%s alive-probe true but heartbeat stale"
+                " -> takeover", old_pid)
     _GUARDIAN_PIDFILE.write_text(str(os.getpid()))
     atexit.register(_release_guardian_pidfile)
 

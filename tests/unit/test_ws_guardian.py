@@ -75,6 +75,8 @@ def test_guardian_singleton_refuses_second_instance(tmp_path, monkeypatch):
     pidfile.write_text("1234")
     monkeypatch.setattr(ws_guardian, "_GUARDIAN_PIDFILE", pidfile)
     monkeypatch.setattr(ws_guardian, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(ws_guardian, "_HEARTBEAT",
+                        tmp_path / "no_heartbeat")  # 缺失→保守拒绝
     with pytest.raises(SystemExit):
         ws_guardian.acquire_guardian_singleton()
 
@@ -89,6 +91,43 @@ def test_guardian_singleton_takes_over_stale(tmp_path, monkeypatch):
     pidfile.write_text("99999")
     monkeypatch.setattr(ws_guardian, "_GUARDIAN_PIDFILE", pidfile)
     monkeypatch.setattr(ws_guardian, "_pid_alive", lambda pid: False)
+    ws_guardian.acquire_guardian_singleton()
+    assert pidfile.read_text().strip() == str(os.getpid())
+
+
+def test_guardian_singleton_refuses_when_heartbeat_fresh(tmp_path, monkeypatch):
+    """探活判活 + 心跳新鲜 → 真活实例，拒绝启动（防心跳兜底误伤双开）。"""
+    import pytest
+
+    from scripts import ws_guardian
+
+    pidfile = tmp_path / ".ws_guardian.pid"
+    pidfile.write_text("1234")
+    heartbeat = tmp_path / "ws_guardian.heartbeat"
+    heartbeat.write_text("2026-09-23T01:00:00", encoding="utf-8")
+    monkeypatch.setattr(ws_guardian, "_GUARDIAN_PIDFILE", pidfile)
+    monkeypatch.setattr(ws_guardian, "_HEARTBEAT", heartbeat)
+    monkeypatch.setattr(ws_guardian, "_pid_alive", lambda pid: True)
+    with pytest.raises(SystemExit):
+        ws_guardian.acquire_guardian_singleton()
+
+
+def test_guardian_singleton_takeover_when_heartbeat_stale(tmp_path, monkeypatch):
+    """探活恒真（沙箱拦截 OpenProcess 场景）但心跳超龄 → 判假死接管。"""
+    import os
+    import time
+
+    from scripts import ws_guardian
+
+    pidfile = tmp_path / ".ws_guardian.pid"
+    pidfile.write_text("1234")
+    heartbeat = tmp_path / "ws_guardian.heartbeat"
+    heartbeat.write_text("2026-09-23T01:00:00", encoding="utf-8")
+    old = time.time() - ws_guardian._HEARTBEAT_STALE_SEC - 10
+    os.utime(heartbeat, (old, old))
+    monkeypatch.setattr(ws_guardian, "_GUARDIAN_PIDFILE", pidfile)
+    monkeypatch.setattr(ws_guardian, "_HEARTBEAT", heartbeat)
+    monkeypatch.setattr(ws_guardian, "_pid_alive", lambda pid: True)
     ws_guardian.acquire_guardian_singleton()
     assert pidfile.read_text().strip() == str(os.getpid())
 
