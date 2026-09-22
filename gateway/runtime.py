@@ -381,12 +381,15 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
 
     from orchestrator.coding.coding_runner import CodingRunner
     from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+    from orchestrator.coding.skill_distiller import SkillDistiller
+    from orchestrator.coding.skill_installer import SkillInstaller
+    _skills_dir = Path(getattr(settings, "code_skills_dir", "./skills"))
     orch.coding_runner = CodingRunner(
         llm=llm_code or llm, im=im, tool_handler=orch.tool_handler,
         registry=orch.registry, broker=approval_broker, settings=settings,
-        diagnoser=SkillDiagnoser(
-            llm=llm_code or llm,
-            skills_dir=Path(getattr(settings, "code_skills_dir", "./skills"))),
+        diagnoser=SkillDiagnoser(llm=llm_code or llm, skills_dir=_skills_dir),
+        distiller=SkillDistiller(llm=llm_code or llm, skills_dir=_skills_dir),
+        installer=SkillInstaller(_skills_dir),
     )
     # --- Phase 30：模型热切换（/model 管理卡 + model_switch 卡片回调） ---
     # admin 名单复用模板审核的 FEISHU_ADMIN_OPEN_IDS（上方 admin_ids）；
