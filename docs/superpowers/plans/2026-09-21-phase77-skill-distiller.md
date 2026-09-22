@@ -1,6 +1,6 @@
 # Phase 77 实施计划：L1 主动式 skill 进化（双入口闭环）
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** 在 Phase 27 反应式诊断之上补 L1 主动式进化——/code 任务成功后自动复盘沉淀新 skill（SkillDistiller），并开放 `/skill install` 手动入口；双入口共用同一 SkillInstaller 校验/落盘/审计层，复用 Phase 27 卡片管线（kind=create 分支）。
 
@@ -37,7 +37,7 @@
 - Create: `orchestrator/coding/skill_installer.py`
 - Create: `tests/unit/test_skill_installer.py`
 
-- [ ] **Step 1.1: 写 `orchestrator/coding/skill_installer.py`**
+- [x] **Step 1.1: 写 `orchestrator/coding/skill_installer.py`**
 
 统一校验/落盘层（双入口共用），不抛异常、返回 dict（与 diagnoser.apply 同款）：
 
@@ -204,7 +204,7 @@ class SkillInstaller:
         return ""
 ```
 
-- [ ] **Step 1.2: 写 `tests/unit/test_skill_installer.py`（8 用例）**
+- [x] **Step 1.2: 写 `tests/unit/test_skill_installer.py`（8 用例）**
 
 ```python
 """SkillInstaller 单测（Phase 77 Task 1，spec §5）。"""
@@ -296,7 +296,7 @@ class TestInstall:
         assert (d / "SKILL.md").read_text() == VALID_MD
 ```
 
-- [ ] **Step 1.3: 门禁 + 提交**
+- [x] **Step 1.3: 门禁 + 提交**
 
 Run: `ruff check .` → `.venv\Scripts\python.exe -m pytest tests/unit/test_skill_installer.py -q`（预期 12 passed）→ `.venv\Scripts\python.exe -m mypy`（零告警）
 Expected: 全绿
@@ -314,7 +314,7 @@ git commit -m "feat: SkillInstaller 统一落盘层（Phase 77 双入口共用�
 - Create: `orchestrator/coding/skill_distiller.py`
 - Create: `tests/unit/test_skill_distiller.py`
 
-- [ ] **Step 2.1: 写 `orchestrator/coding/skill_distiller.py`**
+- [x] **Step 2.1: 写 `orchestrator/coding/skill_distiller.py`**
 
 ```python
 """Skill 成功复盘（Phase 77，spec 2026-09-21 §3.1）：L1 主动式进化。
@@ -500,7 +500,7 @@ class SkillDistiller:
     _WHITELIST = (NAME_RE, FILE_KEY_RE)
 ```
 
-- [ ] **Step 2.2: 写 `tests/unit/test_skill_distiller.py`（7 用例）**
+- [x] **Step 2.2: 写 `tests/unit/test_skill_distiller.py`（7 用例）**
 
 ```python
 """SkillDistiller 单测（Phase 77 Task 2，spec §5）。"""
@@ -592,7 +592,7 @@ class TestSchema:
         assert not d.distill(_loop(_run_cmd_events(3)), "t")["ok"]
 ```
 
-- [ ] **Step 2.3: 门禁 + 提交**
+- [x] **Step 2.3: 门禁 + 提交**
 
 Run: `ruff check .` → `.venv\Scripts\python.exe -m pytest tests/unit/test_skill_distiller.py -q`（预期 7 passed）→ `.venv\Scripts\python.exe -m mypy`（零告警）
 
@@ -610,7 +610,7 @@ git commit -m "feat: SkillDistiller 成功复盘器（Phase 77 L1 主动进化�
 
 **TDD 顺序**：先写契约测试（红）→ 接线 → 绿。create 型 suggestion 的 `files` 全文不能内嵌飞书按钮 value（长度限制），故发卡时暂存进程内 dict `{improve_id: suggestion}`，回调按 improve_id 取回（code_approval "不落库" 惯例）。
 
-- [ ] **Step 3.1: 写 `tests/unit/test_skill_improve_create.py`（契约测试，先红）**
+- [x] **Step 3.1: 写 `tests/unit/test_skill_improve_create.py`（契约测试，先红）**
 
 ```python
 """create 型 skill_improve 卡片与回调 kind 分支契约（Phase 77 Task 3，spec §5）。"""
@@ -678,12 +678,12 @@ class TestCallbackKindBranch:
         assert not installer.install("newsk", CREATE_SUGG["files"])["ok"]
 ```
 
-- [ ] **Step 3.2: 跑契约测试确认红（create 卡分支未实现）**
+- [x] **Step 3.2: 跑契约测试确认红（create 卡分支未实现）**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/unit/test_skill_improve_create.py -q`
 Expected: `TestCreateCard` 红（`_skill_improve_card` 尚无 kind 分支）
 
-- [ ] **Step 3.3: 改 `orchestrator/coding/coding_runner.py`（三处）**
+- [x] **Step 3.3: 改 `orchestrator/coding/coding_runner.py`（三处）**
 
 **(a) `_skill_improve_card` 加 kind 分支**（约 L269-298，kind=create 时展示 files 键清单、value 内嵌 suggestion 只放 files 键 list 而非全文）：
 
@@ -796,7 +796,7 @@ self._pending_create: dict[str, dict[str, Any]] = {}
             logger.exception("skill distill/card failed (ignored)")
 ```
 
-- [ ] **Step 3.4: 改 `gateway/app.py` 回调 kind 分支**
+- [x] **Step 3.4: 改 `gateway/app.py` 回调 kind 分支**
 
 在 `action == "skill_improve"` 分支内（约 L273 `diagnoser.apply(suggestion)` 处）按 kind 分流：取 `payload.get("kind")` 或 suggestion 内 `kind`；`create` 时从 `coding_runner._pending_create` 取回完整 suggestion 并调 `installer.install`，`patch` 走原 diagnoser.apply。具体改动：
 
@@ -837,7 +837,7 @@ self._pending_create: dict[str, dict[str, Any]] = {}
 
 注：create 型 applied 用 `dir` 键（installer 返回），patch 型用 `file` 键（diagnoser 返回），audit detail 兼容两者。原 L257-262 的 diagnoser 提前判空逻辑需移入 patch 分支（create 不需要 diagnoser）。
 
-- [ ] **Step 3.5: 门禁 + 提交**
+- [x] **Step 3.5: 门禁 + 提交**
 
 Run: `ruff check .` → `.venv\Scripts\python.exe -m pytest tests/unit/test_skill_improve_create.py tests/unit/test_skill_installer.py tests/unit/test_skill_distiller.py -q`（全绿）→ `.venv\Scripts\python.exe -m mypy`（零告警）→ `.venv\Scripts\python.exe -m pytest -m "not pg" -q`（基线+新增，零回归）
 
@@ -854,7 +854,7 @@ git commit -m "feat: skill_improve create 分支+成功复盘触发（Phase 77 �
 
 手动入口复用 Task 1 的 `validate_zip` 与 Task 3 的 create 卡链路；用户飞书发 zip 附件 + 文字 `/skill install`，校验通过发 create 卡（标注来源 manual），批准后走同一 `installer.install(overwrite=True)`（手动 install 允许覆盖同名，整目录 .bak 兜底）。
 
-- [ ] **Step 4.1: 改 `gateway/app.py` 消息路由**
+- [x] **Step 4.1: 改 `gateway/app.py` 消息路由**
 
 在消息文本路由处（/code、/research 等同层）加 `/skill install` 分支：
 
@@ -906,7 +906,7 @@ def _handle_skill_install(app: Any, ctx: Any, event: dict[str, Any]) -> dict[str
 
 回调侧 create 分支需识别 `source == "manual"` 时 `overwrite=True`（Task 3 Step 3.4 的 create 分支 `installer.install(...)` 调用改为读 full 内 overwrite 标志：`installer.install(name, files, overwrite=bool(full.get("overwrite")))`）。
 
-- [ ] **Step 4.2: 写 `tests/unit/test_skill_install_route.py`（4 用例）**
+- [x] **Step 4.2: 写 `tests/unit/test_skill_install_route.py`（4 用例）**
 
 ```python
 """/skill install 手动入口路由单测（Phase 77 Task 4，spec §5）。"""
@@ -959,7 +959,7 @@ class TestManualInstallPath:
         assert not inst.validate_zip(zp)["ok"]
 ```
 
-- [ ] **Step 4.3: 门禁 + 提交**
+- [x] **Step 4.3: 门禁 + 提交**
 
 Run: `ruff check .` → `.venv\Scripts\python.exe -m pytest tests/unit/test_skill_install_route.py -q`（4 passed）→ `.venv\Scripts\python.exe -m mypy`（零告警）→ 全量 pytest 零回归
 
@@ -975,7 +975,7 @@ git commit -m "feat: /skill install 手动入口（Phase 77 zip 校验+create �
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 5.1: README 核心能力表补自进化行 + 简述**
+- [x] **Step 5.1: README 核心能力表补自进化行 + 简述**
 
 在"核心能力一览"表格追加一行，并在 Coding Agent 段落补 L1 主动进化说明：
 
@@ -989,7 +989,7 @@ git commit -m "feat: /skill install 手动入口（Phase 77 zip 校验+create �
 系统的自进化能力：`/code` 失败时 SkillDiagnoser 自动分析轨迹生成改进卡（审批后写回 skill）；成功时 SkillDistiller 复盘重复模式提议沉淀新 skill；也可 `/skill install` 附 zip 手动安装。所有写回均经审批卡 + .bak 兜底 + 审计（skill_improve_id 全链可追溯）。
 ```
 
-- [ ] **Step 5.2: 提交**
+- [x] **Step 5.2: 提交**
 
 ```bash
 git add README.md
@@ -1003,22 +1003,22 @@ git commit -m "docs: README 补自进化（RSI-L1）能力说明（Phase 77）"
 
 真机验收需服务在跑（ws_client + gateway）。三链：①手动 zip install 全链；②自动复盘全链；③拒绝路径。注意：自动复盘触发需真实 /code 任务出现 ≥2 次重复 run_cmd——可构造一个需多次手写的任务；手动 install 用现成 skill 打 zip 测。
 
-- [ ] **Step 6.1: 手动 zip install 全链**
+- [x] **Step 6.1: 手动 zip install 全链**
 
 操作：把一个测试 skill 打成 zip（含 SKILL.md frontmatter + tools.yaml + 一个 .py），飞书发送该 zip + 文字 `/skill install` → 应收到 create 审批卡（标注来源 manual）→ 点批准 → `skills/<name>/` 落盘 → 发一条匹配该 skill 的 /code 任务验证语义检索命中。
 Expected: 卡片到达、批准落盘、/code 命中新 skill；审计按 skill_improve_id 可检索 applied 事件。
 
-- [ ] **Step 6.2: 自动复盘全链**
+- [x] **Step 6.2: 自动复盘全链**
 
 操作：发一条需要重复手写命令的 /code 任务（如"对 bio_test_data 下三个文件分别用 python 读取并打印行数"——迫使 ≥2 次 `python` run_cmd）→ 任务成功后应收到 create 沉淀卡 → 点批准 → 落盘生效。
 Expected: 触发过滤命中（≥2 次同首词 run_cmd）→ 自动发卡 → 批准落盘；若无沉淀价值 LLM 返回 worth=false 则静默（如实记录触发与否）。
 
-- [ ] **Step 6.3: 拒绝路径**
+- [x] **Step 6.3: 拒绝路径**
 
 操作：①发一个缺 SKILL.md 的 zip + /skill install → 应文本回复拒因；②发一个 frontmatter 缺 description 的 zip → 拒因；③对已存在 skill 名走自动复盘 create → 拒收（不覆盖）。
 Expected: 三类拒绝均如实提示，不落盘、不崩。
 
-- [ ] **Step 6.4: 记录实测值**
+- [x] **Step 6.4: 记录实测值**
 
 记录：①三链各自通过与否；②触发过滤是否如期（自动复盘是否触发）；③拒绝路径提示文本；④审计事件可检索性。供测试总结 #22 回填。
 
@@ -1030,7 +1030,7 @@ Expected: 三类拒绝均如实提示，不落盘、不崩。
 - Modify: `测试总结+2026-09-09T01-55-00.md`（文末追加 #22 段落）
 - Modify: 本计划文件（勾选全部 checkbox）
 
-- [ ] **Step 7.1: 回填测试总结**
+- [x] **Step 7.1: 回填测试总结**
 
 在 `测试总结+2026-09-09T01-55-00.md` 文末追加 `## 2026-09-21 Phase 77 收口回填（#22 L1 主动式 skill 进化双入口）` 段落，沿用既有压缩文体，须涵盖：
 - ① SkillInstaller：8+ 用例（name/files/zip/install 四类校验），commit hash
@@ -1040,7 +1040,7 @@ Expected: 三类拒绝均如实提示，不落盘、不崩。
 - ⑤ 真机验收三链实测：手动全链/自动复盘触发与否/拒绝路径三例，实测值
 - 后续建议/挂账：L2 进化质量自评估（补丁效果度量+自动回滚）待使用数据；L3 全自动明确不做；定期批处理触发另议
 
-- [ ] **Step 7.2: 勾选本计划全部 checkbox + 最终 push**
+- [x] **Step 7.2: 勾选本计划全部 checkbox + 最终 push**
 
 ```bash
 git add "测试总结+2026-09-09T01-55-00.md" docs/superpowers/plans/2026-09-21-phase77-skill-distiller.md
