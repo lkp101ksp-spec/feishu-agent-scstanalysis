@@ -9,6 +9,19 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+# 0) ps1 BOM 自检（2026-09-23 教训#24：PS5.1 把无 BOM 的 UTF-8 当 GBK 解析，
+#    中文字节会吞字符串引号致 parse 崩——48h 内 install/check 两连炸。
+#    机器强制，防编辑器改写丢 BOM。覆盖：根目录 + scripts/ 的 .ps1）
+$bomBad = @()
+foreach ($f in (Get-ChildItem -Path ., scripts -Filter *.ps1 -File)) {
+    $b = [System.IO.File]::ReadAllBytes($f.FullName)
+    if ($b.Length -lt 3 -or $b[0] -ne 0xEF -or $b[1] -ne 0xBB -or $b[2] -ne 0xBF) { $bomBad += $f.FullName }
+}
+if ($bomBad) {
+    Write-Host "[FAIL] 以下 .ps1 缺 UTF-8 BOM（PS5.1 会按 GBK 解析乱码）:`n$($bomBad -join "`n")" -ForegroundColor Red
+    exit 2
+}
+
 # 1) venv 存在性（Phase 10 T1 钉死 3.12.10 解释器）
 if (-not (Test-Path ".venv\Scripts\python.exe")) {
     Write-Host "[FAIL] 未找到 .venv。执行: python -m venv .venv; .venv\Scripts\pip install -e .[dev] -i https://pypi.tuna.tsinghua.edu.cn/simple" -ForegroundColor Red
