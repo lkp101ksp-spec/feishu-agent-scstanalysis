@@ -14,6 +14,8 @@ dependencies = [
     "psycopg[binary]>=3.1.0",
     "alembic>=1.13.0",
     "lark-oapi>=1.7.0",
+    # ws_guardian 进程内僵尸清扫（2026-09-23：子进程方案被沙箱作业对象/AV 拦截）
+    "psutil>=7.0.0",
     # Phase 42 数据画像（dataset_profile.py）：h5py 直读 h5ad + numpy 统计
     "h5py>=3.10.0",
     "numpy>=1.26.0",

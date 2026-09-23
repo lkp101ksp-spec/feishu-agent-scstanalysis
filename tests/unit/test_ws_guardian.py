@@ -172,24 +172,66 @@ def test_write_heartbeat(tmp_path, monkeypatch):
 
 
 def test_kill_other_guardians_non_win32_noop(monkeypatch):
-    """非 Windows 平台安全跳过（不发起任何子进程）。"""
+    """非 Windows 平台安全跳过（返回 0，不枚举进程）。"""
     from scripts import ws_guardian
     monkeypatch.setattr(ws_guardian.sys, "platform", "linux")
-
-    def _boom(*a, **k):
-        raise AssertionError("Popen should not be called")
-
-    monkeypatch.setattr(ws_guardian.subprocess, "Popen", _boom)
-    assert ws_guardian.kill_other_guardians() is None
+    assert ws_guardian.kill_other_guardians() == 0
 
 
-def test_kill_other_guardians_spawn_failure_safe(monkeypatch):
-    """Windows 下 spawn 失败仅记日志不抛出（异步清扫，fire-and-forget）。"""
+def _fake_process(pid, cmdline):
+    """构造 psutil process_iter 风格假进程（info dict + kill 记录）。"""
+    class _P:
+        def __init__(self):
+            self.pid = pid
+            self.info = {"cmdline": cmdline}
+            self.killed = False
+
+        def kill(self):
+            self.killed = True
+    return _P()
+
+
+def test_kill_other_guardians_sweeps_zombies(tmp_path, monkeypatch):
+    """进程内 psutil 清扫：杀 cmdline 含 ws_guardian 的非本进程，落盘计数。"""
+    import psutil
+
     from scripts import ws_guardian
     monkeypatch.setattr(ws_guardian.sys, "platform", "win32")
+    monkeypatch.setattr(ws_guardian, "_SWEEP_LOG", tmp_path / "sweep.log")
 
-    def _boom(*a, **k):
-        raise OSError("no powershell")
+    import os
+    me = os.getpid()
+    zombie = _fake_process(me + 1000, ["pythonw", "scripts/ws_guardian.py"])
+    other = _fake_process(me + 1001, ["python", "-m", "gateway.ws_client"])
+    selfp = _fake_process(me, ["pythonw", "scripts/ws_guardian.py"])
+    monkeypatch.setattr(psutil, "process_iter",
+                        lambda attrs: [zombie, other, selfp])
 
-    monkeypatch.setattr(ws_guardian.subprocess, "Popen", _boom)
-    assert ws_guardian.kill_other_guardians() is None
+    killed = ws_guardian.kill_other_guardians()
+    assert killed == 1
+    assert zombie.killed is True
+    assert other.killed is False      # ws_client 不误伤
+    assert selfp.killed is False      # 自身排除
+    assert (tmp_path / "sweep.log").read_text(encoding="utf-8") == "swept=1"
+
+
+def test_kill_other_guardians_tolerates_access_denied(tmp_path, monkeypatch):
+    """cmdline 不可读/进程竞态退出（AccessDenied/NoSuchProcess）安全跳过。"""
+    import psutil
+
+    from scripts import ws_guardian
+    monkeypatch.setattr(ws_guardian.sys, "platform", "win32")
+    monkeypatch.setattr(ws_guardian, "_SWEEP_LOG", tmp_path / "sweep.log")
+
+    class _Denied:
+        pid = 424242
+
+        def __init__(self):
+            self.info = {"cmdline": None}
+
+        def kill(self):
+            raise psutil.AccessDenied(pid=424242)
+
+    monkeypatch.setattr(psutil, "process_iter", lambda attrs: [_Denied()])
+    assert ws_guardian.kill_other_guardians() == 0
+    assert (tmp_path / "sweep.log").read_text(encoding="utf-8") == "swept=0"

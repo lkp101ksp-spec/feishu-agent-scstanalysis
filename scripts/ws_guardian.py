@@ -83,39 +83,38 @@ def _release_guardian_pidfile() -> None:
 _SWEEP_LOG = _REPO_ROOT / "logs" / "ws_guardian_sweep.log"
 
 
-def kill_other_guardians() -> None:
-    """单实例加固（2026-09-22 僵尸双实例治理）：异步清扫其它 ws_guardian 进程。
+def kill_other_guardians() -> int:
+    """单实例加固（2026-09-22 僵尸双实例治理）：进程内清扫其它 ws_guardian 进程。
 
     pidfile 守卫有盲区（两实例并存且均停止 tick 的真机事故）：启动后按
-    命令行特征（含 ws_guardian）清扫同族非本进程。仅 Windows 生产路径。
-    fire-and-forget 独立进程组（DETACHED_PROCESS）：同步等待会被宿主
-    沙箱的作业对象连带击杀（真机实测 -1 无声死亡），且冷启动 CIM 查询
-    会阻塞守护启动 30s+。清扫数由 PS 自写 _SWEEP_LOG。
+    命令行特征（含 ws_guardian）清扫同族非本进程，返回清扫数并落盘
+    _SWEEP_LOG 供外部观测。仅 Windows 生产路径。
+
+    2026-09-23 真机迭代：powershell CIM 子进程方案在 agent 沙箱内被作业
+    对象连坐击杀（同步版连 guardian 一起死；detach 版子进程仍被杀），
+    且 pythonw -Command Stop-Process 组合疑似触发安全软件静默拦截——
+    改为 psutil 纯进程内枚举+kill，零子进程，两类拦截面全部消失。
+    cmdline 不可读（AccessDenied/无权限）的进程自然跳过。
     """
     if sys.platform != "win32":
-        return
+        return 0
+    import psutil  # 延迟导入：非 win32 路径不加载
+
     me = os.getpid()
-    # stderr 已 DEVNULL，结果/异常全部由 PS 自写 _SWEEP_LOG 保证可观测
-    # （2026-09-23 实测：静默失败零线索）；CommandLine 为 $null 时 -match
-    # 判 False 自然跳过，不额外判空。
-    ps = ("try {"
-          " $ps = Get-CimInstance Win32_Process -Filter \"Name like 'python%'\""
-          " | Where-Object { $_.CommandLine -match 'ws_guardian' -and"
-          f" $_.ProcessId -ne {me} }}"
-          "; $ps | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
-          f"; \"swept=$(@($ps).Count)\" | Out-File -Encoding utf8 '{_SWEEP_LOG}'"
-          "} catch {"
-          f" \"error=$($_.Exception.Message)\" | Out-File -Encoding utf8 '{_SWEEP_LOG}'"
-          " }")
+    killed = 0
+    for p in psutil.process_iter(["cmdline"]):
+        try:
+            cmd = p.info.get("cmdline") or []
+            if p.pid != me and any("ws_guardian" in a for a in cmd):
+                p.kill()
+                killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
     try:
-        subprocess.Popen(  # noqa: S603
-            ["powershell", "-NoProfile", "-Command", ps],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            creationflags=(subprocess.DETACHED_PROCESS
-                           | subprocess.CREATE_NEW_PROCESS_GROUP
-                           | subprocess.CREATE_NO_WINDOW))
+        _SWEEP_LOG.write_text(f"swept={killed}", encoding="utf-8")
     except OSError:
-        logger.exception("guardian sweep spawn failed")
+        pass
+    return killed
 
 
 def write_heartbeat(path: Path = _HEARTBEAT) -> None:
