@@ -1,7 +1,6 @@
-# CI 工作流（预置）：当前仓库无远程，推送到 GitHub 后立即生效。
-# 与本地质量门 scripts/check.ps1 完全对齐：ruff check → pytest 默认层（+cov）→ pg 真库层。
-# 注意：依赖安装用 pip install -e .[dev]，不用 requirements-lock.txt——
-# lock 文件含 "-e i:\飞书agent" 本地绝对路径自引用，仅用于本机环境复现。
+# CI 工作流：与本地质量门 scripts/check.ps1 对齐（ruff → mypy → pytest 默认层 + pg 层），
+# 另含 docker/kernel 冒烟与 pip-audit 依赖 CVE 扫描。
+# 依赖安装：pip install -r requirements-lock.txt + pip install -e . --no-deps（ADR-0028）。
 name: CI
 
 on:
@@ -48,6 +47,9 @@ jobs:
         run: |
           pip install -r requirements-lock.txt
           pip install -e . --no-deps
+
+      - name: pip-audit 依赖 CVE 扫描（硬门禁；直接审锁文件，与 runner pip 版本解耦）
+        run: python -m pip_audit -r requirements-lock.txt
 
       - name: ruff check（lint 硬门禁）
         run: ruff check .
