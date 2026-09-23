@@ -72,3 +72,5 @@ _commit_msg.txt
 .skill_backups/
 # 第三方/自动提炼 skill 安装目录（2026-09-23 挂账⑥，本机运行时产物）
 skills_installed/
+# /code skill 真机验收 scratch（zip 源文件+解压产物，非项目代码）
+tmp_skill_accept/
