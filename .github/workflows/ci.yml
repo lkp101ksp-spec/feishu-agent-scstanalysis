@@ -8,8 +8,14 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
-  # 手动触发：bio 镜像全量构建冒烟（bio-image-smoke job 仅此事件生效）
+  # 手动触发：bio/st 镜像全量构建冒烟（仅此事件与周检 schedule 生效）
   workflow_dispatch:
+  # 周检（2026-09-23）：每周一 02:00（北京时间）= 周日 18:00 UTC。
+  # test/docker-smoke job 无 if 条件故周检时也会全量跑（顺带周频 pip-audit
+  # 扫新公布 CVE）；bio/st-image-smoke 双 job 重建镜像+全冒烟，防上游基础
+  # 镜像漂移与构建链腐化。
+  schedule:
+    - cron: "0 18 * * 0"
 
 # 注：actions 钉新版（checkout@v5/setup-python@v6 走 Node24）；runner 钉
 # ubuntu-24.04（ubuntu-latest 2026-10-19 起 migrates to Ubuntu 26，防漂移）。
@@ -92,12 +98,12 @@ jobs:
       - name: kernel 真容器集成冒烟
         run: python -m pytest tests/integration/test_sandbox_docker.py -v
 
-  # bio 镜像冒烟（仅手动触发）：全量构建含 R/CellChat 编译链（CellChat 层
+  # bio 镜像冒烟（手动触发 + 每周 schedule 周检）：全量构建含 R/CellChat 编译链（CellChat 层
   # 探针实测 11min/轮、全镜像数十分钟级），进 PR 门禁不可行，故仅
   # workflow_dispatch。PROXY 置空：默认 ARG 指向宿主 clash portproxy，
   # CI runner 直连 GitHub/Bioconductor 无需代理。
   bio-image-smoke:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-24.04
 
     steps:
@@ -193,11 +199,11 @@ jobs:
           BIO_WORKSPACE_ROOT: ${{ runner.temp }}/bio_ws
         run: python scripts/_smoke_st_score_weight.py
 
-  # st 镜像冒烟（仅手动触发，与 bio-image-smoke 同规）：st.Dockerfile 无
+  # st 镜像冒烟（手动触发 + 每周 schedule 周检，与 bio-image-smoke 同规）：st.Dockerfile 无
   # GitHub 源/代理 ARG（纯 PyPI+CRAN 层），直连构建即可；冒烟跑最轻量的
   # st_stats 合成网格三分析（其余 _smoke_st_*.py 已同款 env 化，可按需加）。
   st-image-smoke:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-24.04
 
     steps:
