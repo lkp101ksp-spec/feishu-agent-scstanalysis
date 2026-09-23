@@ -95,17 +95,25 @@ def kill_other_guardians() -> int:
     且 pythonw -Command Stop-Process 组合疑似触发安全软件静默拦截——
     改为 psutil 纯进程内枚举+kill，零子进程，两类拦截面全部消失。
     cmdline 不可读（AccessDenied/无权限）的进程自然跳过。
+    自杀防护（同日真机事故）：venv 的 pythonw.exe 是重定向启动器，其
+    命令行同样含 ws_guardian.py，不排除父进程会杀掉自己的启动器，
+    启动器持有的作业对象随即级联击杀 guardian 本体（静默零 traceback）。
     """
     if sys.platform != "win32":
         return 0
     import psutil  # 延迟导入：非 win32 路径不加载
 
     me = os.getpid()
+    try:
+        parent = psutil.Process().ppid()
+    except psutil.Error:
+        parent = 0
     killed = 0
     for p in psutil.process_iter(["cmdline"]):
         try:
             cmd = p.info.get("cmdline") or []
-            if p.pid != me and any("ws_guardian" in a for a in cmd):
+            if (p.pid != me and p.pid != parent
+                    and any("ws_guardian" in a for a in cmd)):
                 p.kill()
                 killed += 1
         except (psutil.NoSuchProcess, psutil.AccessDenied):

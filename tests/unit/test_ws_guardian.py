@@ -204,14 +204,19 @@ def test_kill_other_guardians_sweeps_zombies(tmp_path, monkeypatch):
     zombie = _fake_process(me + 1000, ["pythonw", "scripts/ws_guardian.py"])
     other = _fake_process(me + 1001, ["python", "-m", "gateway.ws_client"])
     selfp = _fake_process(me, ["pythonw", "scripts/ws_guardian.py"])
+    # venv pythonw 重定向启动器：cmdline 同样含 ws_guardian，但它是本进程
+    # 父进程——误杀会通过作业对象级联带走 guardian（2026-09-23 真机事故）
+    launcher = _fake_process(psutil.Process().ppid(),
+                             ["pythonw", "scripts/ws_guardian.py"])
     monkeypatch.setattr(psutil, "process_iter",
-                        lambda attrs: [zombie, other, selfp])
+                        lambda attrs: [zombie, other, selfp, launcher])
 
     killed = ws_guardian.kill_other_guardians()
     assert killed == 1
     assert zombie.killed is True
     assert other.killed is False      # ws_client 不误伤
     assert selfp.killed is False      # 自身排除
+    assert launcher.killed is False   # 父启动器排除（自杀防护）
     assert (tmp_path / "sweep.log").read_text(encoding="utf-8") == "swept=1"
 
 
