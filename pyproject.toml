@@ -1,6 +1,6 @@
 [project]
 name = "feishu-research-agent"
-version = "0.1.0"
+version = "0.3.0"
 description = "飞书科研闭环 Agent：IM 进、报告出——LLM 规划 DAG，断网 Docker 沙箱执行单细胞/空间转录组分析（61 内置工具）"
 requires-python = ">=3.10"
 dependencies = [
