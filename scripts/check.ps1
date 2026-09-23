@@ -1,4 +1,4 @@
-# Phase 10 T5 质量门一键脚本（配套 ADR-0028 venv / ADR-0029 pg 分层）
+﻿# Phase 10 T5 质量门一键脚本（配套 ADR-0028 venv / ADR-0029 pg 分层）
 # 用法：powershell -ExecutionPolicy Bypass -File scripts\check.ps1
 #       加 -Pg 追加真库层（需先 docker compose up -d postgres）
 param(
