@@ -3,6 +3,7 @@
 > A research agent that lives in Feishu (Lark) IM: chat in, single-cell & spatial transcriptomics reports out — LLM-planned DAGs executed in offline Docker sandboxes, results written back to Feishu docs, cards and Bases.
 
 [![CI](https://github.com/lkp101ksp-spec/feishu-agent-scstanalysis/actions/workflows/ci.yml/badge.svg)](https://github.com/lkp101ksp-spec/feishu-agent-scstanalysis/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/lkp101ksp-spec/feishu-agent-scstanalysis)](https://github.com/lkp101ksp-spec/feishu-agent-scstanalysis/releases)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![mypy](https://img.shields.io/badge/mypy-strict-brightgreen)
 ![ruff](https://img.shields.io/badge/lint-ruff-orange)

@@ -2,6 +2,8 @@
 
 - 生成日期：2026-09-01
 - 基线：Phase 14 已收官（真机验收），Phase 15 spec 已定稿待实施
+  （2026-09-23 校准：实际基线已推进至 v0.3.0——guardian 运维生产化、skill 热刷新、
+  内置/安装双目录分离；详见变更记录尾部与 GitHub Release v0.3.0）
 - 来源：全部 17 份 spec 的「不做项/遗留」清单 + 测试总结后续建议 + 真机使用反馈
 
 > 规划原则：按「价值/风险比」排序；每个 Phase 一轮真机验收后收官；范围蔓延项一律进「远期池」。
@@ -279,7 +281,7 @@ spec：`docs/superpowers/specs/2026-09-03-phase26-code-agent-design.md`
 ## 远期池（默认不做，出现真实需求再捞）
 
 - GPU 节点 / rapids 加速（注：bio 容器 GPU 镜像已在 Phase 25 交付 bio:gpu-latest，此处指研究沙箱整体）
-- gRPC 拆分、工具热加载
+- gRPC 拆分、~~工具热加载~~（2026-09-23 v0.3.0 已交付：ToolRegistry.unregister + reload_skill 热刷新）
 - 分布式锁、多实例部署、K8s
 - ~~CI（远端）~~（2026-09-07 接入、09-08 转绿收官）、~~mypy 严格化~~（2026-09-08 方案 A 基线清零入门禁；--strict 全量 679 错存量不做）、uv/poetry 迁移
 - 群聊共享 session、用户身份订阅
