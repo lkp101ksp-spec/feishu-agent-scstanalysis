@@ -95,11 +95,18 @@ def kill_other_guardians() -> None:
     if sys.platform != "win32":
         return
     me = os.getpid()
-    ps = ("$ps = Get-CimInstance Win32_Process -Filter \"Name like 'python%'\""
+    # stderr 已 DEVNULL，结果/异常全部由 PS 自写 _SWEEP_LOG 保证可观测
+    # （2026-09-23 实测：静默失败零线索）；CommandLine 为 $null 时 -match
+    # 判 False 自然跳过，不额外判空。
+    ps = ("try {"
+          " $ps = Get-CimInstance Win32_Process -Filter \"Name like 'python%'\""
           " | Where-Object { $_.CommandLine -match 'ws_guardian' -and"
           f" $_.ProcessId -ne {me} }}"
           "; $ps | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
-          f"; @($ps).Count | Out-File -Encoding utf8 '{_SWEEP_LOG}'")
+          f"; \"swept=$(@($ps).Count)\" | Out-File -Encoding utf8 '{_SWEEP_LOG}'"
+          "} catch {"
+          f" \"error=$($_.Exception.Message)\" | Out-File -Encoding utf8 '{_SWEEP_LOG}'"
+          " }")
     try:
         subprocess.Popen(  # noqa: S603
             ["powershell", "-NoProfile", "-Command", ps],
