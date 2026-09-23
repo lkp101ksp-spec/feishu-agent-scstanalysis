@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from orchestrator.coding.skill_loader import installed_dir_for
 from shared.schemas import ChatMessage
 
 if TYPE_CHECKING:
@@ -119,7 +120,11 @@ class SkillDiagnoser:
         if patch is None or (isinstance(patch, str) and not patch.strip()):
             return {"ok": False, "error": "empty patch"}
 
-        skill_dir = self.skills_dir / skill_name
+        # 双目录解析（2026-09-23 挂账⑥）：安装目录优先（install 落点），
+        # 回退内置目录（内置 skill 改进场景）
+        skill_dir = installed_dir_for(self.skills_dir) / skill_name
+        if not skill_dir.is_dir():
+            skill_dir = self.skills_dir / skill_name
         if not skill_dir.is_dir():
             return {"ok": False, "error": f"skill dir not found: {skill_dir}"}
 
@@ -201,12 +206,18 @@ class SkillDiagnoser:
                 updated.append(f"{tool.get('name')}.{field_name}")
         return updated
 
+    def _iter_tools_yamls(self) -> list[Path]:
+        """内置 + 安装双目录的全部 tools.yaml 路径（2026-09-23 挂账⑥）。"""
+        paths: list[Path] = []
+        for base in (self.skills_dir, installed_dir_for(self.skills_dir)):
+            if base.is_dir():
+                paths.extend(sorted(base.glob("*/tools.yaml")))
+        return paths
+
     def _skill_tool_map(self) -> dict[str, str]:
-        """扫描 skills_dir/*/tools.yaml，构建 工具名 → skill 名 映射。"""
+        """扫描双目录 */tools.yaml，构建 工具名 → skill 名 映射。"""
         mapping: dict[str, str] = {}
-        if not self.skills_dir.is_dir():
-            return mapping
-        for yaml_path in sorted(self.skills_dir.glob("*/tools.yaml")):
+        for yaml_path in self._iter_tools_yamls():
             try:
                 data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError:
@@ -217,11 +228,9 @@ class SkillDiagnoser:
         return mapping
 
     def _load_tool_defs(self) -> dict[str, dict[str, Any]]:
-        """扫描 skills_dir/*/tools.yaml，构建 工具名 → 工具定义 dict 映射。"""
+        """扫描双目录 */tools.yaml，构建 工具名 → 工具定义 dict 映射。"""
         defs: dict[str, dict[str, Any]] = {}
-        if not self.skills_dir.is_dir():
-            return defs
-        for yaml_path in sorted(self.skills_dir.glob("*/tools.yaml")):
+        for yaml_path in self._iter_tools_yamls():
             try:
                 data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
             except yaml.YAMLError:

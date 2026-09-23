@@ -70,3 +70,5 @@ _commit_msg.txt
 
 # skill 覆盖安装的旧版本备份（2026-09-22 挂账③，installer 运行时产物）
 .skill_backups/
+# 第三方/自动提炼 skill 安装目录（2026-09-23 挂账⑥，本机运行时产物）
+skills_installed/

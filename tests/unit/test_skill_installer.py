@@ -25,6 +25,12 @@ class TestValidateName:
             assert not inst.validate_name(bad)["ok"], bad
 
     def test_existing_rejected(self, inst: SkillInstaller, tmp_path: Path) -> None:
+        (tmp_path / "skills_installed" / "dup").mkdir(parents=True)
+        assert not inst.validate_name("dup")["ok"]
+
+    def test_existing_builtin_rejected(self, inst: SkillInstaller,
+                                       tmp_path: Path) -> None:
+        """与内置 skill 同名也拒（防遮蔽死重量，2026-09-23 挂账⑥双目录）。"""
         (tmp_path / "skills" / "dup").mkdir(parents=True)
         assert not inst.validate_name("dup")["ok"]
 
@@ -97,14 +103,17 @@ class TestValidateZip:
 
 
 class TestInstall:
-    def test_create_writes_files(self, inst: SkillInstaller) -> None:
+    def test_create_writes_files(self, inst: SkillInstaller,
+                                 tmp_path: Path) -> None:
         out = inst.install("demo", {"SKILL.md": VALID_MD})
         assert out["ok"]
+        # 挂账⑥：装到 skills_installed/（门禁豁免），不碰内置 skills/
+        assert Path(out["dir"]).parent == tmp_path / "skills_installed"
         assert (Path(out["dir"]) / "SKILL.md").read_text() == VALID_MD
 
     def test_overwrite_backs_up(self, inst: SkillInstaller,
                                 tmp_path: Path) -> None:
-        d = tmp_path / "skills" / "demo"
+        d = tmp_path / "skills_installed" / "demo"
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text("old", encoding="utf-8")
         out = inst.install("demo", {"SKILL.md": VALID_MD}, overwrite=True)
@@ -115,4 +124,4 @@ class TestInstall:
         assert bak.parent.name == ".skill_backups"
         assert bak.parent.parent == tmp_path
         assert (bak / "SKILL.md").read_text() == "old"
-        assert not (tmp_path / "skills" / bak.name).exists()
+        assert not (tmp_path / "skills_installed" / bak.name).exists()

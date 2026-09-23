@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from orchestrator.coding.skill_installer import FILE_KEY_RE, NAME_RE, SkillInstaller
+from orchestrator.coding.skill_loader import installed_dir_for
 from shared.schemas import ChatMessage
 
 if TYPE_CHECKING:
@@ -137,36 +138,41 @@ class SkillDistiller:
                 first_words[head] = first_words.get(head, 0) + 1
         return any(c >= MIN_REPEAT_RUN_CMD for c in first_words.values())
 
+    def _skill_dirs(self) -> list[Path]:
+        """内置 + 安装双目录中存在的根目录（2026-09-23 挂账⑥）。"""
+        return [b for b in (self.skills_dir, installed_dir_for(self.skills_dir))
+                if b.is_dir()]
+
     def _skill_tool_names(self) -> set[str]:
-        """扫描 skills_dir/*/tools.yaml 得全部 skill 工具名（触发过滤排除用）。"""
+        """扫描双目录 */tools.yaml 得全部 skill 工具名（触发过滤排除用）。"""
         names: set[str] = set()
-        if not self.skills_dir.is_dir():
-            return names
-        for yaml_path in sorted(self.skills_dir.glob("*/tools.yaml")):
-            try:
-                data = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-            except yaml.YAMLError:
-                continue
-            for tool in data.get("tools") or []:
-                if isinstance(tool, dict) and tool.get("name"):
-                    names.add(str(tool["name"]))
+        for base in self._skill_dirs():
+            for yaml_path in sorted(base.glob("*/tools.yaml")):
+                try:
+                    data = yaml.safe_load(
+                        yaml_path.read_text(encoding="utf-8")) or {}
+                except yaml.YAMLError:
+                    continue
+                for tool in data.get("tools") or []:
+                    if isinstance(tool, dict) and tool.get("name"):
+                        names.add(str(tool["name"]))
         return names
 
     def _existing_skills_text(self) -> str:
         """既有 skill 的 name + description 清单（防重复造轮子注入）。"""
         lines: list[str] = []
-        if not self.skills_dir.is_dir():
-            return "(none)"
-        for md_path in sorted(self.skills_dir.glob("*/SKILL.md")):
-            name = md_path.parent.name
-            desc = ""
-            try:
-                head = md_path.read_text(encoding="utf-8")[:600]
-                m = re.search(r"^\s*description\s*:\s*(.+)$", head, re.MULTILINE)
-                desc = m.group(1).strip()[:120] if m else ""
-            except OSError:
-                pass
-            lines.append(f"- {name}: {desc}")
+        for base in self._skill_dirs():
+            for md_path in sorted(base.glob("*/SKILL.md")):
+                name = md_path.parent.name
+                desc = ""
+                try:
+                    head = md_path.read_text(encoding="utf-8")[:600]
+                    m = re.search(r"^\s*description\s*:\s*(.+)$", head,
+                                  re.MULTILINE)
+                    desc = m.group(1).strip()[:120] if m else ""
+                except OSError:
+                    pass
+                lines.append(f"- {name}: {desc}")
         return "\n".join(lines) if lines else "(none)"
 
     def _condense_events(self, events: list[dict[str, Any]]) -> str:

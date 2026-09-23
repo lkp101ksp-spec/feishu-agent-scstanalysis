@@ -55,9 +55,11 @@ class TestCallbackKindBranch:
         monkeypatch.setattr(installer, "install", spy)
         out = installer.install(CREATE_SUGG["skill"], CREATE_SUGG["files"])
         assert out["ok"] and called["name"] == "newsk"
-        assert (tmp_path / "skills" / "newsk" / "SKILL.md").is_file()
+        # 挂账⑥：落盘到安装目录 skills_installed/
+        assert (tmp_path / "skills_installed" / "newsk"
+                / "SKILL.md").is_file()
 
     def test_create_existing_rejected(self, tmp_path: Path) -> None:
-        (tmp_path / "skills" / "newsk").mkdir(parents=True)
+        (tmp_path / "skills_installed" / "newsk").mkdir(parents=True)
         installer = SkillInstaller(tmp_path / "skills")
         assert not installer.install("newsk", CREATE_SUGG["files"])["ok"]

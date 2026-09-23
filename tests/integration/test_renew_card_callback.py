@@ -360,6 +360,105 @@ def test_skill_improve_deny_does_not_apply(client_with_skill_diagnoser):
     assert "改进记录" not in md
 
 
+def test_skill_improve_approve_triggers_hot_reload(tmp_path, monkeypatch):
+    """挂账②接线钉死：patch 批准写回成功后热刷新 registry——
+    SkillLoader(runner.skills_dir).reload_skill(runner.registry, skill)
+    被调用一次，且回调照常 applied（reload 语义由 test_skill_reload 钉）。"""
+    from types import SimpleNamespace
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    import gateway.app as app_mod
+    from orchestrator.approval_broker import ApprovalBroker
+    from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+    from orchestrator.tools.tool_registry import ToolRegistry
+    from persistence.models import Base
+
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "reportgen"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: reportgen\ndescription: 生成报表\n---\n正文。\n",
+        encoding="utf-8")
+    (skill_dir / "tools.yaml").write_text(
+        "tools:\n  - name: run_report\n    timeout_sec: 60\n", encoding="utf-8")
+    diagnoser = SkillDiagnoser(llm=MagicMock(), skills_dir=skills_dir)
+    registry = ToolRegistry()
+    orch = SimpleNamespace(coding_runner=SimpleNamespace(
+        diagnoser=diagnoser, skills_dir=skills_dir, registry=registry))
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    broker = ApprovalBroker()
+    app = create_app(secret="phase2-secret", orchestrator=orch,
+                     approval_broker=broker)
+    app.state.session_factory = factory
+    client = TestClient(app)
+
+    calls = []
+
+    def _spy(self, reg, name):
+        calls.append((reg, name))
+        return {"ok": True, "removed": 1, "added": 1}
+
+    monkeypatch.setattr(app_mod.SkillLoader, "reload_skill", _spy)
+    resp = _post_card(client, _skill_improve_payload(iid="si_hr"))
+    assert resp.json()["status"] == "applied"
+    assert calls == [(registry, "reportgen")]
+
+
+def test_skill_improve_hot_reload_failure_still_applied(tmp_path, monkeypatch):
+    """reload 抛错仅记日志不回滚：回调仍 applied，skill 文件已写回。"""
+    from types import SimpleNamespace
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    import gateway.app as app_mod
+    from orchestrator.approval_broker import ApprovalBroker
+    from orchestrator.coding.skill_diagnoser import SkillDiagnoser
+    from orchestrator.tools.tool_registry import ToolRegistry
+    from persistence.models import Base
+
+    skills_dir = tmp_path / "skills"
+    skill_dir = skills_dir / "reportgen"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: reportgen\ndescription: 生成报表\n---\n正文。\n",
+        encoding="utf-8")
+    (skill_dir / "tools.yaml").write_text(
+        "tools:\n  - name: run_report\n    timeout_sec: 60\n", encoding="utf-8")
+    diagnoser = SkillDiagnoser(llm=MagicMock(), skills_dir=skills_dir)
+    orch = SimpleNamespace(coding_runner=SimpleNamespace(
+        diagnoser=diagnoser, skills_dir=skills_dir, registry=ToolRegistry()))
+
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False},
+        poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    broker = ApprovalBroker()
+    app = create_app(secret="phase2-secret", orchestrator=orch,
+                     approval_broker=broker)
+    app.state.session_factory = factory
+    client = TestClient(app)
+
+    def _boom(self, reg, name):
+        raise RuntimeError("reload exploded")
+
+    monkeypatch.setattr(app_mod.SkillLoader, "reload_skill", _boom)
+    resp = _post_card(client, _skill_improve_payload(iid="si_hrf"))
+    assert resp.json()["status"] == "applied"
+    md = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert "## 改进记录" in md
+
+
 def test_skill_improve_apply_failure_reported(client_with_skill_diagnoser):
     """apply 失败（skill 目录不存在）：返回 apply_failed + 错误原因。"""
     client, broker, skill_dir = client_with_skill_diagnoser

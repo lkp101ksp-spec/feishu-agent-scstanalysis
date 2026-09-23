@@ -54,8 +54,10 @@ markers = [
 line-length = 110
 target-version = "py310"
 # 真机验收 scratch 目录（测试 zip 源文件非项目代码，不入门禁）；
-# .skill_backups 为 skill 覆盖安装的旧版本备份（installer 落盘，非项目代码）
-extend-exclude = ["tmp_skill_accept", ".skill_backups"]
+# .skill_backups 为 skill 覆盖安装的旧版本备份（installer 落盘，非项目代码）；
+# skills_installed 为第三方/自动提炼 skill 安装目录（2026-09-23 挂账⑥：
+# LLM 产物质量不可控，与内置 skills/ 分离后不触发项目门禁）
+extend-exclude = ["tmp_skill_accept", ".skill_backups", "skills_installed"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]

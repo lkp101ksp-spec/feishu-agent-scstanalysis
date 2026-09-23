@@ -37,6 +37,16 @@ def _tokenize(text: str) -> set[str]:
     return {t.lower() for t in re.findall(r"[A-Za-z0-9_]+|[一-鿿]", text)}
 
 
+def installed_dir_for(skills_dir: Path) -> Path:
+    """第三方/自动提炼 skill 的安装目录：skills_dir 同级 skills_installed/。
+
+    2026-09-23 挂账⑥：与内置 skills/ 物理分离——mypy packages/ruff 门禁
+    只管内置目录，安装进来的 LLM 产物（质量不可控）不再触发项目门禁；
+    loader/diagnoser/distiller 双目录可见，installer 只写安装目录。
+    """
+    return Path(skills_dir).parent / "skills_installed"
+
+
 def _make_handler(command: list[str], cwd: Path, timeout_sec: int,
                   image: str | None = None) -> Callable[..., ToolResult]:
     """把 skill 工具包装成 registry handler。
@@ -89,18 +99,28 @@ class SkillLoader:
 
     # ------------------------------------------------------------------ #
     def scan(self) -> int:
-        """扫描 skills/<name>/SKILL.md 并（重）加载；残缺项跳过并 warn。"""
+        """扫描内置 skills/ + 安装 skills_installed/ 的 <name>/SKILL.md 并加载。
+
+        残缺项跳过并 warn；同名冲突内置优先（安装目录项跳过告警，防遮蔽）。
+        """
         self.skills = []
-        if not self.skills_dir.is_dir():
-            return 0
-        for md in sorted(self.skills_dir.glob("*/SKILL.md")):
-            # 防御性跳过隐藏/备份目录（.bak 已移出 skills/，此处兜历史残留）
-            if md.parent.name.startswith(".") or ".bak" in md.parent.name:
+        seen: set[str] = set()
+        for base in (self.skills_dir, installed_dir_for(self.skills_dir)):
+            if not base.is_dir():
                 continue
-            skill = self._parse_skill(md)
-            if skill is None:
-                continue
-            self.skills.append(skill)
+            for md in sorted(base.glob("*/SKILL.md")):
+                # 防御性跳过隐藏/备份目录（.bak 已移出 skills/，兜历史残留）
+                if md.parent.name.startswith(".") or ".bak" in md.parent.name:
+                    continue
+                skill = self._parse_skill(md)
+                if skill is None:
+                    continue
+                if skill.name in seen:
+                    logger.warning("skill name clash (builtin wins), skipped: %s",
+                                   md.parent)
+                    continue
+                seen.add(skill.name)
+                self.skills.append(skill)
         return len(self.skills)
 
     def _parse_skill(self, md_path: Path) -> "LoadedSkill | None":
@@ -169,7 +189,12 @@ class SkillLoader:
         for tn in removed:
             registry.unregister(tn)
         added: list[str] = []
-        skill = self._parse_skill(self.skills_dir / name / "SKILL.md")
+        # 双目录解析（挂账⑥）：安装目录优先（install/patch 的落点），
+        # 找不到再回退内置目录（内置 skill 的 diagnoser patch 场景）
+        md = installed_dir_for(self.skills_dir) / name / "SKILL.md"
+        if not md.is_file():
+            md = self.skills_dir / name / "SKILL.md"
+        skill = self._parse_skill(md)
         if skill is not None:
             for t in skill.tools:
                 registry.register(self._tool_spec(skill, t))

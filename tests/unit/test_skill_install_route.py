@@ -28,8 +28,12 @@ class TestManualInstallPath:
         assert out["ok"] and "SKILL.md" in out["files"]
 
     def test_manual_overwrite_allowed(self, tmp_path: Path) -> None:
-        """手动 install（overwrite=True）允许覆盖同名 skill 且整目录备份。"""
-        d = tmp_path / "skills" / "mansk"
+        """手动 install（overwrite=True）允许覆盖同名 skill 且整目录备份。
+
+        2026-09-23 挂账⑥：覆盖目标是安装目录 skills_installed/ 里的既有
+        skill（内置同名由 validate_name 在 create 路径拦截）。
+        """
+        d = tmp_path / "skills_installed" / "mansk"
         d.mkdir(parents=True)
         (d / "SKILL.md").write_text("old", encoding="utf-8")
         inst = SkillInstaller(tmp_path / "skills")

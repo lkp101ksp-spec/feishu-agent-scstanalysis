@@ -19,6 +19,8 @@ from typing import Any
 
 import yaml
 
+from orchestrator.coding.skill_loader import installed_dir_for
+
 logger = logging.getLogger(__name__)
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,30}$")
@@ -34,17 +36,26 @@ class SkillInstaller:
     """skill 目录校验与落盘（双入口共用，human-in-loop 审批后调用）。"""
 
     def __init__(self, skills_dir: Path) -> None:
-        """skills_dir 为 skills/ 根目录。"""
+        """skills_dir 为内置 skills/ 根目录；落盘目标为其同级 skills_installed/。"""
         self.skills_dir = Path(skills_dir)
+        # 2026-09-23 挂账⑥：安装目录与内置目录物理分离（门禁豁免区）
+        self.installed_dir = installed_dir_for(self.skills_dir)
 
     # ------------------------------------------------------------------ #
     def validate_name(self, name: str) -> dict[str, Any]:
-        """create 语义：正则合法且 skills/<name>/ 不存在。"""
+        """create 语义：正则合法且安装目录/内置目录均无同名 skill。
+
+        内置同名也拒——scan 同名冲突内置优先，装进去的会是永不生效的
+        死重量（挂账⑥双目录约定）。
+        """
         if not NAME_RE.match(name or ""):
             return {"ok": False,
                     "error": f"非法 skill 名（须匹配 {NAME_RE.pattern}）: {name!r}"}
-        if (self.skills_dir / name).exists():
+        if (self.installed_dir / name).exists():
             return {"ok": False, "error": f"skill 已存在（create 拒覆盖）: {name}"}
+        if (self.skills_dir / name).exists():
+            return {"ok": False,
+                    "error": f"与内置 skill 同名（会永不生效，拒装）: {name}"}
         return {"ok": True}
 
     def validate_files(self, files: dict[str, Any]) -> dict[str, Any]:
@@ -123,11 +134,14 @@ class SkillInstaller:
 
     def install(self, name: str, files: dict[str, str],
                 *, overwrite: bool = False) -> dict[str, Any]:
-        """审批通过后落盘 skills/<name>/；overwrite 时旧目录移 .skill_backups/ 兜底。
+        """审批通过后落盘 skills_installed/<name>/；overwrite 时旧目录移
+        .skill_backups/ 兜底。
 
-        备份目录放 skills/ 之外（skills_dir 同级 .skill_backups/）——2026-09-22
-        挂账③：.bak 目录落在 skills/ 内会被 SkillLoader `*/SKILL.md` 扫描
-        （重名工具跳过告警刷屏）且被 ruff/mypy 门禁扫到（旧脚本必挂 pre-push）。
+        落盘在安装目录而非内置 skills/（2026-09-23 挂账⑥：LLM 产物不进
+        门禁区）。备份目录放 skills/ 之外（同级 .skill_backups/）——
+        2026-09-22 挂账③：.bak 目录落在 skills/ 内会被 SkillLoader
+        `*/SKILL.md` 扫描（重名工具跳过告警刷屏）且被 ruff/mypy 门禁扫到
+        （旧脚本必挂 pre-push）。
         """
         if not overwrite:
             chk = self.validate_name(name)
@@ -135,13 +149,13 @@ class SkillInstaller:
                 return chk
         elif not NAME_RE.match(name or ""):
             return {"ok": False, "error": f"非法 skill 名: {name!r}"}
-        target = self.skills_dir / name
+        target = self.installed_dir / name
         backup = ""
         try:
-            self.skills_dir.mkdir(parents=True, exist_ok=True)
+            self.installed_dir.mkdir(parents=True, exist_ok=True)
             if target.exists():
                 ts = datetime.now().strftime("%Y%m%d%H%M%S")
-                bak_root = self.skills_dir.parent / ".skill_backups"
+                bak_root = self.installed_dir.parent / ".skill_backups"
                 bak_root.mkdir(parents=True, exist_ok=True)
                 bak = bak_root / f"{name}.bak.{ts}"
                 shutil.move(str(target), str(bak))
