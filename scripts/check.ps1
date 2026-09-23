@@ -1,4 +1,4 @@
-﻿# Phase 10 T5 质量门一键脚本（配套 ADR-0028 venv / ADR-0029 pg 分层）
+# Phase 10 T5 质量门一键脚本（配套 ADR-0028 venv / ADR-0029 pg 分层）
 # 用法：powershell -ExecutionPolicy Bypass -File scripts\check.ps1
 #       加 -Pg 追加真库层（需先 docker compose up -d postgres）
 param(
@@ -41,7 +41,9 @@ Write-Host "`n== [3/4] mypy 基线 ==" -ForegroundColor Cyan
 if ($LASTEXITCODE -ne 0) { Write-Host "[FAIL] mypy 未通过" -ForegroundColor Red; exit 2 }
 
 # 4) pytest 默认层（SQLite）+ 覆盖率摘要（硬门禁；pg 层靠 -m 隔离，Docker 起着也不混入）
-#    --basetemp 钉仓库内 .pytest_tmp：Windows 默认 Temp\pytest-of-* 曾遇 WinError 5 权限拒绝
+#    --basetemp 钉仓库内 .pytest_tmp：默认 Temp\pytest-of-* 的 WinError 5 已根治
+#    （2026-09-23 删目录重建+默认 basetemp 复验 57 passed）；保留此钉只为防
+#    agent 沙箱拦截 C 盘 Temp 写入（2026-09-17 教训），非 ACL 绕行。
 Write-Host "`n== [4/4] pytest 默认层 + cov ==" -ForegroundColor Cyan
 # Phase 59 抖动取证：输出落 .check_pytest.log——FAIL 保留+echo 尾 50 行
 # （单次抖动复跑 PASS 不留证的历史教训），PASS 删除。
