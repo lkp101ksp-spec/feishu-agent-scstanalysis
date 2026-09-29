@@ -146,6 +146,73 @@ def test_resolve_inputs_missing_without_alias_raises():
         sch._resolve_inputs(plan.nodes[1])
 
 
+def test_resolve_inputs_comma_multi_ref():
+    """逗号多引用（2026-09-29 sc_merge 真机缺口）：
+    "n1.dataset_ref,n2.dataset_ref" → 逐段解析后逗号拼回。"""
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="a",
+                 inputs={}, depends_on=[])
+    n2 = DAGNode(node_id="n2", kind="tool", tool_name="b",
+                 inputs={}, depends_on=[])
+    n3 = DAGNode(node_id="n3", kind="tool", tool_name="sc_merge",
+                 inputs={"dataset_refs": "n1.dataset_ref, n2.dataset_ref"},
+                 depends_on=["n1", "n2"])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, n2, n3], entry_node_ids=["n1", "n2"])
+    sch = Scheduler(plan=plan, executor=FakeExecutor())
+    now = dt.datetime.now(dt.UTC)
+    for nid, ref in (("n1", "aaa111"), ("n2", "bbb222")):
+        sch._handles[nid] = TaskHandle(
+            execution_id=f"e_{nid}", task_id="t", node_id=nid,
+            state=ExecutionState.SUCCESS, started_at=now, finished_at=now,
+            outputs={"dataset_ref": ref},
+        )
+    resolved = sch._resolve_inputs(n3)
+    assert resolved["dataset_refs"] == "aaa111,bbb222"
+
+
+def test_resolve_inputs_comma_multi_ref_missing_raises():
+    """多引用中任一段解析失败 → 同样 fail-fast（不静默半截拼接）。"""
+    import pytest
+
+    from orchestrator.planner.scheduler import UpstreamRefMissingError
+
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="a",
+                 inputs={}, depends_on=[])
+    n2 = DAGNode(node_id="n2", kind="tool", tool_name="b",
+                 inputs={}, depends_on=[])
+    n3 = DAGNode(node_id="n3", kind="tool", tool_name="sc_merge",
+                 inputs={"dataset_refs": "n1.dataset_ref,n2.dataset_ref"},
+                 depends_on=["n1", "n2"])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, n2, n3], entry_node_ids=["n1", "n2"])
+    sch = Scheduler(plan=plan, executor=FakeExecutor())
+    now = dt.datetime.now(dt.UTC)
+    sch._handles["n1"] = TaskHandle(
+        execution_id="e1", task_id="t", node_id="n1",
+        state=ExecutionState.SUCCESS, started_at=now, finished_at=now,
+        outputs={"dataset_ref": "aaa111"},
+    )
+    sch._handles["n2"] = TaskHandle(
+        execution_id="e2", task_id="t", node_id="n2",
+        state=ExecutionState.SUCCESS, started_at=now, finished_at=now,
+        outputs={"answer": 42},  # 无 dataset_ref 且别名也兜不住
+    )
+    with pytest.raises(UpstreamRefMissingError, match="n2.dataset_ref"):
+        sch._resolve_inputs(n3)
+
+
+def test_resolve_inputs_comma_literal_not_multi_ref():
+    """逗号文本但段前缀非节点 id → 不当多引用（走内嵌/字面路径）。"""
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="a",
+                 inputs={}, depends_on=[])
+    n2 = DAGNode(node_id="n2", kind="tool", tool_name="b",
+                 inputs={"x": "hello.world, foo.bar"}, depends_on=["n1"])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, n2], entry_node_ids=["n1"])
+    sch = Scheduler(plan=plan, executor=FakeExecutor())
+    assert sch._resolve_inputs(n2)["x"] == "hello.world, foo.bar"
+
+
 async def test_scheduler_marks_node_failed_on_missing_ref():
     """整值引用解析失败 → 节点 FAILED(UPSTREAM_REF_MISSING)，不下发执行器，
     下游照常 SKIPPED，计划以 partial failure 收尾。"""

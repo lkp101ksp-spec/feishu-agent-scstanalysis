@@ -316,43 +316,57 @@ class Scheduler:
         别名兜底也失败时抛 UpstreamRefMissingError（fail-fast，
         2026-09-29 翻案：静默 None 会让下游以 NoneType AttributeError
         难懂崩溃）。
+        逗号多引用（2026-09-29 sc_merge 真机缺口）：值形如
+        "n1.dataset_ref,n2.dataset_ref"（逗号分隔且每段都是计划内
+        <node>.<field>）→ 逐段解析后以逗号拼回字符串——sc_merge 等
+        多上游工具的契约形态。普通含逗号文本（段前缀非节点 id）不受影响。
         """
         resolved: dict[str, Any] = {}
         for k, v in node.inputs.items():
             if isinstance(v, str) and "." in v:
+                # 逗号多引用：所有段都形如 <已知节点>.<字段> 才按多引用处理
+                parts = [p.strip() for p in v.split(",")]
+                if len(parts) >= 2 and all(
+                        "." in p and p.split(".", 1)[0] in self._node_map
+                        for p in parts):
+                    resolved[k] = ",".join(
+                        str(self._resolve_whole_ref(node, p)) for p in parts)
+                    continue
                 upstream_id, field_name = v.split(".", 1)
                 if upstream_id not in self._node_map:
                     # 非整值引用 → 尝试内嵌引用替换（code 内插）
                     resolved[k] = self._inline_substitute(v)
                     continue
-                up_handle = self._handles.get(upstream_id)
-                if up_handle and up_handle.outputs:
-                    if field_name in up_handle.outputs:
-                        resolved[k] = up_handle.outputs[field_name]
-                        continue
-                    for alias in _FIELD_ALIASES:
-                        if alias in up_handle.outputs:
-                            logger.warning(
-                                "node %s 引用 %s.%s 不存在，回退 %s.%s",
-                                node.node_id, upstream_id, field_name,
-                                upstream_id, alias,
-                            )
-                            resolved[k] = up_handle.outputs[alias]
-                            break
-                    else:
-                        raise UpstreamRefMissingError(
-                            f"node {node.node_id} 引用 {upstream_id}.{field_name} "
-                            f"无法解析：上游未产出该字段（可能未找到数据），"
-                            f"且无别名可回退"
-                        )
-                else:
-                    raise UpstreamRefMissingError(
-                        f"node {node.node_id} 引用 {upstream_id}.{field_name} "
-                        f"无法解析：上游节点无输出句柄"
-                    )
+                resolved[k] = self._resolve_whole_ref(node, v)
             else:
                 resolved[k] = v
         return resolved
+
+    def _resolve_whole_ref(self, node: DAGNode, ref: str) -> Any:
+        """解析单个整值引用 <node>.<field>：字段缺失按别名兜底，兜底也
+        失败（或上游无输出句柄）抛 UpstreamRefMissingError。"""
+        upstream_id, field_name = ref.split(".", 1)
+        up_handle = self._handles.get(upstream_id)
+        if up_handle and up_handle.outputs:
+            if field_name in up_handle.outputs:
+                return up_handle.outputs[field_name]
+            for alias in _FIELD_ALIASES:
+                if alias in up_handle.outputs:
+                    logger.warning(
+                        "node %s 引用 %s.%s 不存在，回退 %s.%s",
+                        node.node_id, upstream_id, field_name,
+                        upstream_id, alias,
+                    )
+                    return up_handle.outputs[alias]
+            raise UpstreamRefMissingError(
+                f"node {node.node_id} 引用 {upstream_id}.{field_name} "
+                f"无法解析：上游未产出该字段（可能未找到数据），"
+                f"且无别名可回退"
+            )
+        raise UpstreamRefMissingError(
+            f"node {node.node_id} 引用 {upstream_id}.{field_name} "
+            f"无法解析：上游节点无输出句柄"
+        )
 
     def _inline_substitute(self, text: str) -> str:
         """字符串内嵌的 <node>.<field> 替换为 Python 字面量。
