@@ -47,7 +47,7 @@
                             ├─ Planner：LLM 生成任务 DAG
                             ├─ Scheduler/ToolHandler：逐节点分发
                             │     └─ BioRunner：断网短命容器（--network none，资源限额）
-                            │           ├─ bio 镜像 → sandbox/sc_tools（38 个脚本）
+                            │           ├─ bio 镜像 → sandbox/sc_tools（39 个脚本）
                             │           └─ st 镜像  → sandbox/st_tools（15 个脚本）
                             ├─ report_builder：产物汇编 + LLM 逐节解读
                             └─ feishu_adapter：IM/文档/卡片/Base 写回

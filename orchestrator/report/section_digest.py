@@ -37,6 +37,7 @@ SECTION_TITLES: dict[str, str] = {
     "sc_de": "差异表达分析",
     "sc_subcluster": "亚群细分",
     "sc_integrate": "多样本整合",
+    "sc_merge": "多数据集拼接",
     "sc_meta": "元数据注释",
     "sc_wnn": "多组学整合（WNN）",
     "sc_cellfreq": "细胞组成分析",

@@ -47,6 +47,9 @@ def _synth_args(spec: ToolSpec) -> dict[str, Any]:
         if name in ("dataset_ref", "sc_ref"):
             # sc_ref 用 12-hex 走 st_deconvolve 的 workspace 分支
             out[name] = "aaaaaaaaaaaa"
+        elif name == "dataset_refs":
+            # sc_merge（2026-09-29）：逗号分隔 >=2 个 ref 才过 handler 校验
+            out[name] = "aaaaaaaaaaaa,bbbbbbbbbbbb"
         elif name in ("path", "bulk_file", "rna_file", "adt_file"):
             out[name] = "/data/x.h5ad"
         elif name == "genes":

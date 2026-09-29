@@ -96,6 +96,37 @@ def test_sc_process_timeout_error(tmp_path):
     assert out["error_code"] == "SC_TIMEOUT"
 
 
+def test_sc_integrate_memory_override_32g(tmp_path):
+    """2026-09-29 探针钉档：198k 细胞 harmony 峰值 24.2GiB，须覆写 32g。"""
+    reg, runner = _registry(tmp_path)
+    reg.get("sc_integrate").handler(dataset_ref="d", batch="orig.ident")
+    _, kwargs = runner.run.call_args
+    assert kwargs["memory"] == "32g"
+    assert runner.run.call_args.args[0] == "integrate"
+
+
+def test_sc_merge_registered_and_splits_refs(tmp_path):
+    """sc_merge（2026-09-29 双库整合缺口）：逗号拆分 + memory 覆写透传。"""
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "a_b_merged", "n_cells": 200}
+    out = reg.get("sc_merge").handler(dataset_refs="aaa, bbb ,", batch_col="src")
+    args, kwargs = runner.run.call_args
+    assert args[0] == "merge"
+    assert args[1]["dataset_ids"] == ["aaa", "bbb"]
+    assert args[1]["batch_col"] == "src"
+    assert kwargs["memory"] == "32g"
+    assert out["dataset_ref"] == "a_b_merged"
+
+
+def test_sc_merge_needs_two_refs(tmp_path):
+    """单 ref 不进容器，直接人类可读错误。"""
+    reg, runner = _registry(tmp_path)
+    out = reg.get("sc_merge").handler(dataset_refs="onlyone")
+    assert out["error_code"] == "SC_MERGE_NEED_TWO"
+    runner.run.assert_not_called()
+
+
 def test_sc_plot_schema_limits_genes(tmp_path):
     reg, _ = _registry(tmp_path)
     props = reg.get("sc_plot").parameters["properties"]

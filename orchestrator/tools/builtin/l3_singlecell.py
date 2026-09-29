@@ -297,14 +297,35 @@ def register_l3_singlecell(
                      method: str = "bbknn", n_top_hvg: int = 2000,
                      n_pcs: int = 50, n_neighbors: int = 15,
                      resolution: float = 1.0) -> dict[str, Any]:
-        """批次整合（Phase 33）：bbknn → 新 dataset_ref。"""
+        """批次整合（Phase 33）：bbknn → 新 dataset_ref。
+
+        memory 覆写 32g（2026-09-29 真机探针钉档）：198k 细胞 harmony
+        在 scale 稠密化阶段峰值 24.2GiB，默认 16g 限额必 OOM
+        （0xC000013A）；零值/小数据集不受限额提升影响。
+        """
         try:
             out = runner.run("integrate", {
                 "dataset_id": dataset_ref, "batch": batch,
                 "method": method, "n_top_hvg": n_top_hvg,
                 "n_pcs": n_pcs, "n_neighbors": n_neighbors,
                 "resolution": resolution,
-            }, timeout_sec=1800)
+            }, timeout_sec=1800, memory="32g")
+        except BioRunError as e:
+            return _err(e)
+        out.pop("ok", None)
+        return out
+
+    def sc_merge(*, dataset_refs: str, batch_col: str = "dataset") -> dict[str, Any]:
+        """多数据集细胞拼接 → 新 dataset_ref（2026-09-29 PDAC 双库整合缺口）。"""
+        ids = [s.strip() for s in dataset_refs.split(",") if s.strip()]
+        if len(ids) < 2:
+            return {"error_code": "SC_MERGE_NEED_TWO",
+                    "error_message": "dataset_refs 需逗号分隔的 >=2 个 dataset_ref"
+                    f"（收到 {len(ids)} 个）"}
+        try:
+            out = runner.run("merge", {
+                "dataset_ids": ids, "batch_col": batch_col,
+            }, timeout_sec=1200, memory="32g")
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -1209,6 +1230,32 @@ def register_l3_singlecell(
         risk_level="L1_compute",
         handler=sc_integrate,
         timeout_sec=1800,
+        memory="32g",
+    ))
+    registry.register(ToolSpec(
+        name="sc_merge",
+        description=(
+            "多数据集细胞拼接（2026-09-29 新增）：把多个 sc_load/sc_qc 产出的"
+            " dataset 按行拼成一个（outer join 基因、稀疏保零、跨库 barcode "
+            "自动去重），obs 增 batch_col 列标记来源库；原始批次列"
+            "（如 orig.ident）保留。**多库整合必须先 sc_merge 再 "
+            "sc_integrate**——sc_integrate 只吃单数据集。输出新 "
+            "dataset_ref（形如 {id1}_{id2}_merged）与每库细胞数。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "dataset_refs": {"type": "string",
+                                 "description": "逗号分隔的 >=2 个 dataset_ref"},
+                "batch_col": {"type": "string", "default": "dataset",
+                              "description": "标记来源库的新 obs 列名"},
+            },
+            "required": ["dataset_refs"],
+        },
+        risk_level="L1_compute",
+        handler=sc_merge,
+        timeout_sec=1200,
+        memory="32g",
     ))
     registry.register(ToolSpec(
         name="sc_cellfreq",
