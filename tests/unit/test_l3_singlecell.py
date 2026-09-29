@@ -605,9 +605,28 @@ def test_sc_subcluster_forwards_params(tmp_path):
     args = runner.run.call_args.args
     assert args[0] == "subcluster"
     assert args[1]["clusters"] == ["0", "1"]
+    assert args[1]["obs_col"] == "leiden"
     assert args[1]["resolution"] == 0.8
     assert out["dataset_ref"] == "d_sub0-1"
     assert reg.get("sc_subcluster").timeout_sec == 1800
+
+
+def test_sc_subcluster_obs_col_forwards(tmp_path):
+    """obs_col 透传：按注释列提取细胞类型子集（真机缺口 2026-09-29）。
+
+    用户『提取导管细胞重聚类』→ clusters=['Ductal'] 是 all_celltype 的取值，
+    旧硬编码 leiden 直接 ValueError；handler 必须把 obs_col 传给脚本。
+    """
+    reg, runner = _registry(tmp_path)
+    runner.run.return_value = {
+        "ok": True, "dataset_ref": "d_suball_celltype_Ductal",
+        "parent_ref": "d", "n_cells": 12000, "n_clusters": 5}
+    out = reg.get("sc_subcluster").handler(
+        dataset_ref="d", clusters=["Ductal"], obs_col="all_celltype")
+    args = runner.run.call_args.args
+    assert args[1]["obs_col"] == "all_celltype"
+    assert args[1]["clusters"] == ["Ductal"]
+    assert out["dataset_ref"] == "d_suball_celltype_Ductal"
 
 
 def test_sc_integrate_forwards_params(tmp_path):

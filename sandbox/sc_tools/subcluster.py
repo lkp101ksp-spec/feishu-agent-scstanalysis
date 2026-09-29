@@ -1,11 +1,15 @@
 """sc_subcluster：亚聚类（Phase 33，对齐 toolsv1 server_subcluster_*）。
 
-stdin: {"dataset_id": ..., "clusters": ["0", "1"],
+stdin: {"dataset_id": ..., "clusters": ["0", "1"], "obs_col": "leiden",
         "n_top_hvg": 2000, "n_pcs": 50, "n_neighbors": 15, "resolution": 1.0}
 需父 processed.h5ad。取指定簇子集，从 raw（归一化 log 全基因）重建矩阵
 重跑 HVG→scale→PCA→邻居→UMAP→Leiden（标签重编 0..k）。
 产物落 WS/{new_id}/processed.h5ad（new_id = {父id}_sub{簇号-连写}），
 返回新 dataset_ref——markers/富集/打分/代谢/拟时序零改动可链，支持多级亚聚类。
+
+obs_col（2026-09-29 真机缺口）：取值列不限于 leiden——传 all_celltype
+等注释列即可按细胞类型取子集（真机："提取导管细胞重聚类"，Ductal 是
+all_celltype 的值而非簇号，旧硬编码 leiden 直接 ValueError）。
 """
 from __future__ import annotations
 
@@ -29,18 +33,23 @@ def main() -> None:
     n_pcs = int(args.get("n_pcs", 50))
     n_neighbors = int(args.get("n_neighbors", 15))
     resolution = float(args.get("resolution", 1.0))
+    obs_col = str(args.get("obs_col", "leiden")).strip() or "leiden"
 
     parent = args["dataset_id"]
     adata = load_adata({"dataset_id": parent, "file": "processed"})
-    if "leiden" not in adata.obs:
-        raise ValueError("parent processed.h5ad lacks leiden; "
-                         "run sc_process first")
-    labels = adata.obs["leiden"].astype(str)
+    if obs_col not in adata.obs:
+        cat_cols = [c for c in adata.obs.columns
+                    if str(adata.obs[c].dtype) == "category"
+                    or adata.obs[c].dtype == object]
+        raise ValueError(
+            f"parent processed.h5ad lacks obs column '{obs_col}'; "
+            f"categorical columns available: {cat_cols}")
+    labels = adata.obs[obs_col].astype(str)
     have = set(labels.unique())
     missing = [c for c in clusters if c not in have]
     if missing:
         raise ValueError(
-            f"clusters {missing} not in parent leiden; existing: "
+            f"clusters {missing} not in parent '{obs_col}'; existing: "
             f"{sorted(have)[:30]}")
 
     # 从 raw 重建（归一化 log 全基因，与 process 口径一致）
@@ -62,14 +71,16 @@ def main() -> None:
     sc.tl.leiden(sub, resolution=resolution, flavor="igraph",
                  n_iterations=2, directed=False)
 
-    new_id = re.sub(r"\W+", "_",
-                    f"{parent}_sub{'-'.join(sorted(set(clusters)))}")
+    sel = "-".join(sorted(set(clusters)))
+    if obs_col != "leiden":
+        sel = f"{obs_col}-{sel}"
+    new_id = re.sub(r"\W+", "_", f"{parent}_sub{sel}")
     ds_dir = WS_ROOT / new_id
     ds_dir.mkdir(parents=True, exist_ok=True)
 
     fig, ax = plt.subplots(figsize=(7, 5), dpi=150)
     sc.pl.umap(sub, color="leiden", ax=ax, show=False, legend_loc="on data",
-               title=f"Subcluster of {parent}: {sorted(set(clusters))}")
+               title=f"Subcluster of {parent} {obs_col}={sorted(set(clusters))}")
     umap_png = ds_dir / "umap.png"
     fig.savefig(umap_png, bbox_inches="tight")
     plt.close(fig)
@@ -80,6 +91,7 @@ def main() -> None:
         "ok": True,
         "dataset_ref": new_id,
         "parent_ref": parent,
+        "obs_col": obs_col,
         "source_clusters": sorted(set(clusters)),
         "n_cells": int(sub.n_obs),
         "n_clusters": int(sub.obs["leiden"].nunique()),

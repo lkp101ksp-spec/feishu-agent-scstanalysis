@@ -278,6 +278,7 @@ def register_l3_singlecell(
         return out
 
     def sc_subcluster(*, dataset_ref: str, clusters: list[str],
+                      obs_col: str = "leiden",
                       n_top_hvg: int = 2000, n_pcs: int = 50,
                       n_neighbors: int = 15,
                       resolution: float = 1.0) -> dict[str, Any]:
@@ -285,6 +286,7 @@ def register_l3_singlecell(
         try:
             out = runner.run("subcluster", {
                 "dataset_id": dataset_ref, "clusters": clusters,
+                "obs_col": obs_col,
                 "n_top_hvg": n_top_hvg, "n_pcs": n_pcs,
                 "n_neighbors": n_neighbors, "resolution": resolution,
             }, timeout_sec=1800)
@@ -1171,11 +1173,16 @@ def register_l3_singlecell(
     registry.register(ToolSpec(
         name="sc_subcluster",
         description=(
-            "亚聚类（Phase 33）：取指定 leiden 簇子集，从 raw 重跑 HVG→PCA→"
+            "亚聚类（Phase 33）：取指定簇/细胞类型子集，从 raw 重跑 HVG→PCA→"
             "UMAP→Leiden（标签重编 0..k），发现大群内部异质性。输出**新 "
-            "dataset_ref**（形如 {原id}_sub0-1）——后续 sc_markers/sc_enrichment/"
-            "sc_score_genes 等工具直接传该新 ref 即可，支持多级亚聚类。"
-            "产物含新 umap.png 与簇大小。需先跑 sc_process。"
+            "dataset_ref**（形如 {原id}_sub0-1 或 {原id}_suball_celltype-Ductal）"
+            "——后续 sc_markers/sc_enrichment/sc_score_genes 等工具直接传该新 "
+            "ref 即可，支持多级亚聚类。产物含新 umap.png 与簇大小。"
+            "需先跑 sc_process。"
+            "**提取某类细胞（如『提取导管细胞/肿瘤细胞重聚类』）：clusters 传"
+            "细胞类型名（如 ['Ductal']）且 obs_col 传注释列（如 all_celltype）"
+            "——细胞类型名不是 leiden 簇号，不传 obs_col 会报 not in parent "
+            "leiden。合法列名与取值先 sc_inspect op=list_cols 查看。"
         ),
         parameters={
             "type": "object",
@@ -1185,7 +1192,12 @@ def register_l3_singlecell(
                 "clusters": {
                     "type": "array", "minItems": 1,
                     "items": {"type": "string"},
-                    "description": "要亚聚类的 leiden 簇标签列表，如 ['0','1']"},
+                    "description": "要亚聚类的标签列表：leiden 簇号（如 ['0','1']）"
+                                   "或 obs_col 指定列的取值（如 ['Ductal']）"},
+                "obs_col": {
+                    "type": "string", "default": "leiden",
+                    "description": "clusters 取值所在的 obs 列，默认 leiden；"
+                                   "按细胞类型提取时传注释列（如 all_celltype）"},
                 "n_top_hvg": {"type": "integer", "default": 2000},
                 "n_pcs": {"type": "integer", "default": 50},
                 "n_neighbors": {"type": "integer", "default": 15},
