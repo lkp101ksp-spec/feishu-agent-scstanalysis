@@ -392,6 +392,20 @@ class ResearchRunner:
                 session_context += "\n" + profile_ctx
         except Exception:  # noqa: BLE001 —— 画像是可选项，绝不影响规划
             logger.warning("dataset profile inject failed", exc_info=True)
+        # 2026-09-29：workspace 已有数据集清单注入——追问轮次（"把注释
+        # UMAP 画出来/发给我"）不带 ref，模型不知已有数据则幻觉 run_python
+        # 去错误根目录发现 → 空结果收尾。清单只读元数据，毫秒级。
+        try:
+            from orchestrator.tools.bio.dataset_profile import (
+                build_workspace_context,
+            )
+            ws_ctx = build_workspace_context(
+                getattr(self.orch.settings, "bio_workspace_root", ""),
+                getattr(self.orch.settings, "bio_data_roots", ""))
+            if ws_ctx:
+                session_context += "\n" + ws_ctx
+        except Exception:  # noqa: BLE001 —— 清单同样是可选项
+            logger.warning("workspace context inject failed", exc_info=True)
         # L2 副作用工具默认不可规划（名字与 schema 都不给模型）；
         # Phase 17 例外：开关开启且有 broker 时放行 write_doc（节点级审批，
         # 其余 L2——send_card/write_base_projection/upload_drive——仍不给）；

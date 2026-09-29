@@ -347,3 +347,107 @@ def build_profile_context(text: str, workspace_root: str) -> str:
         "物种敏感工具（cellchat/metabolism/scenic/commot）的 species "
         "按画像猜测传，鼠源符号（Xkr4 式 Title-case）=mouse、全大写=human。")
     return "\n".join(lines)
+
+
+_DATASET_DIR_RE = re.compile(r"^[0-9a-f]{12}")
+
+
+def _quick_meta(ds_dir: Path) -> dict[str, Any] | None:
+    """轻量目录画像：只读 h5ad 元数据（X shape + obs 列），毫秒级。
+
+    读取链 processed → filtered → raw（面向"继续分析"场景，processed
+    才是 sc_plot 等下游的输入）；任何异常 → None（清单是可选项）。
+    """
+    h5 = None
+    for name in ("processed.h5ad", "filtered.h5ad", "raw.h5ad"):
+        p = ds_dir / name
+        if p.is_file():
+            h5 = p
+            break
+    if h5 is None:
+        return None
+    try:
+        import h5py
+
+        with h5py.File(h5, "r") as f:
+            x = f.get("X")
+            if x is None:
+                return None
+            if isinstance(x, h5py.Dataset):
+                shape = tuple(x.shape)
+            else:
+                shape = tuple(x.attrs.get("shape", ()))
+            if len(shape) != 2:
+                return None
+            obs_cols = _obs_columns(f["obs"]) if "obs" in f else {}
+        return {"source": h5.name, "n_cells": int(shape[0]),
+                "n_genes": int(shape[1]), "obs_cols": obs_cols}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def build_workspace_context(workspace_root: str,
+                            data_roots: list[str] | tuple[str, ...] | str,
+                            *, cap: int = 8) -> str:
+    """workspace 已有数据集清单文本段（planner 注入用，2026-09-29 缺口）。
+
+    动因（真机）：整合任务完成后的追问（"把注释 UMAP 画出来/发给我"）
+    不带 dataset_ref，模型不知道工作区里已有什么，只能幻觉 run_python
+    去 /data、D:/sc_data 等错误根目录发现 → 空结果收尾。本清单把已有
+    dataset_ref（目录名自带血缘，如 {id}_{id}_merged_harmony）+ 规模 +
+    可用分组列 + 已产出图注入 session_context，让追问直接引用续作。
+
+    只读元数据（X shape/obs 列键），不读表达矩阵，毫秒级；cap 防爆。
+    workspace_root 空/无数据集 → 空串（调用方不追加）。
+    """
+    if not isinstance(workspace_root, str) or not workspace_root:
+        return ""
+    root = Path(workspace_root)
+    if not root.is_dir():
+        return ""
+    try:
+        dirs = sorted(
+            (d for d in root.iterdir()
+             if d.is_dir() and _DATASET_DIR_RE.match(d.name)),
+            key=lambda d: d.stat().st_mtime, reverse=True)[:cap]
+    except Exception:  # noqa: BLE001
+        return ""
+    if not dirs:
+        return ""
+
+    lines = [
+        "当前工作区已有数据集（继续分析直接把目录名作 dataset_ref 传给 "
+        "sc_* 工具；严禁重新发现/重新加载已有数据）：",
+    ]
+    for d in dirs:
+        meta = _quick_meta(d)
+        if meta is None:
+            lines.append(f"- {d.name}（无可用 h5ad）")
+            continue
+        seg = (f"- {d.name}（{meta['source']}）：{meta['n_cells']} 细胞 × "
+               f"{meta['n_genes']} 基因")
+        cat = meta["obs_cols"].get("categorical", [])
+        if cat:
+            seg += (f"；分组列：{', '.join(cat[:10])}"
+                    + ("…" if len(cat) > 10 else ""))
+        pngs = sorted(p.name for p in d.glob("*.png"))
+        if pngs:
+            seg += (f"；已产出图：{', '.join(pngs[:6])}"
+                    + ("…" if len(pngs) > 6 else ""))
+        lines.append(seg)
+
+    if isinstance(data_roots, str):
+        roots = [data_roots] if data_roots else []
+    else:
+        roots = [str(r) for r in data_roots if str(r).strip()]
+    if roots:
+        lines.append(
+            "本地数据根目录（仅在需要发现【新】数据文件时用 run_python "
+            "在这些路径下找，别处没有）："
+            + "；".join(roots))
+    lines.append(
+        "画已有数据的注释/分组 UMAP 用 sc_plot kind=umap_obs + obs_cols="
+        "分组列；obs 分组列（如细胞类型注释）随 sc_merge/sc_integrate "
+        "自动保留，无需先『加入注释』。已产出图可用 sc_plot 复画后自动 "
+        "IM 回传/随报告写入绑定文档。")
+    return "\n".join(lines)

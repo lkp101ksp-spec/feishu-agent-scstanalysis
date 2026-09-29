@@ -5,11 +5,14 @@ var 为 dataframe 组含 _index）验证统计正确性与容错。
 执行面统一轮新增：物种猜测（基因符号风格）/obs 列/_profiles 记忆库
 持久化与 resolve_species 解析链。
 """
+import os
+
 import h5py
 import numpy as np
 
 from orchestrator.tools.bio.dataset_profile import (
     build_profile_context,
+    build_workspace_context,
     cached_species_guess,
     detect_symbol_style,
     extract_dataset_refs,
@@ -262,3 +265,54 @@ class TestContextSpeciesLine:
         assert "物种应为 mouse" in ctx
         assert "可用分组列：leiden" in ctx
         assert "species" in ctx  # 物种指引句
+
+# === workspace 数据集清单（2026-09-29 追问轮缺口）build_workspace_context ===
+
+
+def _write_obs_h5ad(path, x, gene_names, *, cat_cols=()):
+    """dense tiny h5ad + obs（cat_cols 按 categorical group 编码）。"""
+    _write_dense_h5ad(path, x, gene_names)
+    with h5py.File(path, "a") as f:
+        obs = f.create_group("obs")
+        obs.attrs["_index"] = "_index"
+        obs.create_dataset(
+            "_index", data=[f"c{i}".encode() for i in range(x.shape[0])])
+        for col in cat_cols:
+            grp = obs.create_group(col)
+            grp.attrs["encoding-type"] = "categorical"
+
+
+class TestWorkspaceContext:
+    def test_lists_datasets_with_meta_and_pngs(self, tmp_path):
+        ds = tmp_path / "aaaaaaaaaaaa"
+        ds.mkdir()
+        _write_obs_h5ad(ds / "processed.h5ad", _X, _GENES,
+                        cat_cols=("all_celltype",))
+        (ds / "umap_integrated.png").write_bytes(b"png")
+        old = tmp_path / "bbbbbbbbbbbb"
+        old.mkdir()
+        _write_dense_h5ad(old / "raw.h5ad", _X, _GENES)
+        # mtime 旧 → 清单排序 processed 目录在前
+        os.utime(old, (1_000_000, 1_000_000))
+        (tmp_path / "notes").mkdir()      # 非 hex 目录不收
+        (tmp_path / "_profiles").mkdir()  # 记忆库目录不收
+        ctx = build_workspace_context(str(tmp_path), "I:\\data")
+        assert "aaaaaaaaaaaa" in ctx
+        assert "processed.h5ad" in ctx and "3 细胞 × 4 基因" in ctx
+        assert "all_celltype" in ctx
+        assert "umap_integrated.png" in ctx
+        assert "bbbbbbbbbbbb" in ctx
+        assert ctx.index("aaaaaaaaaaaa") < ctx.index("bbbbbbbbbbbb")
+        assert "notes" not in ctx and "_profiles" not in ctx
+        assert "I:\\data" in ctx  # 数据根目录指引
+        assert "umap_obs" in ctx  # 续作指引
+
+    def test_empty_workspace_returns_empty(self, tmp_path):
+        assert build_workspace_context(str(tmp_path), "") == ""
+        assert build_workspace_context("", "") == ""
+        assert build_workspace_context(str(tmp_path / "nonexistent"), "") == ""
+
+    def test_dir_without_h5ad_listed_bare(self, tmp_path):
+        (tmp_path / "cccccccccccc").mkdir()
+        ctx = build_workspace_context(str(tmp_path), [])
+        assert "cccccccccccc（无可用 h5ad）" in ctx
