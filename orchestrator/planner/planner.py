@@ -159,7 +159,14 @@ class Planner:
             '"while_condition_prompt": "上一轮 n1.result 是否小于 0.99", '
             '"depends_on": [], "body": [嵌套节点], "max_iterations": 10}\n'
             "节点 inputs 用 '<upstream_node_id>.<field>' 引用上游输出。"
-            "entry_node_ids 必须是 depends_on=[] 的节点。"
+            "entry_node_ids 必须是 depends_on=[] 的节点。\n"
+            "数据发现护栏（涉及本机数据文件的任务必须遵守）：当计划先用 run_python "
+            "等节点在目录里发现数据文件/样本时，发现节点之后必须接 branch 节点，"
+            "condition_prompt 判断'发现结果是否为空/未找到任何可加载的数据文件'；"
+            "true（为空）分支不要再规划 sc_load 等加载分析节点，直接收尾并在最终"
+            "总结里说明未找到数据、请用户确认路径与格式；false 分支才继续加载分析。"
+            "禁止在发现结果可能为空时，把发现节点的字段直接引用进加载节点 inputs"
+            "（真机 2026-09-29：发现空结果导致下游 sc_load 连锁失败）。"
         )
 
     def _build_plan(self, resp: str, *, task_id: str, session_id: str) -> DAGPlan:

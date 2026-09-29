@@ -198,6 +198,25 @@ def test_planner_plan_validates_dag():
         )
 
 
+def test_planner_prompt_contains_discovery_guard():
+    """2026-09-29 PDAC 事故护栏：prompt 含数据发现空结果的 branch 反问指引。"""
+    fake = FakeLLMRouter([
+        '{"intent": "x"}',
+        """{"nodes": [{"node_id":"n1","kind":"tool","tool_name":"read_doc",
+             "inputs":{"doc_id":"d"},"depends_on":[]}],
+          "entry_node_ids":["n1"]}""",
+    ])
+    Planner(llm_router=fake).plan(
+        message="m", session_id="s", task_id="t",
+        available_tools=["read_doc"], tools_schema=[],
+    )
+    dag_call = next(c for c in fake.calls if c[0] == "dag_builder")
+    prompt = dag_call[1]
+    assert "数据发现护栏" in prompt
+    assert "发现结果是否为空" in prompt
+    assert "branch" in prompt
+
+
 def test_planner_injects_plan_id_and_task_id():
     fake = FakeLLMRouter(
         [

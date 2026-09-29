@@ -40,6 +40,15 @@ logger = logging.getLogger(__name__)
 # （真机 2026-08-30：blast 输出 records 被模型猜成 summary）
 _FIELD_ALIASES = ("records", "text", "results", "summary")
 
+
+class UpstreamRefMissingError(Exception):
+    """整值引用 <node>.<field> 无法解析（上游未产出该字段且无别名可回退）。
+
+    2026-09-29 翻案：旧行为静默置 None，下游工具拿到 None 后以难懂的
+    AttributeError 崩溃（真机：discovery 空结果 → sc_load None.strip()）。
+    调度循环捕获后把节点标 FAILED(UPSTREAM_REF_MISSING)，报错人类可读。
+    """
+
 # 控制流节点的 LLM 条件判定角色词（只输出 true/false）
 _JUDGE_SYSTEM = (
     "你是条件判定器。根据给定上下文判断条件是否成立，"
@@ -304,6 +313,9 @@ class Scheduler:
         （真机 2026-08-30：run_python 的 code 含点→None→空文件假 success）。
         整值引用字段缺失时按别名兜底（records/text/results/summary）——
         模型猜错字段名不应导致下游拿到 None（真机 2026-08-30）。
+        别名兜底也失败时抛 UpstreamRefMissingError（fail-fast，
+        2026-09-29 翻案：静默 None 会让下游以 NoneType AttributeError
+        难懂崩溃）。
         """
         resolved: dict[str, Any] = {}
         for k, v in node.inputs.items():
@@ -328,13 +340,16 @@ class Scheduler:
                             resolved[k] = up_handle.outputs[alias]
                             break
                     else:
-                        logger.warning(
-                            "node %s 引用 %s.%s 不存在且无别名可回退",
-                            node.node_id, upstream_id, field_name,
+                        raise UpstreamRefMissingError(
+                            f"node {node.node_id} 引用 {upstream_id}.{field_name} "
+                            f"无法解析：上游未产出该字段（可能未找到数据），"
+                            f"且无别名可回退"
                         )
-                        resolved[k] = None
                 else:
-                    resolved[k] = None
+                    raise UpstreamRefMissingError(
+                        f"node {node.node_id} 引用 {upstream_id}.{field_name} "
+                        f"无法解析：上游节点无输出句柄"
+                    )
             else:
                 resolved[k] = v
         return resolved
@@ -394,10 +409,26 @@ class Scheduler:
                 if node.kind in ("branch", "while", "for"):
                     self._expand_control_node(node)
                     continue
+                # 整值引用解析 fail-fast（2026-09-29 真机事故）：上游未产出
+                # 被引用字段时不再静默传 None（下游 None.strip() 难懂崩溃），
+                # 节点直接 FAILED(UPSTREAM_REF_MISSING)，下游照常 SKIPPED。
+                try:
+                    resolved = self._resolve_inputs(node)
+                except UpstreamRefMissingError as exc:
+                    now = datetime.now(UTC)
+                    self._handles[node.node_id] = TaskHandle(
+                        execution_id=f"rf_{node.node_id}",
+                        task_id=self.plan.task_id,
+                        node_id=node.node_id,
+                        state=ExecutionState.FAILED,
+                        started_at=now, finished_at=now,
+                        error_code="UPSTREAM_REF_MISSING",
+                        error_message=str(exc),
+                    )
+                    continue
                 # Phase 17：L2 节点过审批门（gate 自行短路非 L2 工具）；
                 # 拒绝 → 节点 DENIED（下游照常 SKIPPED，安全侧失败）
                 if self.l2_gate is not None and node.kind == "tool":
-                    resolved = self._resolve_inputs(node)
                     ok, err_code = self.l2_gate(node, resolved)
                     if not ok:
                         now = datetime.now(UTC)
@@ -415,7 +446,7 @@ class Scheduler:
                     task_id=self.plan.task_id,
                     node_id=node.node_id,
                     tool_name=node.tool_name or "",
-                    inputs=self._resolve_inputs(node),
+                    inputs=resolved,
                 )
                 handle = self.executor.submit(task)
                 self._handles[node.node_id] = handle

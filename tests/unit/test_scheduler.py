@@ -121,8 +121,18 @@ def test_resolve_inputs_alias_fallback():
     assert resolved["x"] == [{"title": "BRCA1"}]  # n1.result → 回退 n1.records
 
 
-def test_resolve_inputs_missing_without_alias_is_none():
-    """无别名可回退时保持 None（不抛错）。"""
+def test_resolve_inputs_missing_without_alias_raises():
+    """无别名可回退时 fail-fast 抛 UpstreamRefMissingError（2026-09-29 翻案）。
+
+    旧行为"静默置 None"导致下游工具拿到 None 后以难懂的
+    'NoneType' object has no attribute 'strip' 崩溃（真机：PDAC discovery
+    空结果 → sc_load 收到 None）。翻案为显式异常，由调度循环兜成
+    节点 FAILED（UPSTREAM_REF_MISSING），报错人类可读。
+    """
+    import pytest
+
+    from orchestrator.planner.scheduler import UpstreamRefMissingError
+
     plan = make_plan()
     ex = FakeExecutor()
     sch = Scheduler(plan=plan, executor=ex)
@@ -132,8 +142,42 @@ def test_resolve_inputs_missing_without_alias_is_none():
         finished_at=dt.datetime.now(dt.UTC),
         outputs={"answer": 42},
     )
-    resolved = sch._resolve_inputs(plan.nodes[1])
-    assert resolved["x"] is None
+    with pytest.raises(UpstreamRefMissingError, match="n1.result"):
+        sch._resolve_inputs(plan.nodes[1])
+
+
+async def test_scheduler_marks_node_failed_on_missing_ref():
+    """整值引用解析失败 → 节点 FAILED(UPSTREAM_REF_MISSING)，不下发执行器，
+    下游照常 SKIPPED，计划以 partial failure 收尾。"""
+    n1 = DAGNode(node_id="n1", kind="tool", tool_name="a",
+                 inputs={}, depends_on=[])
+    n2 = DAGNode(node_id="n2", kind="tool", tool_name="b",
+                 inputs={"x": "n1.result"}, depends_on=["n1"])
+    n3 = DAGNode(node_id="n3", kind="tool", tool_name="c",
+                 inputs={}, depends_on=["n2"])
+    plan = DAGPlan(plan_id="p", task_id="t", session_id="s",
+                   nodes=[n1, n2, n3], entry_node_ids=["n1"])
+    ex = FakeExecutor()
+    sch = Scheduler(plan=plan, executor=ex)
+
+    async def drive():
+        for _ in range(50):
+            await asyncio.sleep(0.005)
+            for h in ex.handles.values():
+                if h.state == ExecutionState.RUNNING and h.finished_at is None:
+                    h.state = ExecutionState.SUCCESS
+                    h.outputs = {"answer": 42}  # 注意：无 result 字段
+                    h.finished_at = dt.datetime.now(dt.UTC)
+            if sch._all_terminal():
+                return
+
+    asyncio.create_task(drive())
+    result = await asyncio.wait_for(sch.run_until_done(), timeout=2.0)
+    # n2 未下发执行器（只有 n1 被 submit）
+    assert [t.node_id for t in ex.submitted] == ["n1"]
+    assert result.node_states["n2"] == ExecutionState.FAILED
+    assert result.node_states["n3"] == ExecutionState.SKIPPED
+    assert result.status == "success_with_partial_failure"
 
 
 def test_resolve_inputs_dot_literal_not_reference():

@@ -1,18 +1,56 @@
-"""sc_load：读入 h5ad/10x-mtx 数据 → 统一 raw.h5ad + 概要统计（Phase 20）。
+"""sc_load：读入 h5ad/10x-mtx/.rds 数据 → 统一 raw.h5ad + 概要统计（Phase 20）。
 
 stdin: {"path": "/data/xxx.h5ad", "dataset_id": "..."}（dataset_id 由
 BioRunner 预计算注入；path 已是容器内 /data 视角路径）
+
+2026-09-29 增 .rds 支持（PDAC 事故修复②）：Rscript rds2mtx.R 桥接成
+mtx+obs.csv 再组装 AnnData；R 桥路径允许 RDS2MTX_BRIDGE 环境变量覆盖
+（宿主侧单测用，容器内默认 /opt/r_tools/rds2mtx.R）。
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from common import DATA_ROOT, WS_ROOT, emit, fail, run
 
+_RDS_BRIDGE = os.environ.get("RDS2MTX_BRIDGE", "/opt/r_tools/rds2mtx.R")
+
+
+def _read_rds(p: Path) -> Any:
+    """Rscript rds2mtx.R 桥接：rds → matrix.mtx/barcodes/features/obs.csv → AnnData。
+
+    只支持 Seurat / SingleCellExperiment 对象；R 侧失败（类别不支持、
+    无 counts 层等）统一报 SC_RDS_CONVERT_FAILED 并带回 R 报错尾部。
+    """
+    import anndata as ad
+    import pandas as pd
+    import scipy.io as sio
+
+    with tempfile.TemporaryDirectory(prefix="rds2mtx_") as tmp:
+        proc = subprocess.run(
+            ["Rscript", _RDS_BRIDGE, str(p), tmp],
+            capture_output=True, text=True, timeout=540,
+        )
+        if proc.returncode != 0:
+            fail("SC_RDS_CONVERT_FAILED",
+                 f"rds convert failed: {proc.stderr[-800:]}")
+            raise SystemExit(1)
+        tmp_path = Path(tmp)
+        # writeMM 保持 R 侧方向（genes × cells）→ 转置为 AnnData cells × genes
+        x = sio.mmread(tmp_path / "matrix.mtx").tocsr().T
+        obs = pd.read_csv(tmp_path / "obs.csv", index_col=0)
+        var = pd.DataFrame(index=pd.Index(
+            (tmp_path / "features.tsv").read_text().splitlines(), name=None))
+        adata = ad.AnnData(X=x, obs=obs, var=var)
+    return adata
+
 
 def _detect_and_read(path: str) -> Any:
-    """h5ad 直读；目录视为 10x mtx（matrix.mtx + barcodes/features）。"""
+    """h5ad 直读；目录视为 10x mtx（matrix.mtx + barcodes/features）；.rds 走 R 桥。"""
     import anndata as ad
 
     p = DATA_ROOT / path.lstrip("/")
@@ -21,6 +59,8 @@ def _detect_and_read(path: str) -> Any:
         raise SystemExit(1)
     if p.suffix == ".h5ad":
         return ad.read_h5ad(p)
+    if p.suffix == ".rds":
+        return _read_rds(p)
     if p.is_dir():
         # 新版 anndata 无 read_10x_mtx，统一走 scanpy；
         # scanpy 只认 .gz 文件——未压缩 10x 目录先临时 gzip 到 /tmp 再读
@@ -44,7 +84,7 @@ def _detect_and_read(path: str) -> Any:
         return sc.read_10x_mtx(mtx_dir, var_names="gene_symbols",
                                make_unique=True)
     fail("SC_FORMAT_UNSUPPORTED",
-         f"unsupported format (need .h5ad or 10x mtx dir): {path}")
+         f"unsupported format (need .h5ad/.rds or 10x mtx dir): {path}")
     raise SystemExit(1)
 
 

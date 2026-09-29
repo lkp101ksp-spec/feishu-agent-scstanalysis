@@ -70,7 +70,7 @@ def _branch_plan():
         node_id="b1", kind="branch", condition_prompt="文档是否超过 500 字",
         depends_on=["n1"],
         true_branch=[DAGNode(node_id="t1", kind="tool", tool_name="summarize_text",
-                             inputs={"text": "n1.text"}, depends_on=[])],
+                             inputs={"text": "n1.result"}, depends_on=[])],
         false_branch=[DAGNode(node_id="f1", kind="tool", tool_name="classify_intent",
                               inputs={"text": "short"}, depends_on=[])],
     )
