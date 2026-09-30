@@ -6,7 +6,8 @@ stdin: {"dataset_ids": ["<id>","<id>",...], "batch_col": "dataset"}
 sc_integrate 只吃单数据集，此前没有任何工具能把两个 dataset 拼成一个，
 planner 只能退化成"只整合第一个库"。本工具补上该缺口。
 
-行为：每个输入按 load_adata(any) 回退链读（filtered 优先）→
+行为：每个输入按 load_analysis_input 回退链读（filtered → raw →
+processed(.raw)，2026-09-30 补 processed-only 亚群产物可拼）→
 ad.concat(axis=0, join="outer", 稀疏保零） → obs 增 batch_col 列=来源
 dataset_id（原 orig.ident 等批次列原样保留，下游 sc_integrate 可继续
 按 orig.ident 整合）→ 产物 WS/{new_id}/raw.h5ad（new_id =
@@ -16,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from common import WS_ROOT, emit, fail, load_adata, read_args, run
+from common import WS_ROOT, emit, fail, load_analysis_input, read_args, run
 
 
 def main() -> None:
@@ -34,7 +35,7 @@ def main() -> None:
     adatas: list[Any] = []
     per_ds: dict[str, int] = {}
     for ds in ids:
-        a = load_adata({"dataset_id": ds, "file": "any"})
+        a, _ = load_analysis_input(ds)
         per_ds[ds] = int(a.n_obs)
         adatas.append(a)
 

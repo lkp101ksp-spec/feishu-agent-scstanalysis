@@ -94,6 +94,29 @@ def load_adata(input_ref: dict[str, Any]) -> Any:
         "run sc_load first")
 
 
+def load_analysis_input(dataset_id: str) -> tuple[Any, bool]:
+    """filtered→raw→processed(.raw) 回退加载全基因输入矩阵。
+
+    返回 (adata, pre_normalized)。processed 回退（2026-09-30 真机缺口：
+    subcluster/integrate 产物目录只有 processed.h5ad，直接 sc_integrate
+    报 "no h5ad; run sc_load first"）取 .raw——归一化 log 全基因，与
+    process/subcluster 口径一致——调用方据 pre_normalized=True 跳过
+    normalize_total/log1p，避免双重归一化。无 .raw 时退用 X 本身。
+    """
+    import anndata as ad
+
+    try:
+        return load_adata({"dataset_id": dataset_id, "file": "any"}), False
+    except FileNotFoundError:
+        p = WS_ROOT / dataset_id / "processed.h5ad"
+        if not p.exists():
+            raise
+        adata = ad.read_h5ad(p)
+        if adata.raw is not None:
+            adata = adata.raw.to_adata()
+        return adata, True
+
+
 def upper_gene_map(var_names: Any, target_genes: Any) -> list[str]:
     """按 str.upper() 对齐匹配 target_genes 到 var_names，返回原始 var 名（保序去重）。
 

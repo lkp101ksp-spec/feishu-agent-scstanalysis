@@ -2,7 +2,9 @@
 
 stdin: {"dataset_id": ..., "batch": "sample", "method": "bbknn|harmony",
         "n_top_hvg": 2000, "n_pcs": 50, "n_neighbors": 15, "resolution": 1.0}
-input 链与 sc_process 一致（filtered.h5ad → raw.h5ad 默认过滤）。
+input 链 filtered.h5ad → raw.h5ad（默认过滤归一化）；processed-only
+数据集（subcluster/integrate 产物，2026-09-30 真机缺口）回退取其 .raw
+（归一化 log 全基因）并跳过再归一化，可直接二次/亚群整合。
 bbknn：normalize→HVG→scale→PCA→bbknn 批次感知邻居→UMAP→Leiden。
 harmony：同预处理→PCA→直调 harmonypy run_harmony 校正 PC
 （X_pca_harmony，形状自适应 0.4/2.x）→按校正表示建邻居→UMAP→Leiden
@@ -16,7 +18,7 @@ import re
 from typing import Any
 
 import numpy as np
-from common import WS_ROOT, emit, load_adata, read_args, run
+from common import WS_ROOT, emit, load_analysis_input, read_args, run
 
 
 def _cat_cols(adata: Any) -> str:
@@ -48,7 +50,7 @@ def main() -> None:
     resolution = float(args.get("resolution", 1.0))
 
     parent = args["dataset_id"]
-    adata = load_adata({"dataset_id": parent, "file": "any"})
+    adata, pre_normalized = load_analysis_input(parent)
     if batch not in adata.obs:
         raise ValueError(
             f"batch column {batch!r} not in obs; available: "
@@ -60,12 +62,13 @@ def main() -> None:
             f"only one batch value {sorted(batches.unique())[:5]}; "
             "nothing to integrate")
 
-    if not (WS_ROOT / parent / "filtered.h5ad").exists():
-        import scanpy as sc_pp  # noqa: F811 —— 默认过滤同 sc_process
-        sc_pp.pp.filter_cells(adata, min_genes=600)
-        sc_pp.pp.filter_genes(adata, min_cells=3)
-    sc.pp.normalize_total(adata, target_sum=1e4)
-    sc.pp.log1p(adata)
+    if not pre_normalized:
+        if not (WS_ROOT / parent / "filtered.h5ad").exists():
+            import scanpy as sc_pp  # noqa: F811 —— 默认过滤同 sc_process
+            sc_pp.pp.filter_cells(adata, min_genes=600)
+            sc_pp.pp.filter_genes(adata, min_cells=3)
+        sc.pp.normalize_total(adata, target_sum=1e4)
+        sc.pp.log1p(adata)
     sc.pp.highly_variable_genes(adata, n_top_genes=n_top_hvg,
                                 flavor="seurat")
     adata.raw = adata
