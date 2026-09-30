@@ -161,6 +161,8 @@ class Settings:
     # === Phase 38: 自然语言意图预判（普通私聊 → 确认卡 → 转 /research） ===
     # 开关：False 时普通消息直接走闲聊路径（恢复 Phase 38 前行为）
     intent_gate_enabled: bool = True
+    # 确认闸开关：False 时分类命中直接静默分发（不发确认卡，2026-09-30）
+    intent_gate_confirm: bool = False
     # 确认卡待决策有效期（秒），过期按钮失效
     intent_gate_ttl_sec: int = 1800
 
@@ -325,6 +327,8 @@ def load_settings() -> Settings:
         # Phase 38：意图预判闸（INTENT_GATE_ENABLED=0 关闭）
         intent_gate_enabled=os.environ.get(
             "INTENT_GATE_ENABLED", "1").lower() not in ("0", "false", "no"),
+        intent_gate_confirm=os.environ.get(
+            "INTENT_GATE_CONFIRM", "false").lower() == "true",
         intent_gate_ttl_sec=int(
             os.environ.get("INTENT_GATE_TTL_SEC", "1800")),
     )

@@ -4,6 +4,8 @@
 会幻觉 <function_calls> 裸文本；用户不知道 /research 前缀就被当成闲聊。
 本服务在 process() 闲聊路径前拦截：LLM 轻量分类 → 疑似研究意图发确认卡
 （确认闸防误判白跑 Docker 任务）→ 用户点「确认执行」才转 ResearchRunner。
+2026-09-30 起支持 confirm=False 静默模式：分类命中直接返回 intent_auto +
+incoming_kwargs，由 app 层即时分发，不再发卡等待（spec 2026-09-30-unified-intent-routing-design）。
 
 设计要点：
 - 待确认意图存内存 dict（intent_id → 消息要素），TTL 过期失效；不落库
@@ -118,10 +120,12 @@ class IntentGateService:
     """意图预判闸：maybe_offer（消息路径）+ decide（卡片回调路径）。"""
 
     def __init__(self, *, llm: LLMRouter, im: IMAdapter, ttl_sec: int = 1800,
+                 confirm: bool = True,
                  now: Callable[[], float] = lambda: time.time()) -> None:
         self.llm = llm
         self.im = im
         self.ttl_sec = ttl_sec
+        self.confirm = confirm
         self._now = now  # 纯函数式时间注入（测试可控，同 bio_workspace_gc 惯例）
         self._pending: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
@@ -130,6 +134,7 @@ class IntentGateService:
 
     def maybe_offer(self, incoming: IncomingMessage) -> dict[str, Any] | None:
         """私聊普通消息前置拦截：疑似研究意图发确认卡，否则返回 None 落闲聊。
+        confirm=False 时改走静默分发（返回 intent_auto）。
 
         触发条件全部满足才发卡：服务所需依赖齐备、非 / 开头（未知指令维持
         原闲聊行为）、LLM 分类为研究意图。任何异常一律回退 None（不阻断聊天）。
@@ -144,6 +149,23 @@ class IntentGateService:
             return None
         if route not in _ROUTES:
             return None
+        if not self.confirm:
+            kwargs = {
+                "message_id": incoming.message_id,
+                "chat_id": incoming.chat_id,
+                "sender_open_id": incoming.sender_open_id,
+                "chat_type": getattr(incoming, "chat_type", "") or "p2p",
+                "text": f"{_ROUTE_LABEL[route]} " + text,
+            }
+            try:
+                preview = text[:80] + ("…" if len(text) > 80 else "")
+                self.im.reply(incoming.chat_id,
+                              f"[路由] 已按{_ROUTE_TITLE[route]}受理：{preview}")
+            except Exception:  # noqa: BLE001 —— 提示失败不阻断路由
+                logger.warning("intent auto route hint send failed",
+                               exc_info=True)
+            return {"status": "intent_auto", "route": route,
+                    "incoming_kwargs": kwargs}
         intent_id = new_ulid()
         with self._lock:
             self._purge_expired()

@@ -372,6 +372,7 @@ def build_runtime(settings: Settings | None = None) -> Runtime:
         orch.intent_gate = IntentGateService(
             llm=llm, im=orch.im,
             ttl_sec=getattr(settings, "intent_gate_ttl_sec", 1800),
+            confirm=getattr(settings, "intent_gate_confirm", False),
         )
     # Phase 26：/code agentic coding 链路（CodingRunner 三层工具面拼装；
     # tool_handler/registry 复用 Orchestrator.__init__ 已装配的实例）

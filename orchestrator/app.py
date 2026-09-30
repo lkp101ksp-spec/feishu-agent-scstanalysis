@@ -352,7 +352,21 @@ class Orchestrator:
         gate = getattr(self, "intent_gate", None)
         if gate is not None:
             offered: Optional[dict[str, Any]] = gate.maybe_offer(incoming)
-            if offered is not None:
+            if offered is not None and offered.get("status") == "intent_auto":
+                # 静默路由（Phase 78）：分类命中即分发，机制同卡片批准回调
+                route = offered.get("route", "research")
+                runner = getattr(
+                    self,
+                    "research_runner" if route == "research" else "coding_runner",
+                    None)
+                if runner is not None:
+                    auto_incoming = IncomingMessage(
+                        **offered["incoming_kwargs"])
+                    runner.handle(auto_incoming)
+                    return {"status": "intent_auto_dispatched",
+                            "route": route}
+                # runner 未装配：回落闲聊（不阻断）
+            elif offered is not None:
                 return offered
 
         # 2. 普通消息：创建 session + task

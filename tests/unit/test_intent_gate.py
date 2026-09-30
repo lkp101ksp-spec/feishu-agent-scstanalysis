@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from orchestrator.intent_gate import IntentGateService
+from shared.schemas import IncomingMessage
 
 
 def _incoming(text="对数据集 f1e89bf88edc 做双联体检测", **kw):
@@ -183,3 +184,47 @@ class TestDecide:
         r = svc.decide(iid, "approve", operator="ou_1", owner="ou_1")
         assert r["status"] == "intent_expired"
         assert iid not in svc._pending
+
+
+class TestSilentMode:
+    """confirm=False 静默路由：不发卡、直接返回 intent_auto + incoming_kwargs。"""
+
+    def _mk(self, route: str):
+        llm = MagicMock()
+        llm.chat.return_value = f'{{"route": "{route}"}}'
+        im = MagicMock()
+        svc = IntentGateService(llm=llm, im=im, confirm=False)
+        return svc, im
+
+    def _msg(self, text: str = "提取导管细胞重聚类"):
+        return IncomingMessage(
+            message_id="m1", chat_id="c1", sender_open_id="u1",
+            chat_type="p2p", text=text)
+
+    def test_silent_research_returns_intent_auto(self):
+        svc, im = self._mk("research")
+        out = svc.maybe_offer(self._msg())
+        assert out is not None and out["status"] == "intent_auto"
+        assert out["route"] == "research"
+        assert out["incoming_kwargs"]["text"].startswith("/research ")
+        assert out["incoming_kwargs"]["chat_id"] == "c1"
+        im.send_card.assert_not_called()
+        im.reply.assert_called_once()
+        assert svc._pending == {}
+
+    def test_silent_code_route(self):
+        svc, im = self._mk("code")
+        out = svc.maybe_offer(self._msg("帮我写个脚本"))
+        assert out["route"] == "code"
+        assert out["incoming_kwargs"]["text"].startswith("/code ")
+
+    def test_silent_chat_falls_through(self):
+        svc, im = self._mk("chat")
+        assert svc.maybe_offer(self._msg("你好")) is None
+        im.reply.assert_not_called()
+
+    def test_silent_hint_reply_failure_still_routes(self):
+        svc, im = self._mk("research")
+        im.reply.side_effect = RuntimeError("net")
+        out = svc.maybe_offer(self._msg())
+        assert out["status"] == "intent_auto"
