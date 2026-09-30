@@ -435,6 +435,17 @@ class CodingRunner:
                 system += "\n\n" + profile_ctx
         except Exception:  # noqa: BLE001
             logger.warning("dataset profile inject failed", exc_info=True)
+        # Phase 78：workspace 数据集清单注入（对齐 research_runner；
+        # /code 也有 sc_* 白名单，无清单会隔空猜 dataset_ref 猜到已 GC 的旧 id）
+        try:
+            from orchestrator.tools.bio.dataset_profile import (
+                build_workspace_context)
+            ws_ctx = build_workspace_context(
+                self.bio_workspace_root, self.bio_data_roots)
+            if ws_ctx:
+                system += "\n\n" + ws_ctx
+        except Exception:  # noqa: BLE001 —— 清单是可选项，注入失败不阻断任务
+            logger.warning("workspace context inject failed", exc_info=True)
 
         reporter = self._make_reporter(incoming, task_text)
         loop = AgentLoop(self.llm, tools_schema, dispatch,

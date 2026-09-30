@@ -454,3 +454,54 @@ class TestDatasetProfileInject:
         assert r["status"] == "final"
         system = llm.calls[0]["messages"][0]["content"]
         assert "数据画像" not in system
+
+
+# === Phase 78：workspace 数据集清单注入 /code system prompt（对齐 research_runner） ===
+
+class TestWorkspaceContextInject:
+    """bio_workspace 数据集清单注入 system——任务文本不带 ref 也注入
+    （对齐 research_runner 2026-09-29 追问轮次缺口修复）。"""
+
+    @staticmethod
+    def _settings_with_bio(deps, bio_root):
+        """deps settings 替身 + bio_workspace_root 字段。"""
+        class _S(deps["settings"]):
+            pass
+        _S.bio_workspace_root = str(bio_root)
+        return _S
+
+    def test_workspace_context_injected(self, deps, tmp_path):
+        """工作区存在数据集目录时，system 含清单头与 dataset id
+        （h5ad 元数据读取失败也按名列入）。"""
+        bio_root = tmp_path / "bio_ws"
+        ds = bio_root / "aaaaaaaaaaaa"
+        ds.mkdir(parents=True)
+        (ds / "processed.h5ad").write_bytes(b"x")
+        llm = FakeLLM([{"role": "assistant", "content": "done", "tool_calls": None}])
+        runner = _runner(llm, deps,
+                         settings=self._settings_with_bio(deps, bio_root))
+        runner.run_sync(FakeIncoming("/code 看看有哪些数据"), "看看有哪些数据")
+        system = llm.calls[0]["messages"][0]["content"]
+        assert "当前工作区已有数据集" in system
+        assert "aaaaaaaaaaaa" in system
+
+    def test_workspace_context_absent_when_empty(self, deps, tmp_path):
+        """bio_root 存在但无数据集目录：零注入回归保护。"""
+        bio_root = tmp_path / "bio_ws"
+        bio_root.mkdir()
+        llm = FakeLLM([{"role": "assistant", "content": "done", "tool_calls": None}])
+        runner = _runner(llm, deps,
+                         settings=self._settings_with_bio(deps, bio_root))
+        r = runner.run_sync(FakeIncoming("/code 写个脚本"), "写个脚本")
+        assert r["status"] == "final"
+        system = llm.calls[0]["messages"][0]["content"]
+        assert "当前工作区已有数据集" not in system
+
+    def test_workspace_context_failure_noop(self, deps):
+        """bio_workspace_root 缺省（空串）：清单静默跳过，主链路不受影响。"""
+        llm = FakeLLM([{"role": "assistant", "content": "done", "tool_calls": None}])
+        runner = _runner(llm, deps)
+        r = runner.run_sync(FakeIncoming("/code 写个脚本"), "写个脚本")
+        assert r["status"] == "final"
+        system = llm.calls[0]["messages"][0]["content"]
+        assert "当前工作区已有数据集" not in system
