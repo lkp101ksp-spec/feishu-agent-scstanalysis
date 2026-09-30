@@ -80,6 +80,77 @@ class TestRegisterTools:
         assert loader.register_tools(reg) == 0  # 重名跳过
 
 
+class TestNormalizeParameters:
+    """2026-09-30 真机缺口：LLM 蒸馏 skill 的列表式 parameters 兼容。"""
+
+    def _write_list_params_skill(self, skills_dir):
+        (skills_dir / "bioqc" / "tools.yaml").write_text(
+            "tools:\n"
+            "  - name: make_doc\n"
+            "    description: 生成文档\n"
+            "    parameters:\n"
+            "      - name: data\n"
+            "        description: 输入表路径\n"
+            "        required: true\n"
+            "      - name: label-col\n"
+            "        description: 着色列名\n"
+            "        required: false\n"
+            f"    command: [{Path(sys.executable).as_posix()}, -c, \"print('ok')\"]\n",
+            encoding="utf-8",
+        )
+
+    def test_list_params_converted_to_json_schema(self, skills_dir):
+        """列表式 [{name, description, required}] → JSON Schema dict。"""
+        self._write_list_params_skill(skills_dir)
+        loader = SkillLoader(skills_dir)
+        loader.scan()
+        reg = ToolRegistry()
+        assert loader.register_tools(reg) == 1
+        params = reg.get("make_doc").parameters
+        assert params["type"] == "object"
+        assert set(params["properties"]) == {"data", "label-col"}
+        assert params["properties"]["data"]["description"] == "输入表路径"
+        assert params["required"] == ["data"]
+
+    def test_non_dict_params_falls_back_empty_schema(self, skills_dir):
+        """parameters 为字符串等非法类型 → 空 schema 兜底不崩。"""
+        (skills_dir / "bioqc" / "tools.yaml").write_text(
+            "tools:\n"
+            "  - name: run_qc\n"
+            "    description: QC\n"
+            "    parameters: nope\n"
+            f"    command: [{Path(sys.executable).as_posix()}, -c, \"print('ok')\"]\n",
+            encoding="utf-8",
+        )
+        loader = SkillLoader(skills_dir)
+        loader.scan()
+        reg = ToolRegistry()
+        assert loader.register_tools(reg) == 1
+        assert reg.get("run_qc").parameters == {
+            "type": "object", "properties": {}}
+
+    def test_bad_tool_skipped_without_crashing_run(self, skills_dir):
+        """单工具构造失败（timeout_sec 非数字）→ 跳过告警，整轮注册不炸。"""
+        (skills_dir / "bioqc" / "tools.yaml").write_text(
+            "tools:\n"
+            "  - name: broken_tool\n"
+            "    description: 坏工具\n"
+            f"    command: [{Path(sys.executable).as_posix()}, -c, \"print('x')\"]\n"
+            "    timeout_sec: abc\n"
+            "  - name: good_tool\n"
+            "    description: 好工具\n"
+            f"    command: [{Path(sys.executable).as_posix()}, -c, \"print('ok')\"]\n",
+            encoding="utf-8",
+        )
+        loader = SkillLoader(skills_dir)
+        loader.scan()
+        reg = ToolRegistry()
+        assert loader.register_tools(reg) == 1
+        assert reg.get("good_tool").name == "good_tool"
+        with pytest.raises(Exception):
+            reg.get("broken_tool")
+
+
 class TestKnowledge:
     def test_token_match_hits_skill(self, skills_dir):
         loader = SkillLoader(skills_dir)

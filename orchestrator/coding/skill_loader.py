@@ -171,7 +171,12 @@ class SkillLoader:
                     continue
                 except Exception:  # ToolNotFoundError —— 未注册，正常路径
                     pass
-                registry.register(self._tool_spec(skill, t))
+                try:
+                    registry.register(self._tool_spec(skill, t))
+                except Exception as exc:  # noqa: BLE001 —— 坏工具不炸整任务
+                    logger.warning("skill tool spec invalid, skipped: %s (%s)",
+                                   name, exc)
+                    continue
                 count += 1
         return count
 
@@ -197,10 +202,46 @@ class SkillLoader:
         skill = self._parse_skill(md)
         if skill is not None:
             for t in skill.tools:
-                registry.register(self._tool_spec(skill, t))
+                try:
+                    registry.register(self._tool_spec(skill, t))
+                except Exception as exc:  # noqa: BLE001 —— 坏工具不炸整任务
+                    logger.warning("skill tool spec invalid, skipped: %s (%s)",
+                                   t.get("name"), exc)
+                    continue
                 added.append(str(t["name"]))
         logger.info("skill hot reload: %s removed=%s added=%s", name, removed, added)
         return {"ok": True, "removed": removed, "added": added}
+
+    @staticmethod
+    def _normalize_parameters(raw: Any) -> dict[str, Any]:
+        """parameters 归一化为 JSON Schema dict。
+
+        2026-09-30 真机缺口：LLM 蒸馏的安装 skill（umap_to_docx）把
+        parameters 写成列表式 [{name, description, required}, ...]，
+        ToolSpec(parameters: dict) 直接 ValidationError，且 register_tools
+        无容错 → 整个 /code 任务崩溃。此处兼容转换；非 dict/list 一律
+        回退空 schema。
+        """
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, list):
+            props: dict[str, Any] = {}
+            required: list[str] = []
+            for p in raw:
+                if not isinstance(p, dict) or not p.get("name"):
+                    continue
+                pname = str(p["name"])
+                prop: dict[str, Any] = {"type": str(p.get("type", "string"))}
+                if p.get("description"):
+                    prop["description"] = str(p["description"])
+                props[pname] = prop
+                if p.get("required"):
+                    required.append(pname)
+            schema: dict[str, Any] = {"type": "object", "properties": props}
+            if required:
+                schema["required"] = required
+            return schema
+        return {"type": "object", "properties": {}}
 
     @staticmethod
     def _tool_spec(skill: LoadedSkill, t: dict[str, Any]) -> ToolSpec:
@@ -208,7 +249,7 @@ class SkillLoader:
         return ToolSpec(
             name=str(t["name"]),
             description=f"[skill:{skill.name}] {t.get('description', '')}",
-            parameters=t.get("parameters") or {"type": "object", "properties": {}},
+            parameters=SkillLoader._normalize_parameters(t.get("parameters")),
             risk_level="L2_side_effect",
             handler=_make_handler(list(t["command"]), skill.directory,
                                   int(t.get("timeout_sec", 300)),
