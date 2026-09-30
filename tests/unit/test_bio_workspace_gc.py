@@ -131,3 +131,19 @@ def test_gc_settings_env_override(monkeypatch):
     assert s.bio_workspace_ttl_sec == 3600
     assert s.bio_workspace_cap_gb == 5
     assert s.bio_workspace_gc_enabled is False
+
+class TestCodeSessionImmune:
+    """Phase 78 回归锁：_code 会话目录永不被 GC（正则 ^[0-9a-f]{12} 天然豁免）。"""
+
+    def test_underscore_dirs_untouched(self, tmp_path):
+        code_dir = tmp_path / "_code" / "code_s1"
+        code_dir.mkdir(parents=True)
+        f = code_dir / "a.txt"
+        f.write_text("x", encoding="utf-8")
+        past = time.time() - 30 * DAY
+        os.utime(f, (past, past))
+        os.utime(code_dir, (past, past))
+        os.utime(tmp_path / "_code", (past, past))
+        r = sweep(tmp_path, ttl_sec=0, cap_bytes=1, grace_sec=0)
+        assert code_dir.is_dir()
+        assert "_code" not in r["ttl_deleted"] + r["lru_deleted"]
