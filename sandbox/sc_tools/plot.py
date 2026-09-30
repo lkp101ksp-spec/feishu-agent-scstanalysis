@@ -2,9 +2,13 @@
 
 stdin: {"dataset_id": ..., "genes": ["CD3D", ...],
         "kind": "violin"|"umap_gene"|"umap_obs",
-        "obs_cols": ["slingshot_lineage", ...]}
+        "obs_cols": ["slingshot_lineage", ...],
+        "min_dist": 0.8, "spread": 1.5}
 kind=umap_obs 时读 obs_cols（≤6，须存在于 obs.columns），genes 可空；
 需 processed.h5ad（无则报错提示先跑 sc_process）。
+min_dist/spread 任一提供（仅 umap 类 kind）时先按新参数重算 UMAP
+嵌入并写回 processed.h5ad 再绘图（2026-09-30 追问调参缺口：
+"umap 再松散一些"= min_dist↑，默认 0.5，松散可试 0.8~0.99）。
 """
 from __future__ import annotations
 
@@ -57,6 +61,21 @@ def main() -> None:
             return
 
     ds_dir = WS_ROOT / args["dataset_id"]
+    # UMAP 松散度调参（2026-09-30）：任一提供则重算嵌入并写回
+    recompute: dict[str, float] = {}
+    if kind in ("umap_obs", "umap_gene"):
+        if args.get("min_dist") is not None:
+            recompute["min_dist"] = float(args["min_dist"])
+        if args.get("spread") is not None:
+            recompute["spread"] = float(args["spread"])
+    if recompute:
+        if "neighbors" not in adata.uns:
+            fail("INVALID_INPUT",
+                 "dataset has no neighbors graph; "
+                 "run sc_process/sc_integrate first")
+            return
+        sc.tl.umap(adata, **recompute)
+        adata.write_h5ad(ds_dir / "processed.h5ad")
     pngs = []
     if kind == "umap_obs":
         for col in obs_cols:
@@ -68,7 +87,8 @@ def main() -> None:
             plt.close(fig)
             pngs.append(str(png))
         emit({"ok": True, "dataset_ref": args["dataset_id"], "kind": kind,
-              "pngs": pngs})
+              "pngs": pngs,
+              **({"umap_recomputed": recompute} if recompute else {})})
         return
     for gene in genes:
         fig, ax = plt.subplots(figsize=(6, 4.5), dpi=150)

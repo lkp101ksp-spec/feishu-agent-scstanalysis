@@ -131,15 +131,24 @@ def register_l3_singlecell(
 
     def sc_plot(*, dataset_ref: str, genes: list[str],
                 kind: str = "violin",
-                obs_cols: list[str] | None = None) -> dict[str, Any]:
+                obs_cols: list[str] | None = None,
+                min_dist: float | None = None,
+                spread: float | None = None) -> dict[str, Any]:
         """指定基因画图（violin/umap_gene）或 obs 列 UMAP 着色
-        （kind=umap_obs + obs_cols，Phase 58）→ png 路径列表。"""
+        （kind=umap_obs + obs_cols，Phase 58）→ png 路径列表。
+        min_dist/spread 任一提供时先重算 UMAP 嵌入写回再绘图
+        （2026-09-30 追问调参缺口）。"""
+        payload: dict[str, Any] = {
+            "dataset_id": dataset_ref,
+            "genes": parse_gene_list(genes), "kind": kind,
+            "obs_cols": list(obs_cols or []),
+        }
+        if min_dist is not None:
+            payload["min_dist"] = min_dist
+        if spread is not None:
+            payload["spread"] = spread
         try:
-            out = runner.run("plot", {
-                "dataset_id": dataset_ref,
-                "genes": parse_gene_list(genes), "kind": kind,
-                "obs_cols": list(obs_cols or []),
-            }, timeout_sec=600)
+            out = runner.run("plot", payload, timeout_sec=600)
         except BioRunError as e:
             return _err(e)
         out.pop("ok", None)
@@ -780,6 +789,10 @@ def register_l3_singlecell(
             "或 obs 列 UMAP 着色（kind=umap_obs + obs_cols，类别/连续列"
             "自适应，如 slingshot_lineage/lineage_branch/palantir_branch），"
             "输出 png 路径列表。最多 6 个基因/列每次。需先跑 sc_process。"
+            "UMAP 松散度调参：min_dist/spread 任一提供时先按新参数重算 "
+            "UMAP 嵌入并写回数据集再绘图——用户说「点太挤/再松散一些」"
+            "时调大 min_dist（默认 0.5，可试 0.8~0.99），spread 默认 1.0 "
+            "等比放大布局；无需重跑整合。"
         ),
         parameters={
             "type": "object",
@@ -794,6 +807,12 @@ def register_l3_singlecell(
                              "maxItems": 6,
                              "description": "obs 列名列表（仅 kind=umap_obs "
                                             "使用，如 slingshot_lineage）"},
+                "min_dist": {"type": "number", "minimum": 0, "maximum": 1,
+                             "description": "UMAP 点团紧密度（仅 umap 类 "
+                                            "kind；越大越松散，默认 0.5）"},
+                "spread": {"type": "number", "minimum": 0.01,
+                           "description": "UMAP 布局整体放大倍数（仅 umap 类 "
+                                          "kind；默认 1.0）"},
             },
             "required": ["dataset_ref", "genes"],
         },

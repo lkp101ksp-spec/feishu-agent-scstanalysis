@@ -820,6 +820,86 @@ def test_dataset_profile_absent_for_plain_text(db):
     assert "数据画像" not in ctx
 
 
+# === 2026-09-30：前序对话注入 + research 轮次写入记忆（追问调参缺口） ===
+
+
+def _seed_history(db, pairs: list[tuple[str, str]]) -> None:
+    """预置会话消息：先建会话（与 runner 同一 owner/chat），再追加消息。"""
+    from orchestrator.session_service import SessionService
+    from persistence.repositories.message_repo import MessageRepo
+    from persistence.repositories.session_repo import SessionRepo
+
+    s = db()
+    sid = SessionService(SessionRepo(s)).get_or_create(
+        owner_open_id="ou_r", source_chat_id="oc_r")
+    repo = MessageRepo(s)
+    for role, content in pairs:
+        repo.append(sid, role, content)
+    s.commit()
+    s.close()
+
+
+def test_history_injected_into_planner_context(db):
+    """会话已有前序消息 → planner session_context 带「前序对话」段，
+    追问轮次可见上一轮 dataset_ref 与参数（真机：batch=patients 丢失）。"""
+    _seed_history(db, [
+        ("user", "提取导管细胞，然后用bbknn重聚类，batch=patient"),
+        ("assistant", "[研究任务] 执行完成（success）\n关键输出：\n"
+                      "[n1.dataset_ref] aaaabbbbcccc_Ductal_bbknn\n"
+                      "[n1.batch] patients"),
+    ])
+    orch = _orch(db)
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research umap能否再松散一些"))
+
+    assert _wait_reply_count(orch.im, 2)
+    ctx = orch.planner.plan.call_args.kwargs["session_context"]
+    assert "前序对话" in ctx
+    assert "aaaabbbbcccc_Ductal_bbknn" in ctx
+    assert "patients" in ctx
+
+
+def test_history_absent_for_fresh_session(db):
+    """新会话无消息 → session_context 不含「前序对话」段（零影响回归）。"""
+    orch = _orch(db)
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    ctx = orch.planner.plan.call_args.kwargs["session_context"]
+    assert "前序对话" not in ctx
+
+
+def test_research_turn_appended_to_memory(db):
+    """research 完成后轮次写入长会话记忆（user=任务文本，assistant=摘要）。"""
+    orch = _orch(db)
+    orch.chat_memory = MagicMock()
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结一下要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    deadline = time.monotonic() + 10
+    while (time.monotonic() < deadline
+           and not orch.chat_memory.append_turn.called):
+        time.sleep(0.05)
+    orch.chat_memory.append_turn.assert_called_once()
+    args = orch.chat_memory.append_turn.call_args.args
+    assert args[1] == "[research] 总结一下要点"
+    assert "执行完成" in args[2]
+
+
+def test_memory_append_skipped_without_chat_memory(db):
+    """orch 无 chat_memory（旧装配/替身）→ 不追加，任务照常完成。"""
+    orch = _orch(db)
+    assert not hasattr(orch, "chat_memory")
+    runner = ResearchRunner(orchestrator=orch, session_factory=db)
+    runner.handle(_incoming("/research 总结要点"))
+
+    assert _wait_reply_count(orch.im, 2)
+    final = orch.im.reply.call_args_list[1].args[1]
+    assert "执行完成" in final
+
+
 def test_non_sc_plan_keeps_default_timeout(db, monkeypatch):
     """纯检索任务：维持原超时（回归基线）。"""
     import asyncio

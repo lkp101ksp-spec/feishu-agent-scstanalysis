@@ -159,6 +159,24 @@ def test_sc_plot_umap_obs_defaults(tmp_path):
     assert args[1].get("obs_cols", []) == []
 
 
+def test_sc_plot_umap_looseness_params(tmp_path):
+    """2026-09-30 追问调参：min_dist/spread 透传沙盒；缺省不进 payload。"""
+    reg, runner = _registry(tmp_path)
+    reg.get("sc_plot").handler(
+        dataset_ref="d", genes=[], kind="umap_obs",
+        obs_cols=["leiden"], min_dist=0.9, spread=1.5)
+    args = runner.run.call_args.args
+    assert args[1]["min_dist"] == 0.9
+    assert args[1]["spread"] == 1.5
+    # 缺省不污染 payload（沙盒端按键存在性判断是否重算）
+    reg.get("sc_plot").handler(dataset_ref="d", genes=["CD3D"])
+    payload = runner.run.call_args.args[1]
+    assert "min_dist" not in payload and "spread" not in payload
+    props = reg.get("sc_plot").parameters["properties"]
+    assert props["min_dist"]["maximum"] == 1
+    assert props["spread"]["minimum"] == 0.01
+
+
 # === Phase 25：GPU 镜像分流 ===
 
 def _gpu_registry(tmp_path, bio_use_gpu):

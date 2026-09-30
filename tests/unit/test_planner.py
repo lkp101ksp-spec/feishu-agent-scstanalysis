@@ -101,6 +101,32 @@ def test_planner_prompt_injects_session_context():
     assert "会话上下文" in dag_call[1]
 
 
+def test_planner_prompt_has_followup_tuning_rule():
+    """2026-09-30 真机修正：追问调参守则进 DAG prompt（沿用上一轮
+    dataset_ref 与未点名参数，不擅自换 batch/method、不重跑上游）。"""
+    fake = FakeLLMRouter(
+        [
+            '{"intent": "summarize"}',
+            """{"nodes": [
+                {"node_id": "n1", "kind": "tool", "tool_name": "sc_plot",
+                 "inputs": {"dataset_ref": "d", "genes": ["CD3D"]},
+                 "depends_on": []}
+              ],
+              "entry_node_ids": ["n1"]
+            }""",
+        ]
+    )
+    Planner(llm_router=fake).plan(
+        message="umap 再松散一些", session_id="s", task_id="t",
+        available_tools=["sc_plot"], tools_schema=[],
+    )
+    dag_call = next(c for c in fake.calls if c[0] == "dag_builder")
+    prompt = dag_call[1]
+    assert "追问调参守则" in prompt
+    assert "dataset_ref" in prompt
+    assert "batch" in prompt
+
+
 def test_extract_json_object_tolerates_fences():
     """Phase 12 真机修正：容忍 markdown 围栏与夹带说明文字。"""
     from orchestrator.planner.planner import _extract_json_object

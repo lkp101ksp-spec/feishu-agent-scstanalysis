@@ -413,6 +413,27 @@ class ResearchRunner:
                 session_context += "\n" + ws_ctx
         except Exception:  # noqa: BLE001 —— 清单同样是可选项
             logger.warning("workspace context inject failed", exc_info=True)
+        # 2026-09-30：前序对话注入——追问轮次（"umap 再松散一些"）不带
+        # 完整约束，planner 无历史则丢上一轮参数（真机：batch=patients
+        # 被丢回 batch=dataset，重现用户刚否定的结果）。取最近 6 条
+        # user/assistant 消息，各截 400 字。
+        try:
+            from persistence.repositories.message_repo import MessageRepo
+            hist_rows = MessageRepo(session).list_all(session_id)
+            if hist_rows:
+                role_zh = {"user": "用户", "assistant": "助手"}
+                lines = []
+                for r in hist_rows[-6:]:
+                    content = r.content
+                    if len(content) > 400:
+                        content = content[:400] + "…"
+                    lines.append(f"{role_zh.get(r.role, '系统')}：{content}")
+                session_context += (
+                    "\n前序对话（追问轮次必须沿用其中最近一次相关任务的 "
+                    "dataset_ref 与已确定参数）：\n" + "\n".join(lines)
+                )
+        except Exception:  # noqa: BLE001 —— 历史是可选项，绝不影响规划
+            logger.warning("history inject failed", exc_info=True)
         # L2 副作用工具默认不可规划（名字与 schema 都不给模型）；
         # Phase 17 例外：开关开启且有 broker 时放行 write_doc（节点级审批，
         # 其余 L2——send_card/write_base_projection/upload_drive——仍不给）；
@@ -636,6 +657,17 @@ class ResearchRunner:
         task_service.mark_success(
             task_id=task_id, reply_text="\n".join(reply_lines[:20])
         )
+        # 2026-09-30：research 轮次写入长会话记忆——追问轮次的上下文
+        # 来源（与 chat 平面共享 messages 表，统一记忆）。digest 截
+        # 1500 字保护压缩预算；chat_memory 未装配（测试替身）时跳过。
+        memory = getattr(self.orch, "chat_memory", None)
+        if memory is not None:
+            try:
+                memory.append_turn(session_id, f"[research] {task_text}",
+                                   "\n".join(reply_lines[:20])[:1500])
+            except Exception:  # noqa: BLE001 —— 记忆是可选项
+                logger.warning("research memory append failed",
+                               exc_info=True)
         return {
             "status": result.status,
             "task_id": task_id,
