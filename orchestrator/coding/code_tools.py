@@ -181,8 +181,13 @@ class CodeTools:
             try:
                 for i, line in enumerate(f.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
                     if rx.search(line):
+                        # 会话目录内展示相对路径；bio_root 数据区命中展示绝对路径
+                        try:
+                            shown = str(f.relative_to(self.dir))
+                        except ValueError:
+                            shown = str(f)
                         matches.append({
-                            "path": str(f.relative_to(self.dir)).replace("\\", "/"),
+                            "path": shown.replace("\\", "/"),
                             "line": i, "text": line.strip()[:200],
                         })
                         if len(matches) >= 100:
