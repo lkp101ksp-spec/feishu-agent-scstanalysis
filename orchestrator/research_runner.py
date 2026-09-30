@@ -282,14 +282,21 @@ class ResearchRunner:
     # === 后台执行 ===
 
     def _run(self, incoming: IncomingMessage, task_text: str,
-             card: "_ResearchProgressCard | None" = None) -> None:
-        """后台线程主体：独立 session 落库，plan→schedule→render→写文档→回复。"""
+             card: "_ResearchProgressCard | None" = None,
+             _retried: bool = False) -> None:
+        """后台线程主体：独立 session 落库，plan→schedule→render→写文档→回复。
+
+        非重跑场景（_retried=False）在提交后挂自动 code 回退环
+        （Phase 78 P2：failed/partial 终态 → code 诊断补救）。
+        """
         card = card or _ResearchProgressCard(self.im, incoming.chat_id, task_text)
         session = self.session_factory()
         try:
             out = self._execute(incoming, task_text, session, card)
             session.commit()
             logger.info("research task done: %s", out.get("status"))
+            if not _retried:
+                self._maybe_code_fallback(incoming, task_text, out)
         except Exception:
             logger.exception("research task failed")
             card.finish_error("执行异常（详见服务端日志）")
@@ -637,6 +644,7 @@ class ResearchRunner:
             "node_states": {k: v.value for k, v in result.node_states.items()},
             "doc_written": doc_written,
             "images_sent": images_sent,
+            "failures": failure_lines,
         }
 
     # === Phase 41：节点状态观察线程（进度卡数据源） ===
@@ -1056,6 +1064,52 @@ class ResearchRunner:
                 ]},
             ],
         }
+
+    def _maybe_code_fallback(self, incoming: IncomingMessage,
+                             task_text: str, out: dict[str, Any]) -> None:
+        """失败终态自动 code 回退：诊断补救 → [RETRYABLE] 则重跑 ≤1 次。
+
+        Phase 78 P2（spec 2026-09-30-unified-intent-routing-design §5）：
+        只在 failed / success_with_partial_failure 触发；回退环自身任何
+        异常只记日志 + IM 告知，绝不影响已推送的原任务结果。
+        """
+        status = out.get("status", "")
+        if status not in ("failed", "success_with_partial_failure"):
+            return
+        coding = getattr(getattr(self, "orch", None), "coding_runner", None)
+        if coding is None:
+            return
+        try:
+            self.im.reply(
+                incoming.chat_id,
+                "[自动回退] 研究任务未全部成功，已转代码路径诊断补救…")
+        except Exception:  # noqa: BLE001
+            logger.warning("fallback hint send failed", exc_info=True)
+        failures = "\n".join(out.get("failures") or ["(无失败明细)"])
+        brief = (
+            "【自动回退】研究任务执行失败，请诊断并补救。\n"
+            f"原始任务：{task_text}\n"
+            f"终态：{status}\n"
+            f"失败节点：\n{failures}\n"
+            "规则：bio_workspace 下的数据文件只读，写操作限定在你的会话目录；"
+            "禁止删除任何数据文件。补救完成后，若判断原任务重试可以成功，"
+            "最后单独一行输出 [RETRYABLE]，否则输出 [NOT_RETRYABLE]。")
+        try:
+            res = coding.run_sync(incoming, brief)
+        except Exception:  # noqa: BLE001
+            logger.exception("code fallback crashed")
+            try:
+                self.im.reply(incoming.chat_id,
+                              "[自动回退] 代码路径补救未能完成，详见服务端日志")
+            except Exception:  # noqa: BLE001
+                pass
+            return
+        final_text = str(res.get("final_text") or "")
+        if "[RETRYABLE]" not in final_text:
+            logger.info("code fallback finished: not retryable")
+            return
+        logger.info("code fallback marked retryable: rerun research once")
+        self._run(incoming, task_text, _retried=True)
 
     @staticmethod
     def _failure_digest(scheduler: Scheduler, max_chars: int = 300) -> list[str]:
