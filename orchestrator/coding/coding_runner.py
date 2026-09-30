@@ -351,7 +351,15 @@ class CodingRunner:
         # （飞书单消息单类型，附件与文字无法同条——进程内暂存，重启即失效）
         self._pending_zip: dict[str, tuple[str, str]] = {}
         s = settings
-        self.ws = WorkspaceManager(Path(getattr(s, "code_workspace_root", "./code_workspace")))
+        bio_root_str = str(getattr(s, "bio_workspace_root", "") or "").strip()
+        if bio_root_str:
+            # Phase 78：会话工作区迁入 bio_workspace/_code/，与数据同树
+            bio_root = Path(bio_root_str)
+            self.ws = WorkspaceManager(bio_root / "_code", bio_root=bio_root)
+        else:
+            self.ws = WorkspaceManager(
+                Path(getattr(s, "code_workspace_root", "./code_workspace")))
+        self.bio_data_roots = getattr(s, "bio_data_roots", "")
         self.skills_dir = Path(getattr(s, "code_skills_dir", "./skills"))
         self.max_steps = int(getattr(s, "code_max_steps", 25))
         self.token_budget = int(getattr(s, "code_token_budget", 200_000))

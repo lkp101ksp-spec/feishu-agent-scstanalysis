@@ -1,7 +1,7 @@
 """coding 域六原语工具集 + 统一 dispatch（Phase 26）。
 
 spec 2026-09-03-phase26-code-agent-design §4：
-- 文件五原语全部经 WorkspaceManager.resolve_safe 限定在会话目录内
+- 写原语经 resolve_safe 限定会话目录；读原语经 resolve_read 放开 bio_root 只读（Phase 78 共享工作区）
 - run_cmd 经 CommandPolicy 三态：allow 直跑 / need_approval 走 approve_fn / block 拒
 - dispatch 永不抛异常，统一返回 {"ok": bool, ...}，由 AgentLoop 序列化为观察
 """
@@ -129,7 +129,7 @@ class CodeTools:
     # ------------------------------------------------------------------ #
     def _op_read_file(self, path: str, offset: int = 1, limit: int = 2000) -> dict[str, Any]:
         """读取文本文件，返回窗口内容与总行数。"""
-        p = self.ws.resolve_safe(self.session_id, path)
+        p = self.ws.resolve_read(self.session_id, path)
         if not p.is_file():
             return {"ok": False, "error": f"NOT_FOUND: {path}"}
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -159,7 +159,7 @@ class CodeTools:
 
     def _op_list_dir(self, path: str = ".") -> dict[str, Any]:
         """列出目录项（name/type/size），目录在前。"""
-        d = self.ws.resolve_safe(self.session_id, path)
+        d = self.ws.resolve_read(self.session_id, path)
         if not d.is_dir():
             return {"ok": False, "error": f"NOT_FOUND: {path}"}
         entries = [
@@ -173,7 +173,7 @@ class CodeTools:
     def _op_search_files(self, pattern: str, path: str = ".", glob: str = "*") -> dict[str, Any]:
         """递归 grep：正则匹配行，glob 过滤文件名，最多 100 条命中。"""
         rx = re.compile(pattern)
-        base = self.ws.resolve_safe(self.session_id, path)
+        base = self.ws.resolve_read(self.session_id, path)
         matches: list[dict[str, Any]] = []
         for f in sorted(base.rglob(glob)):
             if not f.is_file() or f.stat().st_size > 2_000_000:

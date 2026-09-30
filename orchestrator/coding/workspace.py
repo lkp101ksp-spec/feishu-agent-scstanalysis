@@ -56,8 +56,10 @@ class CommandPolicy:
 class WorkspaceManager:
     """会话工作区目录管理。"""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, bio_root: Path | None = None) -> None:
+        """root 为会话工作区根；bio_root 非空时读原语可越界至该树内（只读）。"""
         self.root = Path(root)
+        self.bio_root = Path(bio_root).resolve() if bio_root else None
 
     def session_dir(self, session_id: str) -> Path:
         """获取（必要时创建）会话工作区目录；幂等。"""
@@ -79,3 +81,23 @@ class WorkspaceManager:
             logger.warning("path escape blocked: session=%s rel=%r", session_id, rel)
             raise PathEscapeError(f"path escapes workspace: {rel!r}")
         return p
+
+    def resolve_read(self, session_id: str, rel: str) -> Path:
+        """只读路径解析：会话目录内照常；越界但落在 bio_root 内放行。
+
+        仅供读原语（read_file/list_dir/search_files）使用——写原语仍走
+        resolve_safe。bio_root 为 None 时行为与 resolve_safe 完全一致。
+        """
+        try:
+            return self.resolve_safe(session_id, rel)
+        except PathEscapeError:
+            if self.bio_root is None:
+                raise
+        p = Path(rel)
+        if not p.is_absolute():
+            p = self.session_dir(session_id) / rel
+        p = p.resolve()
+        if p.is_relative_to(self.bio_root):
+            return p
+        logger.warning("read path blocked: session=%s rel=%r", session_id, rel)
+        raise PathEscapeError(f"path escapes readable area: {rel!r}")
